@@ -951,29 +951,27 @@ end)
 
 
 -- ───────────────────────────────────────────────────────────
--- Settings panel: pinned above PVEFrame (LFG window) with Blizzard chrome.
+-- Settings panel: pinned above PVEFrame (LFG window) with custom modern chrome.
 --
--- Frame template: BasicFrameTemplateWithInset (gold border, title bar with
--- TitleText + CloseButton, recessed inset content area). Parent=PVEFrame so
--- visibility cascades automatically: open LFG → settings appears, close LFG →
--- settings hides. Anchor BOTTOMLEFT-of-self to TOPLEFT-of-PVEFrame so the
--- frame extends UPWARD from the LFG title bar with a small visual gap.
+-- Visual language: 1 px brand-green (#00ff7f) border at low alpha, near-black
+-- translucent fill, header strip carrying a brand-tinted gradient + title text
+-- + minimal "×" close glyph. Pattern mirrors RaiderIO / BigWigs / DBM tooltips
+-- (clean, content-first, no "carved stone" Blizzard chrome). Cheaper visually
+-- than BasicFrameTemplateWithInset and matches the addon's brand identity.
+--
+-- Parent=PVEFrame so visibility cascades automatically: open LFG → panel
+-- appears, close LFG → panel hides. Anchor BOTTOMLEFT-of-self to TOPLEFT-of-
+-- PVEFrame with a small visible gap.
 --
 -- DIALOG strata (explicit) keeps the panel above HUD elements; Blizzard popups
 -- (StaticPopup, ColorPicker — both toplevel=true) auto-lift above it. We do
 -- NOT call SetToplevel(true) — it re-raises on every click and would hide
 -- UIDropDownMenu / ColorPickerFrame children of any future widgets.
 --
--- Close-X path: default OnClick of template's CloseButton calls Hide() on
--- settingsFrame. WoW's visibility model treats explicit Hide() as sticky
--- across the parent's hide/show cycle, so subsequent PVEFrame:Show() will NOT
--- bring the settings frame back automatically — user reopens via /apscout
--- config. No flag bookkeeping needed.
---
--- Widgets anchor DIRECTLY to settingsFrame (NOT via .Inset accessor — that
--- template field is unreliable in 12.x retail; produced an off-screen-anchor
--- bug in an earlier iteration). _SETTINGS_TITLEBAR_HEIGHT compensates for the
--- template's built-in title bar in offset math.
+-- Close-× path: custom button calls settingsFrame:Hide(). WoW's visibility
+-- model treats explicit Hide() as sticky across the parent's hide/show cycle,
+-- so subsequent PVEFrame:Show() will NOT bring the panel back automatically —
+-- user reopens via /apscout config. No flag bookkeeping needed.
 
 -- Tooltip pattern. SetScript override (not HookScript) is fine for simple
 -- widgets like CheckButton whose default OnEnter is empty. For widgets with
@@ -1036,22 +1034,23 @@ _SetDebug = function(flag)
     APSPrint("debug " .. (flag and "ON — every scan/emit will print" or "OFF"))
 end
 
--- Layout state for vertical widget stack. Widgets anchor DIRECTLY to
--- settingsFrame (NOT via .Inset accessor — that template field is unreliable
--- in 12.x retail; an earlier iteration that anchored to .Inset hit an
--- off-screen-anchor bug). _SETTINGS_TITLEBAR_HEIGHT compensates for the
--- BasicFrameTemplateWithInset built-in title bar that the template paints
--- inside the top of the frame.
-local _SETTINGS_TITLEBAR_HEIGHT = 28     -- BasicFrameTemplate title bar (proven safe)
-local _SETTINGS_TITLE_BOTTOM_GAP = 4     -- gap between title bar and first row
-local _SETTINGS_CONTENT_BOTTOM_PAD = 6   -- minimal padding below last row
-local _SETTINGS_DEFAULT_ROW_HEIGHT = 24
-local _SETTINGS_ROW_GAP = 2
-local _SETTINGS_FRAME_WIDTH = 240
-local _SETTINGS_LEFT_PAD = 14            -- inside inset border + visual breathing room
--- Y offset (negative = down) of first widget row, from settingsFrame TOPLEFT.
-local _SETTINGS_CONTENT_TOP_OFFSET = _SETTINGS_TITLEBAR_HEIGHT
+-- Layout constants for the modern custom-chrome panel.
+local _SETTINGS_HEADER_HEIGHT = 26       -- top strip (title text + close glyph)
+local _SETTINGS_TITLE_BOTTOM_GAP = 8     -- breathing room below header separator
+local _SETTINGS_CONTENT_BOTTOM_PAD = 10  -- breathing room below last row
+local _SETTINGS_DEFAULT_ROW_HEIGHT = 22
+local _SETTINGS_ROW_GAP = 6              -- airier gaps for modern feel
+local _SETTINGS_FRAME_WIDTH = 260
+local _SETTINGS_LEFT_PAD = 14
+-- Y offset of first widget row from the frame TOPLEFT (= header + gap below).
+local _SETTINGS_CONTENT_TOP_OFFSET = _SETTINGS_HEADER_HEIGHT
                                      + _SETTINGS_TITLE_BOTTOM_GAP
+
+-- Brand colour: #00ff7f — the same green that wraps "ApplicantScout" in chat
+-- prints (`|cff00ff7f...|r`). Surfacing it in the panel chrome ties the addon
+-- visually to its own brand identity and stops the panel from looking like a
+-- generic Blizzard menu.
+local _BRAND_R, _BRAND_G, _BRAND_B = 0.00, 1.00, 0.498
 
 -- Caller convention: widget already has parent=settingsFrame when created.
 -- Helper does NOT call SetParent — explicit ownership, less magic.
@@ -1094,33 +1093,83 @@ _AttachSettingsPanel = function()
         "Frame",
         "ApplicantScoutSettingsFrame",
         PVEFrame,
-        "BasicFrameTemplateWithInset"
+        "BackdropTemplate"
     )
-    settingsFrame:SetSize(_SETTINGS_FRAME_WIDTH, 90)  -- placeholder; _AddSettingsRow grows
-    -- BOTTOMLEFT-of-self → TOPLEFT-of-PVEFrame, +5 px gap above LFG title bar
-    -- so the gold borders don't visually fuse. SetClampedToScreen keeps the
-    -- panel on-screen if user drags PVEFrame near the top edge.
-    settingsFrame:SetPoint("BOTTOMLEFT", PVEFrame, "TOPLEFT", 0, 5)
+    settingsFrame:SetSize(_SETTINGS_FRAME_WIDTH, 100)  -- placeholder; _AddSettingsRow grows
+    settingsFrame:SetPoint("BOTTOMLEFT", PVEFrame, "TOPLEFT", 0, 6)
     settingsFrame:SetClampedToScreen(true)
-    -- DIALOG strata: above gameplay HUD, but Blizzard popups (StaticPopup,
-    -- ColorPicker — both toplevel=true) still auto-lift above us.
-    -- Do NOT call SetToplevel(true) — it re-raises on every click and would
-    -- hide UIDropDownMenu / ColorPickerFrame children of any future widgets.
     settingsFrame:SetFrameStrata("DIALOG")
 
-    -- Title text. BasicFrameTemplate paints a gold title bar at the top of the
-    -- frame with a TitleText FontString. Some custom clients fall back to the
-    -- $parentTitleText global name, hence the dual lookup.
-    local titleFS = settingsFrame.TitleText
-                 or _G[settingsFrame:GetName() .. "TitleText"]
-    if titleFS then titleFS:SetText("ApplicantScout") end
+    -- Modern flat backdrop: 1 px solid border + dark translucent fill.
+    -- Both files reuse the universal 8×8 white texture; tinting via
+    -- SetBackdropColor / SetBackdropBorderColor controls the look.
+    settingsFrame:SetBackdrop({
+        bgFile   = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+        insets   = { left = 1, right = 1, top = 1, bottom = 1 },
+    })
+    settingsFrame:SetBackdropColor(0.05, 0.05, 0.07, 0.94)         -- near-black, slightly translucent
+    settingsFrame:SetBackdropBorderColor(_BRAND_R, _BRAND_G, _BRAND_B, 0.55)  -- brand-green hairline
 
-    -- CloseButton (template-provided X in title bar). Default OnClick of the
-    -- BasicFrameTemplate CloseButton calls HideParentPanel(self) which hides
-    -- settingsFrame. WoW's visibility model treats that explicit Hide() as
-    -- sticky across PVEFrame's hide/show cycle — subsequent PVEFrame:Show()
-    -- will NOT auto-restore settings until user opens via /apscout config.
-    -- No HookScript / no flag bookkeeping needed.
+    -- Header strip: brand-tinted band carrying title + close glyph. Subtle
+    -- horizontal gradient (brand → near-transparent) gives the panel a touch
+    -- of directional flair without the heavy "carved stone" Blizzard look.
+    local header = settingsFrame:CreateTexture(nil, "ARTWORK")
+    header:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", 1, -1)
+    header:SetPoint("TOPRIGHT", settingsFrame, "TOPRIGHT", -1, -1)
+    header:SetHeight(_SETTINGS_HEADER_HEIGHT)
+    header:SetColorTexture(1, 1, 1, 1)  -- placeholder; SetGradient overrides
+    if header.SetGradient then
+        header:SetGradient("HORIZONTAL",
+            CreateColor(_BRAND_R, _BRAND_G, _BRAND_B, 0.22),
+            CreateColor(_BRAND_R, _BRAND_G, _BRAND_B, 0.05))
+    else
+        -- Pre-10.x clients (or stripped custom clients) fall back to a flat tint.
+        header:SetColorTexture(_BRAND_R, _BRAND_G, _BRAND_B, 0.12)
+    end
+
+    -- Hairline separator under the header — same brand colour, slightly
+    -- stronger alpha so the header reads as a distinct strip.
+    local sep = settingsFrame:CreateTexture(nil, "ARTWORK", nil, 1)
+    sep:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, 0)
+    sep:SetPoint("TOPRIGHT", header, "BOTTOMRIGHT", 0, 0)
+    sep:SetHeight(1)
+    sep:SetColorTexture(_BRAND_R, _BRAND_G, _BRAND_B, 0.40)
+
+    -- Title — branded "Applicant" in green, "Scout" in white. GameFontHighlight
+    -- (vs GameFontNormal) gives a pure-white reset color after the |r escape so
+    -- "Scout" reads cleanly against the dark panel instead of the yellowy
+    -- header-text default.
+    local title = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    title:SetPoint("LEFT", header, "LEFT", _SETTINGS_LEFT_PAD - 4, 0)
+    title:SetText("|cff00ff7fApplicant|rScout")
+
+    -- Close glyph "×" — minimal, hover lights up red. Mirrors modern web-style
+    -- modal close buttons; way lighter than Blizzard's Interface\Buttons texture.
+    local closeBtn = CreateFrame("Button", nil, settingsFrame)
+    closeBtn:SetSize(_SETTINGS_HEADER_HEIGHT, _SETTINGS_HEADER_HEIGHT)
+    closeBtn:SetPoint("RIGHT", header, "RIGHT", -2, 0)
+    local closeText = closeBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+    closeText:SetPoint("CENTER", closeBtn, "CENTER", 0, 1)  -- +1 visually centres the glyph
+    closeText:SetText("×")
+    closeText:SetTextColor(0.75, 0.75, 0.78, 1)
+    closeBtn:SetScript("OnEnter", function() closeText:SetTextColor(1.00, 0.40, 0.40, 1) end)
+    closeBtn:SetScript("OnLeave", function() closeText:SetTextColor(0.75, 0.75, 0.78, 1) end)
+    closeBtn:SetScript("OnClick", function() settingsFrame:Hide() end)
+    _SetWidgetTooltip(closeBtn, "Close",
+        "Hide the settings panel. Reopen via |cff00ff7f/apscout config|r — closing here keeps the panel hidden across LFG show/hide cycles in this session.")
+
+    -- Modern checkbox styling: brighter label font + 6 px breathing gap.
+    -- Defaults from UICheckButtonTemplate land the label at +1 px with
+    -- GameFontNormal — close-set and slightly dim against the dark panel.
+    local function _StyleCheckboxLabel(cb, text)
+        local label = _G[cb:GetName() .. "Text"]
+        label:SetText(text)
+        label:SetFontObject("GameFontHighlight")
+        label:ClearAllPoints()
+        label:SetPoint("LEFT", cb, "RIGHT", 6, 1)
+    end
 
     enabledCheckbox = CreateFrame(
         "CheckButton",
@@ -1128,7 +1177,7 @@ _AttachSettingsPanel = function()
         settingsFrame,
         "UICheckButtonTemplate"
     )
-    _G[enabledCheckbox:GetName() .. "Text"]:SetText("Enable applicant scouting")
+    _StyleCheckboxLabel(enabledCheckbox, "Enable applicant scouting")
     enabledCheckbox:SetScript("OnClick", function(self)
         _SetEnabled(not not self:GetChecked())
     end)
@@ -1146,7 +1195,7 @@ _AttachSettingsPanel = function()
         settingsFrame,
         "UICheckButtonTemplate"
     )
-    _G[debugCheckbox:GetName() .. "Text"]:SetText("Debug logging")
+    _StyleCheckboxLabel(debugCheckbox, "Debug logging")
     debugCheckbox:SetScript("OnClick", function(self)
         _SetDebug(not not self:GetChecked())
     end)
