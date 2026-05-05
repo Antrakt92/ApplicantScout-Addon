@@ -42,9 +42,6 @@ local DB_DEFAULTS = {
     -- the panel opens. Defensive PLAYER_LOGOUT save catches positions changed
     -- via slash macros / scripted moves.
     pveFramePosition = nil,
-    -- Lock toggle for the LFG window drag. When true, _OnPVEFrameDragStart
-    -- early-returns so Alt+drag is no-op. User-toggleable in settings panel.
-    lockPVEFrame = false,
 }
 
 -- Session lifecycle. INVARIANT: isSessionActive == true ⇔ companion overlay
@@ -552,7 +549,6 @@ end
 -- the same frame.
 local function _OnPVEFrameDragStart()
     if InCombatLockdown() then return end
-    if ApplicantScoutDB and ApplicantScoutDB.lockPVEFrame then return end
     PVEFrame:StartMoving()
     PVEFrame.apsMoving = true
 end
@@ -1484,22 +1480,6 @@ _AttachSettingsPanel = function()
     title:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -_SETTINGS_TOP_PAD)
     title:SetText("|cff00ff7fApplicant|rScout")
 
-    -- Close glyph "×" — minimal, hover lights up red. Sits in the top-right
-    -- inset area opposite the title.
-    local closeBtnSize = _SETTINGS_TITLE_HEIGHT + 4
-    local closeBtn = CreateFrame("Button", nil, settingsFrame)
-    closeBtn:SetSize(closeBtnSize, closeBtnSize)
-    closeBtn:SetPoint("TOPRIGHT", settingsFrame, "TOPRIGHT", -_SETTINGS_RIGHT_PAD + 4, -(_SETTINGS_TOP_PAD - 4))
-    local closeText = closeBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-    closeText:SetPoint("CENTER", closeBtn, "CENTER", 0, 1)  -- +1 visually centres the glyph
-    closeText:SetText("×")
-    closeText:SetTextColor(0.75, 0.75, 0.78, 1)
-    closeBtn:SetScript("OnEnter", function() closeText:SetTextColor(1.00, 0.40, 0.40, 1) end)
-    closeBtn:SetScript("OnLeave", function() closeText:SetTextColor(0.75, 0.75, 0.78, 1) end)
-    closeBtn:SetScript("OnClick", function() settingsFrame:Hide() end)
-    _SetWidgetTooltip(closeBtn, "Close",
-        "Hide the settings panel. Reopen via |cff00ff7f/apscout config|r — closing here keeps the panel hidden across LFG show/hide cycles in this session.")
-
     -- Modern checkbox styling: brighter label font + 6 px breathing gap.
     -- Defaults from UICheckButtonTemplate land the label at +1 px with
     -- GameFontNormal — close-set and slightly dim against the dark panel.
@@ -1547,66 +1527,15 @@ _AttachSettingsPanel = function()
     )
     _AddSettingsRow(debugCheckbox)
 
-    -- Lock LFG window position. When checked, Alt+drag on the LFG window
-    -- title bar is no-op (handler early-returns). DB-direct toggle — no
-    -- _SetX wrapper needed because there's no teardown / sync work; the
-    -- drag handler reads ApplicantScoutDB.lockPVEFrame on each event.
-    local lockPVECheckbox = CreateFrame(
-        "CheckButton",
-        "ApplicantScoutSettingsLockPVECheckbox",
-        settingsFrame,
-        "UICheckButtonTemplate"
-    )
-    _StyleCheckboxLabel(lockPVECheckbox, "Lock LFG window position")
-    lockPVECheckbox:SetScript("OnClick", function(self)
-        ApplicantScoutDB.lockPVEFrame = not not self:GetChecked()
-    end)
-    lockPVECheckbox:SetHitRectInsets(0, -180, 0, 0)
-    _SetWidgetTooltip(
-        lockPVECheckbox,
-        "Lock LFG window position",
-        "When checked, Alt+drag on the LFG window's title bar is disabled. Position remains where it was last saved. Useful once you've found the right spot and don't want to nudge it accidentally."
-    )
-    _AddSettingsRow(lockPVECheckbox)
-
-    -- Reset LFG window position. Clears saved coords + reapplies Blizzard's
-    -- UIPanelLayout default by hide+show cycle. Brief flicker but reliable;
-    -- only fires on explicit user click.
-    local resetPVEBtn = CreateFrame(
-        "Button",
-        "ApplicantScoutSettingsResetPVEBtn",
-        settingsFrame,
-        "UIPanelButtonTemplate"
-    )
-    resetPVEBtn:SetSize(220, 22)
-    resetPVEBtn:SetText("Reset LFG window position")
-    resetPVEBtn:SetScript("OnClick", function()
-        ApplicantScoutDB.pveFramePosition = nil
-        if PVEFrame and PVEFrame:IsShown() and not InCombatLockdown() then
-            PVEFrame:SetUserPlaced(false)
-            HideUIPanel(PVEFrame)
-            ShowUIPanel(PVEFrame)
-        end
-        APSPrint("LFG window position reset to Blizzard default")
-    end)
-    _SetWidgetTooltip(
-        resetPVEBtn,
-        "Reset LFG window position",
-        "Clears the saved position and re-applies Blizzard's default UIPanelLayout slot. The window briefly closes and reopens to apply the reset."
-    )
-    _AddSettingsRow(resetPVEBtn)
-
     -- Re-sync checkboxes from DB on each show. Handles slash-toggle-while-
     -- panel-was-hidden case: open via /apscout config → checkboxes reflect DB truth.
     settingsFrame:HookScript("OnShow", function()
         enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
         debugCheckbox:SetChecked(ApplicantScoutDB.debug)
-        lockPVECheckbox:SetChecked(ApplicantScoutDB.lockPVEFrame)
     end)
 
     enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
     debugCheckbox:SetChecked(ApplicantScoutDB.debug)
-    lockPVECheckbox:SetChecked(ApplicantScoutDB.lockPVEFrame)
 
     settingsFrameAttached = true  -- LAST: any earlier failure leaves false → retry next PLAYER_LOGIN
 end
@@ -1729,7 +1658,6 @@ SlashCmdList.APSCOUT = function(msg)
         else
             print("  saved position: (default)")
         end
-        print("  lock: " .. tostring(ApplicantScoutDB.lockPVEFrame))
     elseif msg == "taintcheck" then
         -- One-shot diagnostic. Slash-handler frame is hardware-event-rooted
         -- (clean). Reads C_LFGList directly + per-field issecretvalue dump.
