@@ -151,19 +151,20 @@ local stackedHeight = 0
 -- ───────────────────────────────────────────────────────────
 -- helpers
 
-SafeStr = function(v)
-    if v == nil then return "" end
-    -- Boundary cleanse for C_LFGList field reads. Two distinct hazards:
-    -- (1) Midnight 12.0 SecretInChatMessagingLockdown predicate tags certain
-    --     applicant fields as secret values; tostring(secret) returns a SECRET
-    --     STRING that contaminates downstream string ops. Substitute "?"
-    --     placeholder at the boundary so payload bytes stay clean.
-    -- (2) UI-color escapes (|c, |r, |T, |H, etc.) embedded in listing comments
-    --     and player names would render as garbage in companion overlay or
-    --     break QR alphanumeric encoding. Strip them.
-    -- issecretvalue is whitelisted to read the taint flag without propagating.
+local function IsSecretValue(v)
     local issv = _G.issecretvalue
-    if issv and issv(v) then return "?" end
+    return issv and issv(v) or false
+end
+
+SafeStr = function(v, secretFallback)
+    -- Boundary cleanse for C_LFGList field reads. Secret detection must be
+    -- the first operation on potential API values: even tostring(secret), type
+    -- checks after stringification, or string ops can propagate secret-taint.
+    if IsSecretValue(v) then
+        if secretFallback ~= nil then return secretFallback end
+        return "?"
+    end
+    if v == nil then return "" end
     if type(v) == "boolean" then return v and "1" or "0" end
     local s = tostring(v)
     -- ~ historically used as field separator in chatlog era; kept as defensive
@@ -184,6 +185,44 @@ SafeStr = function(v)
     -- displays the string verbatim — multi-line comments look broken in overlay).
     s = s:gsub("[\r\n\t]+", " ")
     return s
+end
+
+local function SafeDiag(v)
+    if IsSecretValue(v) then return "<secret>" end
+    if v == nil then return "nil" end
+    return tostring(v)
+end
+
+local function SafeNumber(v, default)
+    if IsSecretValue(v) then return default or 0 end
+    if v == nil then return default or 0 end
+    local tv = type(v)
+    if tv ~= "number" and tv ~= "string" then return default or 0 end
+    local n = tonumber(v)
+    if n == nil or n ~= n then return default or 0 end
+    return n
+end
+
+local function SafeRoundedNumber(v, default)
+    return math.floor(SafeNumber(v, default) + 0.5)
+end
+
+local function SafeTable(v)
+    if IsSecretValue(v) then return nil end
+    if type(v) == "table" then return v end
+    return nil
+end
+
+local function SafeEnumKey(v, default)
+    if IsSecretValue(v) then return default end
+    local tv = type(v)
+    if tv == "string" or tv == "number" then return v end
+    return default
+end
+
+local function IsChatMessagingLockdown()
+    return C_ChatInfo and C_ChatInfo.InChatMessagingLockdown
+           and C_ChatInfo.InChatMessagingLockdown() or false
 end
 
 InitDB = function()
@@ -299,7 +338,10 @@ end
 
 CheckSessionTransition = function()
     local hasEntry = C_LFGList.HasActiveEntryInfo()
-    local entry = hasEntry and C_LFGList.GetActiveEntryInfo() or nil
+    local entry = nil
+    if hasEntry then
+        entry = SafeTable(C_LFGList.GetActiveEntryInfo())
+    end
     local hosting = entry ~= nil
 
     if hosting and not isSessionActive then
@@ -718,7 +760,7 @@ local APP_DEAD_STATUSES = {
 
 -- Big-endian uint packing
 local function _Uint32BE(n)
-    n = math.floor(n or 0) % 4294967296
+    n = math.floor(SafeNumber(n, 0)) % 4294967296
     return string.char(
         math.floor(n / 16777216) % 256,
         math.floor(n / 65536) % 256,
@@ -727,13 +769,13 @@ local function _Uint32BE(n)
     )
 end
 local function _Uint16BE(n)
-    n = math.floor(n or 0) % 65536
+    n = math.floor(SafeNumber(n, 0)) % 65536
     return string.char(math.floor(n / 256), n % 256)
 end
 
 -- Append len-byte + utf-8 bytes to output table. CLAMPS to 255 bytes (safety).
 local function _PackLenStr(out, str)
-    str = str or ""
+    str = SafeStr(str)
     if #str > 255 then str = str:sub(1, 255) end
     table.insert(out, string.char(#str))
     table.insert(out, str)
@@ -775,23 +817,42 @@ local function BuildPayload(entry, applicantIDs)
     table.insert(out, "\0\0")                -- reserved
 
     -- Listing block
-    if entry then
+    local cleanEntry = SafeTable(entry)
+    if cleanEntry then
         -- Midnight 12.0 returns activityIDs (table) on the primary listing —
         -- legacy entry.activityID is nil. Fall back to legacy field for
         -- forward-compat with future API renames.
-        local activityID = (entry.activityIDs and entry.activityIDs[1])
-                            or entry.activityID
-                            or 0
-        local activityInfo = (activityID > 0)
-                              and C_LFGList.GetActivityInfoTable(activityID)
-                              or nil
-        local dungeonName = (activityInfo and (activityInfo.shortName or activityInfo.fullName)) or "?"
-        local categoryID = (activityInfo and activityInfo.categoryID) or 0
+        local activityIDs = SafeTable(cleanEntry.activityIDs)
+        local activityID = SafeNumber(activityIDs and activityIDs[1], 0)
+        if activityID <= 0 then
+            activityID = SafeNumber(cleanEntry.activityID, 0)
+        end
+        activityID = math.floor(activityID)
+        if activityID < 0 then activityID = 0 end
+
+        local activityInfo = nil
+        if activityID > 0 then
+            activityInfo = SafeTable(C_LFGList.GetActivityInfoTable(activityID))
+        end
+
+        local dungeonName = "?"
+        local categoryID = 0
+        if activityInfo then
+            local shortName = SafeStr(activityInfo.shortName, "?")
+            if shortName ~= "" and shortName ~= "?" then
+                dungeonName = shortName
+            else
+                local fullName = SafeStr(activityInfo.fullName, "?")
+                dungeonName = (fullName ~= "" and fullName) or "?"
+            end
+            categoryID = math.floor(SafeNumber(activityInfo.categoryID, 0))
+        end
         local isMythicPlus = (categoryID == 2)
 
-        -- Strip player-link |Kxxx|k from listing name (SafeStr handles |c etc but
-        -- |K is its own escape WoW redacts char names with on cross-realm)
-        local listingName = (entry.name or ""):gsub("|K[^|]*|k", "")
+        -- Strip player-link |Kxxx|k from listing name after SafeStr has
+        -- handled secret-tagged strings and regular WoW escape sequences.
+        local listingName = SafeStr(cleanEntry.name, "?"):gsub("|K[^|]*|k", "")
+        local listingComment = SafeStr(cleanEntry.comment, "?")
 
         -- Keystone level extraction. WHY NOT C_MythicPlus.GetOwnedKeystoneLevel():
         -- that's the host's BAG keystone, not the listing's target level. Host
@@ -810,18 +871,18 @@ local function BuildPayload(entry, applicantIDs)
         end
         local keyLevel = 0
         if isMythicPlus then
-            keyLevel = _ExtractKeyLevel(SafeStr(listingName))
+            keyLevel = _ExtractKeyLevel(listingName)
             if keyLevel == 0 then
-                keyLevel = _ExtractKeyLevel(SafeStr(entry.comment))
+                keyLevel = _ExtractKeyLevel(listingComment)
             end
         end
 
         table.insert(out, string.char(1))
         table.insert(out, _Uint32BE(activityID))
         table.insert(out, string.char(math.min(keyLevel, 255)))
-        _PackLenStr(out, SafeStr(dungeonName))
-        _PackLenStr(out, SafeStr(listingName))
-        _PackLenStr(out, SafeStr(entry.comment))
+        _PackLenStr(out, dungeonName)
+        _PackLenStr(out, listingName)
+        _PackLenStr(out, listingComment)
     else
         table.insert(out, string.char(0))
     end
@@ -839,23 +900,36 @@ local function BuildPayload(entry, applicantIDs)
     _PackLenStr(out, ADDON_VERSION)
     local gameVer = (GetBuildInfo and select(1, GetBuildInfo())) or "?"
     _PackLenStr(out, gameVer)
-    table.insert(out, string.char((GetCurrentRegion and GetCurrentRegion()) or 0))
+    local regionID = math.floor(SafeNumber(GetCurrentRegion and GetCurrentRegion(), 0))
+    if regionID < 0 then regionID = 0 elseif regionID > 255 then regionID = 0 end
+    table.insert(out, string.char(regionID))
     local pname, prealm = UnitFullName("player")
-    local fullName = (pname or "?") ..
-                     ((prealm and prealm ~= "") and ("-" .. prealm) or "")
+    local playerName = SafeStr(pname, "?")
+    if playerName == "" then playerName = "?" end
+    local playerRealm = SafeStr(prealm, "")
+    local fullName = playerName .. ((playerRealm ~= "") and ("-" .. playerRealm) or "")
     _PackLenStr(out, fullName)
     versionEmittedThisSession = true
 
     -- Applicants — filter out DEAD_STATUSES + sort by ID for hash stability
-    local validIDs = {}
-    for _, id in ipairs(applicantIDs or {}) do
-        local info = C_LFGList.GetApplicantInfo(id)
-        if info and not APP_DEAD_STATUSES[info.applicantStatus or ""]
-           and info.numMembers and info.numMembers > 0 then
-            table.insert(validIDs, id)
+    local validApps = {}
+    local cleanApplicantIDs = SafeTable(applicantIDs) or {}
+    for _, rawID in ipairs(cleanApplicantIDs) do
+        local id = math.floor(SafeNumber(rawID, 0))
+        if id > 0 then
+            local info = C_LFGList.GetApplicantInfo(id)
+            info = SafeTable(info)
+            if info then
+                local status = SafeEnumKey(info.applicantStatus, "")
+                local memberCount = math.floor(SafeNumber(info.numMembers, 0))
+                if memberCount > 5 then memberCount = 5 end
+                if memberCount > 0 and not APP_DEAD_STATUSES[status] then
+                    table.insert(validApps, { id = id, members = memberCount })
+                end
+            end
         end
     end
-    table.sort(validIDs)
+    table.sort(validApps, function(a, b) return a.id < b.id end)
 
     -- Wire format v2: emit one block per group member (was: only the leader).
     -- Single-pass shadow-table approach — count is derived from successfully-
@@ -871,21 +945,22 @@ local function BuildPayload(entry, applicantIDs)
     --   u16 spec_id, u16 ilvl, u16 score, u8 role, len-prefixed name.
     local memberOut = {}
     local emittedCount = 0
-    for _, id in ipairs(validIDs) do
-        local info = C_LFGList.GetApplicantInfo(id)
-        local n = (info and info.numMembers) or 0
-        for m = 1, n do
+    for _, app in ipairs(validApps) do
+        for m = 1, app.members do
             local name, class, _, _, ilvl, _, _, _, _, role, _, score, _, _, _, specID
-                = C_LFGList.GetApplicantMemberInfo(id, m)
-            if name then
-                table.insert(memberOut, _Uint32BE(id))
+                = C_LFGList.GetApplicantMemberInfo(app.id, m)
+            local memberName = SafeStr(name, "?")
+            if memberName ~= "" then
+                local classToken = SafeEnumKey(class, "")
+                local roleToken = SafeEnumKey(role, "DAMAGER")
+                table.insert(memberOut, _Uint32BE(app.id))
                 table.insert(memberOut, string.char(m))
-                table.insert(memberOut, string.char(CLASS_NAME_TO_ID[class or ""] or 0))
-                table.insert(memberOut, _Uint16BE(specID or 0))
-                table.insert(memberOut, _Uint16BE(math.floor((ilvl or 0) + 0.5)))
-                table.insert(memberOut, _Uint16BE(math.floor((score or 0) + 0.5)))
-                table.insert(memberOut, string.char(ROLE_NAME_TO_BYTE[role or "DAMAGER"] or 2))
-                _PackLenStr(memberOut, SafeStr(name) or "?")
+                table.insert(memberOut, string.char(CLASS_NAME_TO_ID[classToken] or 0))
+                table.insert(memberOut, _Uint16BE(SafeNumber(specID, 0)))
+                table.insert(memberOut, _Uint16BE(SafeRoundedNumber(ilvl, 0)))
+                table.insert(memberOut, _Uint16BE(SafeRoundedNumber(score, 0)))
+                table.insert(memberOut, string.char(ROLE_NAME_TO_BYTE[roleToken] or 2))
+                _PackLenStr(memberOut, memberName)
                 emittedCount = emittedCount + 1
             end
         end
@@ -1148,9 +1223,15 @@ MaybeTriggerScreenshot = function(force, entryHint)
     if isSessionActive then
         -- Reuse caller's pre-fetched entry when available (scan-tick path);
         -- fall back to direct fetch for force-shot paths (EndSession, slash).
-        entry = entryHint or C_LFGList.GetActiveEntryInfo()
+        entry = SafeTable(entryHint)
+        if not entry then
+            entry = SafeTable(C_LFGList.GetActiveEntryInfo())
+        end
     end
-    local applicantIDs = (entry and (C_LFGList.GetApplicants() or {})) or {}
+    local applicantIDs = {}
+    if entry then
+        applicantIDs = SafeTable(C_LFGList.GetApplicants()) or {}
+    end
 
     local payload = BuildPayload(entry, applicantIDs)
 
@@ -1269,25 +1350,24 @@ end)
 -- the native NewTicker scheduler's clean call frame. CheckSessionTransition
 -- handles StartSession/EndSession lifecycle; MaybeTriggerScreenshot does the
 -- rest (read C_LFGList, build payload, paint QR, trigger Screenshot()).
--- Lockdown short-circuit: skip the whole pass during ChatMessagingLockdown
--- so SecretInChatMessagingLockdown-tagged C_LFGList fields don't get encoded
--- as "?" placeholders that would garble the companion overlay.
+-- Lockdown short-circuit: skip scheduler-driven C_LFGList reads during
+-- ChatMessagingLockdown. BuildPayload still has field-level guards for force
+-- paths and future callers, but scheduled snapshots should wait for clean data.
 C_Timer.NewTicker(0.25, function()
     if not (scanDirty and ApplicantScoutDB and ApplicantScoutDB.enabled) then
         -- Drain pending throttled shot: data was changed during throttle
         -- window (pendingShotDirty=true), but no new events fired since.
         -- Without this drain: shot never goes out for sustained state.
         if pendingShotDirty and (GetTime() - lastShotTime) >= SHOT_THROTTLE_S then
-            MaybeTriggerScreenshot()
+            if not IsChatMessagingLockdown() then
+                MaybeTriggerScreenshot()
+            end
         end
         return
     end
-    -- Defensive lockdown gate: C_LFGList fields go secret in lockdown
-    -- (SecretInChatMessagingLockdown). SafeStr handles per-field substitution
-    -- ("?") so encoder still produces valid bytes — but skipping entirely
-    -- avoids painting "?" placeholders that companion would show as garbage.
-    if C_ChatInfo and C_ChatInfo.InChatMessagingLockdown
-       and C_ChatInfo.InChatMessagingLockdown() then
+    -- Defensive lockdown gate: keep scanDirty=true so the whole pass retries
+    -- once Blizzard clears SecretInChatMessagingLockdown.
+    if IsChatMessagingLockdown() then
         return  -- scanDirty stays true; processed once lockdown clears
     end
     scanDirty = false
@@ -1591,9 +1671,7 @@ SlashCmdList.APSCOUT = function(msg)
                    and string.format("yes (%.2fs left)", suppressShotsUntil - GetTime())
                    or "no (window expired)")
               or "no"))
-        print("  ChatMessagingLockdown: " .. tostring(
-              C_ChatInfo and C_ChatInfo.InChatMessagingLockdown
-              and C_ChatInfo.InChatMessagingLockdown()))
+        print("  ChatMessagingLockdown: " .. tostring(IsChatMessagingLockdown()))
         -- QR transport diagnostics
         print("|cff00ff7f---|r QR transport:")
         print("  QR library loaded: " .. tostring(_qrencode ~= nil))
@@ -1614,23 +1692,29 @@ SlashCmdList.APSCOUT = function(msg)
         -- raw API diagnostics
         print("|cff00ff7f---|r raw API:")
         print("  HasActiveEntryInfo: " .. tostring(C_LFGList.HasActiveEntryInfo()))
-        local entry = C_LFGList.GetActiveEntryInfo()
+        local entry = SafeTable(C_LFGList.GetActiveEntryInfo())
         if entry then
-            local aid = (entry.activityIDs and entry.activityIDs[1])
-                         or entry.activityID
-            print("  entry.activityIDs[1]: " .. tostring(aid))
-            print("  entry.name: " .. tostring(entry.name))
-            print("  entry.comment: " .. tostring(entry.comment))
+            local activityIDs = SafeTable(entry.activityIDs)
+            print("  entry.activityIDs[1]: " .. SafeDiag(activityIDs and activityIDs[1]))
+            print("  entry.activityID: " .. SafeDiag(entry.activityID))
+            print("  entry.name: " .. SafeDiag(entry.name))
+            print("  entry.comment: " .. SafeDiag(entry.comment))
         else
             print("  entry: nil")
         end
-        local applicants = C_LFGList.GetApplicants() or {}
+        local applicants = SafeTable(C_LFGList.GetApplicants()) or {}
         print("  GetApplicants count: " .. #applicants)
         for i = 1, math.min(3, #applicants) do
-            local info = C_LFGList.GetApplicantInfo(applicants[i])
+            local rawID = applicants[i]
+            local id = math.floor(SafeNumber(rawID, 0))
+            local info = (id > 0) and SafeTable(C_LFGList.GetApplicantInfo(id)) or nil
             if info then
-                print(string.format("    #%d id=%d status=%s numMembers=%s",
-                      i, applicants[i], tostring(info.applicantStatus), tostring(info.numMembers)))
+                print(string.format("    #%d id=%s status=%s numMembers=%s",
+                      i, SafeDiag(rawID), SafeDiag(info.applicantStatus),
+                      SafeDiag(info.numMembers)))
+            else
+                print(string.format("    #%d id=%s status=n/a numMembers=n/a",
+                      i, SafeDiag(rawID)))
             end
         end
         -- Phase 1 + 2 diagnostics
@@ -1663,29 +1747,30 @@ SlashCmdList.APSCOUT = function(msg)
         -- (clean). Reads C_LFGList directly + per-field issecretvalue dump.
         -- No emit, no queue interaction. Useful with active applicants (probe
         -- their fields) or empty listing (probe lockdown / version flags only).
-        local issv = _G.issecretvalue or function() return false end
         print("|cff00ff7fApplicantScout|r taintcheck:")
-        print("  InChatMessagingLockdown: " .. tostring(
-              C_ChatInfo and C_ChatInfo.InChatMessagingLockdown
-              and C_ChatInfo.InChatMessagingLockdown()))
-        local applicants = C_LFGList.GetApplicants() or {}
+        print("  InChatMessagingLockdown: " .. tostring(IsChatMessagingLockdown()))
+        local applicants = SafeTable(C_LFGList.GetApplicants()) or {}
         print("  applicants: " .. #applicants)
         for i = 1, math.min(3, #applicants) do
-            local id = applicants[i]
-            local info = C_LFGList.GetApplicantInfo(id)
-            local name, class, _, _, ilvl, _, _, _, _, role, _, score, _, _, _, specID
-                = C_LFGList.GetApplicantMemberInfo(id, 1)
-            print(string.format("  #%d id=%d (id_secret=%s) status=%s",
-                  i, id, tostring(issv(id)),
-                  tostring(info and info.applicantStatus or "n/a")))
+            local rawID = applicants[i]
+            local id = math.floor(SafeNumber(rawID, 0))
+            local info = (id > 0) and SafeTable(C_LFGList.GetApplicantInfo(id)) or nil
+            local name, class, ilvl, role, score, specID
+            if id > 0 then
+                name, class, _, _, ilvl, _, _, _, _, role, _, score, _, _, _, specID
+                    = C_LFGList.GetApplicantMemberInfo(id, 1)
+            end
+            print(string.format("  #%d id=%s (id_secret=%s) status=%s",
+                  i, SafeDiag(rawID), tostring(IsSecretValue(rawID)),
+                  info and SafeDiag(info.applicantStatus) or "n/a"))
             print(string.format("    name=%s(s=%s) class=%s(s=%s) specID=%s(s=%s)",
-                  tostring(name), tostring(issv(name)),
-                  tostring(class), tostring(issv(class)),
-                  tostring(specID), tostring(issv(specID))))
+                  SafeDiag(name), tostring(IsSecretValue(name)),
+                  SafeDiag(class), tostring(IsSecretValue(class)),
+                  SafeDiag(specID), tostring(IsSecretValue(specID))))
             print(string.format("    ilvl=%s(s=%s) score=%s(s=%s) role=%s(s=%s)",
-                  tostring(ilvl), tostring(issv(ilvl)),
-                  tostring(score), tostring(issv(score)),
-                  tostring(role), tostring(issv(role))))
+                  SafeDiag(ilvl), tostring(IsSecretValue(ilvl)),
+                  SafeDiag(score), tostring(IsSecretValue(score)),
+                  SafeDiag(role), tostring(IsSecretValue(role))))
         end
     elseif msg == "reset" then
         -- Force fresh full snapshot on next scan-tick. Clears dedup state so the
