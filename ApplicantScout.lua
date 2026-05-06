@@ -145,7 +145,8 @@ local SafeStr, APSPrint, InitDB, StartSession, EndSession, CheckSessionTransitio
 -- while user has interaction window open — acceptable per scope.
 local lastSnapshotHash, lastShotTime, pendingShotDirty,
       qrAlwaysVisible, qrMoveMode, suppressShotsUntil,
-      _qrSuppressedByInteraction
+      _qrSuppressedByInteraction, lastQREncodeMode,
+      lastQREncodeBytes, lastQREncodeError
 
 -- Settings panel state. settingsFrame = parent of all widgets; created lazily
 -- in _AttachSettingsPanel. settingsFrameAttached = one-shot init guard.
@@ -267,6 +268,7 @@ StartSession = function()
     -- still receives region/realm info from the freshest backlog snapshot.
     lastSnapshotHash = nil
     pendingShotDirty = false
+    _SetLastQREncodeDiag("never", 0, nil)
 
     -- 0.3s grace before first snapshot. The frame just transitioned from
     -- Hide()'d to Show()+alpha=1 — on some setups (high refresh rate, deferred
@@ -1288,17 +1290,11 @@ local function PaintQR(matrix)
     return true
 end
 
--- Hex-encode bytes as uppercase ASCII. WHY: opencv's QRCodeDetector (and
--- pyzbar, every QR mobile reader) interpret QR payload as a TEXT STRING and
--- truncate at the first NUL byte. Our binary format is 0x00-rich (length
--- placeholder, has_listing=0, reserved bytes, uint16 high bytes, etc.) → raw
--- bytes get cut off after a few chars. Hex sidesteps this completely: every
--- byte is two ASCII hex chars, never NUL. Bonus: uppercase hex falls into QR's
--- alphanumeric mode (denser than byte mode), so the QR ends up SMALLER than
--- if we'd used base64 in byte mode (e.g. 1024-byte payload: hex+alphanumeric
--- needs Version 30, base64+byte needs Version 28 — but the alphanumeric
--- module count vs byte count tradeoff favors hex by a few px in frame size).
--- Decoder mirror: `bytes.fromhex(text)` in Python.
+-- Hex-encode bytes as uppercase ASCII. WHY: legacy companions only know the
+-- original text-QR path (`bytes.fromhex(text)` on the Python side), and hex
+-- also keeps small/medium payloads in QR alphanumeric mode which is denser than
+-- raw byte mode. We therefore keep hex as the preferred transport for payloads
+-- that already fit, and reserve raw bytes as the overflow escape hatch.
 local function _HexEncode(data)
     local out = {}
     for i = 1, #data do
@@ -1307,18 +1303,32 @@ local function _HexEncode(data)
     return table.concat(out)
 end
 
--- Builds QR matrix from binary payload via embedded lua-qrcode library.
--- Hex-encodes payload first (see _HexEncode above for rationale). Returns
--- matrix or nil on encoding failure (payload too large for max QR Version 40,
--- or library bug).
+local function _QREncodeModeLabel(kind, ec_level)
+    local ec = (ec_level == 1 and "l")
+            or (ec_level == 2 and "m")
+            or ("ec" .. tostring(ec_level))
+    return kind .. "-" .. ec
+end
+
+local function _SetLastQREncodeDiag(mode, payload_bytes, err)
+    lastQREncodeMode = mode
+    lastQREncodeBytes = payload_bytes or 0
+    lastQREncodeError = err
+end
+
+-- Builds QR matrix from payload bytes via embedded lua-qrcode library. The
+-- transport ladder intentionally prefers the historical hex path first so
+-- already-working payloads keep backward compatibility with legacy companions.
+-- Raw bytes are only used when hex overflows, because that's the case that is
+-- already broken today (stale overlay until applicant count drops).
 -- WHY pcall: qrencode.lua's get_version_eclevel uses assert() (real Lua error)
 -- on capacity overflow at line 214, NOT the documented (false, errmsg) tuple
 -- return. Plain `local ok, result = _qrencode(...)` lets that error propagate
 -- through scan-tick and floods BugSack with hundreds of identical errors per
 -- minute on big payloads. pcall traps it; we then fall back to lower EC
 -- (M=2 → L=1, ~26% more capacity at Version 40) for one more attempt.
-local function _TryQrEncode(hex, ec_level)
-    local pcall_ok, ok, result = pcall(_qrencode, hex, ec_level)
+local function _TryQrEncode(data, ec_level)
+    local pcall_ok, ok, result = pcall(_qrencode, data, ec_level)
     if not pcall_ok then return nil, tostring(ok) end          -- assert blew up
     if not ok then return nil, tostring(result) end            -- documented failure
     return result, nil
@@ -1326,41 +1336,57 @@ end
 
 local function BuildQRMatrix(payload)
     if not _qrencode then
+        _SetLastQREncodeDiag("missing-lib", #payload, "QR library not loaded")
         if APSPrint then
             APSPrint("CRITICAL: QR library not loaded — check libs/qrencode.lua")
         end
         return nil
     end
     local hex = _HexEncode(payload)
-
-    -- Preferred level (M, ~15% ECC recovery — plenty for JPG quantization noise).
-    local matrix, err = _TryQrEncode(hex, QR_EC_LEVEL)
-    if matrix then return matrix end
-
-    -- Capacity-overflow fallback: drop to EC=L (1) for max alphanumeric capacity
-    -- at Version 40 (4296 chars vs 3391 at M). Only attempt if we weren't
-    -- already at L. Companion still decodes — pyzbar reads any EC level.
+    local attempts = {
+        { kind = "hex", data = hex, ec_level = QR_EC_LEVEL, size = #hex, unit = "hex" },
+    }
     if QR_EC_LEVEL ~= 1 then
-        local fallback_matrix, fallback_err = _TryQrEncode(hex, 1)
-        if fallback_matrix then
-            if APSPrint and ApplicantScoutDB and ApplicantScoutDB.debug then
-                APSPrint(string.format(
-                    "[APS-debug] QR overflow at EC=%d, fell back to EC=L (hex=%d chars)",
-                    QR_EC_LEVEL, #hex))
-            end
-            return fallback_matrix
-        end
-        err = fallback_err  -- report the fallback's error if we got that far
+        table.insert(attempts, { kind = "hex", data = hex, ec_level = 1, size = #hex, unit = "hex" })
+    end
+    table.insert(attempts, { kind = "raw", data = payload, ec_level = QR_EC_LEVEL, size = #payload, unit = "bytes" })
+    if QR_EC_LEVEL ~= 1 then
+        table.insert(attempts, { kind = "raw", data = payload, ec_level = 1, size = #payload, unit = "bytes" })
     end
 
-    -- Both attempts failed: payload is too big even at EC=L (>4296 alphanumeric
-    -- chars at V40). Caller (MaybeTriggerScreenshot) gets nil → skips paint +
-    -- screenshot for this snapshot. Next scan will rebuild a (hopefully smaller)
-    -- payload and retry. Logged once per failure (not per scan-tick — caller
-    -- dedupes via lastSnapshotHash unless force=true).
+    local first_label = nil
+    local first_size = 0
+    local first_unit = nil
+    local failure_parts = {}
+    for _, attempt in ipairs(attempts) do
+        local label = _QREncodeModeLabel(attempt.kind, attempt.ec_level)
+        if not first_label then
+            first_label = label
+            first_size = attempt.size
+            first_unit = attempt.unit
+        end
+        local matrix, err = _TryQrEncode(attempt.data, attempt.ec_level)
+        if matrix then
+            _SetLastQREncodeDiag(label, #payload, nil)
+            if APSPrint and ApplicantScoutDB and ApplicantScoutDB.debug and label ~= first_label then
+                APSPrint(string.format(
+                    "[APS-debug] QR fallback %s (%d %s) -> %s (%d bytes payload)",
+                    first_label, first_size, first_unit, label, #payload))
+            end
+            return matrix
+        end
+        failure_parts[#failure_parts + 1] = label .. ": " .. tostring(err)
+    end
+
+    -- All strategies failed. Caller (MaybeTriggerScreenshot) gets nil → skips
+    -- paint + screenshot for this snapshot. Next scan will rebuild a (hopefully
+    -- smaller) payload and retry. Logged once per failure (not per scan-tick —
+    -- caller dedupes via lastSnapshotHash unless force=true).
+    local err = table.concat(failure_parts, " | ")
+    _SetLastQREncodeDiag("failed", #payload, err)
     if APSPrint then
         APSPrint("QR encode failed (payload too large): "
-                 .. tostring(err) .. " — hex=" .. #hex .. " chars")
+                 .. tostring(err) .. " — payload=" .. #payload .. " bytes")
     end
     return nil
 end
@@ -1371,6 +1397,9 @@ end
 lastSnapshotHash = nil
 lastShotTime = 0
 pendingShotDirty = false
+lastQREncodeMode = "never"
+lastQREncodeBytes = 0
+lastQREncodeError = nil
 local SHOT_THROTTLE_S = 0.5
 
 -- Build payload, dedup vs last hash, throttle, paint QR, trigger Screenshot.
@@ -1894,6 +1923,9 @@ SlashCmdList.APSCOUT = function(msg)
         print("  last shot time: " .. (lastShotTime > 0
               and string.format("%.1fs ago", GetTime() - lastShotTime) or "never"))
         print("  pending throttled shot: " .. tostring(pendingShotDirty))
+        print("  last QR encode: " .. tostring(lastQREncodeMode)
+              .. " (" .. tostring(lastQREncodeBytes) .. " bytes)")
+        print("  last QR error: " .. tostring(lastQREncodeError or "none"))
         print("  screenshotQuality: " .. tostring(GetCVar("screenshotQuality")))
         print("  screenshotFormat: " .. tostring(GetCVar("screenshotFormat")))
         -- raw API diagnostics
