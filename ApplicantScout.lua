@@ -870,13 +870,14 @@ end
 -- Wire format (binary, big-endian; unchanged from prior pixel transport — QR
 -- is purely a transport upgrade, the same bytes flow end-to-end):
 --   Header:    "APS1" magic + version byte + uint16 length + 2 reserved bytes
---   Listing:   has_listing byte; if 1: uint32 activityID + key_level byte +
+--   Listing:   has_listing byte; if 1: uint32 activityID + uint16 categoryID +
+--              uint16 difficultyID + key_level byte +
 --              len-prefixed dungeonName/listingName/comment (uint8 len + utf8)
 --   Version:   has_version byte; if 1: len-prefixed addonVer/gameVer +
 --              region_id byte + len-prefixed playerName
---   Apps:      uint16 count; per applicant: uint32 id + uint8 classID +
---              uint16 specID + uint16 ilvl + uint16 score + uint8 role +
---              uint8 nameLen + utf8 name (CLAMPED to 255 bytes)
+--   Apps:      uint16 count; per applicant: uint32 id + uint8 member_idx +
+--              uint8 classID + uint16 specID + uint16 ilvl + uint16 score +
+--              uint8 role + uint8 nameLen + utf8 name (CLAMPED to 255 bytes)
 --   Trailer:   uint32 CRC32 (IEEE 802.3) over [magic..last applicant byte]
 --
 -- WHY keep the magic + CRC even though QR has its own ECC: the magic gives the
@@ -1004,7 +1005,7 @@ local function BuildPayload(entry, applicantIDs)
 
     -- Header (length patched after we know body size)
     table.insert(out, "APS1")
-    table.insert(out, string.char(0x02))    -- protocol version (v2: multi-member group apps)
+    table.insert(out, string.char(0x03))    -- protocol version (v3: listing category/difficulty)
     table.insert(out, "\0\0")                -- length placeholder (uint16 BE)
     table.insert(out, "\0\0")                -- reserved
 
@@ -1029,6 +1030,7 @@ local function BuildPayload(entry, applicantIDs)
 
         local dungeonName = "?"
         local categoryID = 0
+        local difficultyID = 0
         if activityInfo then
             local shortName = SafeStr(activityInfo.shortName, "?")
             if shortName ~= "" and shortName ~= "?" then
@@ -1038,6 +1040,7 @@ local function BuildPayload(entry, applicantIDs)
                 dungeonName = (fullName ~= "" and fullName) or "?"
             end
             categoryID = math.floor(SafeNumber(activityInfo.categoryID, 0))
+            difficultyID = math.floor(SafeNumber(activityInfo.difficultyID, 0))
         end
         local isMythicPlus = (categoryID == 2)
 
@@ -1071,6 +1074,8 @@ local function BuildPayload(entry, applicantIDs)
 
         table.insert(out, string.char(1))
         table.insert(out, _Uint32BE(activityID))
+        table.insert(out, _Uint16BE(categoryID))
+        table.insert(out, _Uint16BE(difficultyID))
         table.insert(out, string.char(math.min(keyLevel, 255)))
         _PackLenStr(out, dungeonName)
         _PackLenStr(out, listingName)
@@ -1897,8 +1902,19 @@ SlashCmdList.APSCOUT = function(msg)
         local entry = SafeTable(C_LFGList.GetActiveEntryInfo())
         if entry then
             local activityIDs = SafeTable(entry.activityIDs)
+            local cleanActivityID = math.floor(SafeNumber(activityIDs and activityIDs[1], 0))
+            if cleanActivityID <= 0 then
+                cleanActivityID = math.floor(SafeNumber(entry.activityID, 0))
+            end
             print("  entry.activityIDs[1]: " .. SafeDiag(activityIDs and activityIDs[1]))
             print("  entry.activityID: " .. SafeDiag(entry.activityID))
+            if cleanActivityID > 0 then
+                local activityInfo = SafeTable(C_LFGList.GetActivityInfoTable(cleanActivityID))
+                if activityInfo then
+                    print("  activity.categoryID: " .. SafeDiag(activityInfo.categoryID))
+                    print("  activity.difficultyID: " .. SafeDiag(activityInfo.difficultyID))
+                end
+            end
             print("  entry.name: " .. SafeDiag(entry.name))
             print("  entry.comment: " .. SafeDiag(entry.comment))
         else
