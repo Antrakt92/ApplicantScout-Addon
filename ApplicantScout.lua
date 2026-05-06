@@ -268,7 +268,9 @@ StartSession = function()
     -- still receives region/realm info from the freshest backlog snapshot.
     lastSnapshotHash = nil
     pendingShotDirty = false
-    _SetLastQREncodeDiag("never", 0, nil)
+    lastQREncodeMode = "never"
+    lastQREncodeBytes = 0
+    lastQREncodeError = nil
 
     -- 0.3s grace before first snapshot. The frame just transitioned from
     -- Hide()'d to Show()+alpha=1 — on some setups (high refresh rate, deferred
