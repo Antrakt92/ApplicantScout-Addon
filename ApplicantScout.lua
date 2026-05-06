@@ -94,6 +94,7 @@ local scanDirty = false
 -- 1-pixel-wide runs). screenshotQuality=8 (set in EnsureScreenshotCVars)
 -- provides headroom for the smaller modules.
 local QR_MODULE_PX = 3                 -- screen pixels per QR module
+local QR_RENDER_SETTLE_S = 0.3         -- lets QR paint reach framebuffer before Screenshot()
 -- Quiet zone is the white border the spec mandates around a QR (4 modules
 -- per ISO/IEC 18004). pyzbar/zbar tolerates 2 modules reliably on clean
 -- digital sources where finder patterns aren't degraded by print/camera noise
@@ -272,7 +273,7 @@ StartSession = function()
     lastQREncodeBytes = 0
     lastQREncodeError = nil
 
-    -- 0.3s grace before first snapshot. The frame just transitioned from
+    -- QR_RENDER_SETTLE_S grace before first snapshot. The frame just transitioned from
     -- Hide()'d to Show()+alpha=1 — on some setups (high refresh rate, deferred
     -- compositors, non-integer DPI) the GPU framebuffer needs multiple render
     -- passes before the painted QR textures are visible to Screenshot(). Without
@@ -281,7 +282,7 @@ StartSession = function()
     -- overlay never appears. MaybeTriggerScreenshot honours this via
     -- suppressShotsUntil; pendingShotDirty=true ensures the scan-tick drain
     -- retries once the window expires (within ~0.55s of session start).
-    suppressShotsUntil = GetTime() + 0.3
+    suppressShotsUntil = GetTime() + QR_RENDER_SETTLE_S
 
     -- Show QR frame fully visible (alpha=1) for the entire active session.
     -- Reasoning at top of file: alpha-flicker captured alpha=0 framebuffers
@@ -304,7 +305,7 @@ EndSession = function()
     scanDirty = false
     -- Force-shot path bypasses suppressShotsUntil via force=true, but clear
     -- the gate explicitly so a fresh StartSession that happens before the
-    -- old gate would have expired starts with a clean 0.3s window.
+    -- old gate would have expired starts with a clean render-settle window.
     suppressShotsUntil = 0
 
     -- Final force-shot: BuildPayload now sees isSessionActive=false → entry=nil
@@ -322,13 +323,14 @@ EndSession = function()
     -- C_Timer.After(0, Screenshot()), so the actual capture happens NEXT
     -- frame. Hiding synchronously here would make the screenshot capture an
     -- empty screen (no QR), companion never sees the clear signal, overlay
-    -- stuck showing pre-end applicants. 0.3s lets the Screenshot() fire first.
+    -- stuck showing pre-end applicants. QR_RENDER_SETTLE_S lets the
+    -- Screenshot() fire first.
     -- All gating (qrAlwaysVisible, new-session-started) re-checked at fire
     -- time so the deferred Hide respects the latest toggle state — important
     -- for /apscout off which resets qrAlwaysVisible right after EndSession.
     if qrFrame then
         local genAtSchedule = sessionGen
-        C_Timer.After(0.3, function()
+        C_Timer.After(QR_RENDER_SETTLE_S, function()
             -- Re-enter the visibility coordinator only if we're still in the
             -- same gen AND the session has actually ended. _RefreshQRVisibility
             -- handles qrAlwaysVisible (debug override stays visible across
@@ -504,7 +506,7 @@ local function CreateQRFrame()
 
     qrFrameCreated = true
     -- Hidden by default. StartSession does Show()+SetAlpha(1); EndSession
-    -- defers Hide() 0.3s after final clear-shot fires.
+    -- defers Hide() after final clear-shot fires.
     if _RefreshQRMouse then _RefreshQRMouse() end
     qrFrame:Hide()
 end
@@ -616,12 +618,12 @@ _RefreshQRVisibility = function()
     if shouldShow and not wasShown then
         qrFrame:SetAlpha(1)
         qrFrame:Show()
-        -- WHY 0.3s grace on every hidden→shown transition (not just session
+        -- WHY QR_RENDER_SETTLE_S grace on every hidden→shown transition (not just session
         -- start): the GPU framebuffer needs paint time after Show, same race
         -- as session-start. Without this, a vendor-close → fast Screenshot
         -- captures the post-Hide unpainted frame → companion logs "no APS1".
         -- Reuses the existing suppression mechanism — no parallel state.
-        suppressShotsUntil = GetTime() + 0.3
+        suppressShotsUntil = GetTime() + QR_RENDER_SETTLE_S
         pendingShotDirty = true  -- scan-tick drain retries post-grace
     elseif not shouldShow and wasShown then
         qrFrame:Hide()
@@ -840,10 +842,16 @@ local function RestoreScreenshotCVars()
 
     if ApplicantScoutDB.priorScreenshotQuality ~= nil then
         local prior = tonumber(ApplicantScoutDB.priorScreenshotQuality) or 0
+        local currentQuality = tonumber(GetCVar("screenshotQuality")) or 0
         if prior >= 0 and prior <= 10 then
-            SetCVar("screenshotQuality", tostring(prior))
-            if APSPrint then
-                APSPrint("restored screenshotQuality=" .. prior .. " (pre-ApplicantScout value)")
+            if currentQuality == 8 then
+                SetCVar("screenshotQuality", tostring(prior))
+                if APSPrint then
+                    APSPrint("restored screenshotQuality=" .. prior .. " (pre-ApplicantScout value)")
+                end
+            elseif APSPrint then
+                APSPrint("kept screenshotQuality=" .. currentQuality ..
+                         " (changed after ApplicantScout forced 8)")
             end
         end
         ApplicantScoutDB.priorScreenshotQuality = nil
@@ -865,6 +873,21 @@ local function RestoreScreenshotCVars()
             end
         end
         ApplicantScoutDB.priorScreenshotFormat = nil
+    end
+end
+
+local function RestoreScreenshotCVarsWhenSafe(delay, requiredSessionGen)
+    local function restoreIfStillDisabled()
+        if not ApplicantScoutDB or ApplicantScoutDB.enabled then return end
+        if isSessionActive then return end
+        if requiredSessionGen and sessionGen ~= requiredSessionGen then return end
+        RestoreScreenshotCVars()
+    end
+
+    if delay and delay > 0 and C_Timer and C_Timer.After then
+        C_Timer.After(delay, restoreIfStillDisabled)
+    else
+        restoreIfStillDisabled()
     end
 end
 
@@ -1537,8 +1560,12 @@ local EVENT_HANDLERS = {
         _TryHookInfoPanels()      -- initial scan; ADDON_LOADED catches LoD frames later
     end,
     PLAYER_ENTERING_WORLD            = function()
-        EnsureScreenshotCVars()
         CreateQRFrame()
+        if ApplicantScoutDB and ApplicantScoutDB.enabled then
+            EnsureScreenshotCVars()
+        else
+            RestoreScreenshotCVarsWhenSafe(0)
+        end
         MarkDirty("pew")
     end,
     -- WHY register ADDON_LOADED globally: many info-panel frames live in
@@ -1655,41 +1682,59 @@ _SetWidgetTooltip = function(widget, title, body)
     widget:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
+local function _RunDisabledCleanup()
+    local wasSessionActive = isSessionActive
+    local restoreSessionGen = nil
+    if wasSessionActive then
+        EndSession()  -- final clear-shot for companion; restore CVars after it paints.
+        restoreSessionGen = sessionGen
+    end
+
+    ApplicantScoutDB.enabled = false
+    scanDirty = false
+    pendingShotDirty = false
+
+    -- Reset before EndSession's deferred Hide closure fires so it respects
+    -- "off" semantics even when user had debug visibility/move mode enabled.
+    qrAlwaysVisible = false
+    qrMoveMode = false
+    _RefreshQRMouse()
+
+    -- If no session was active, EndSession didn't schedule deferred Hide; sync
+    -- Hide here. Active-session case is handled by EndSession's deferred
+    -- _RefreshQRVisibility after the final clear-shot frame.
+    if qrFrame and not wasSessionActive then qrFrame:Hide() end
+
+    RestoreScreenshotCVarsWhenSafe(
+        wasSessionActive and QR_RENDER_SETTLE_S or 0,
+        restoreSessionGen
+    )
+end
+
 -- Single source of truth for the enabled toggle. All entry points (slash on/off,
 -- slash toggle, GUI checkbox click) route here so teardown logic
--- (EndSession + RestoreScreenshotCVars + qrFrame Hide) lives in one place.
--- Idempotent: silent on no-op transitions, but still re-syncs UI checkbox AND
--- prints "already X" so user sees their slash command was received.
+-- (EndSession + guarded CVar restore + QR cleanup) lives in one place.
+-- Idempotent: no-op transitions still re-sync UI and run safety cleanup because
+-- stale CVar stashes can survive crashes/reloads.
 _SetEnabled = function(flag)
     flag = not not flag  -- coerce 1/nil → strict bool so equality compare is sane
     if flag == ApplicantScoutDB.enabled then
         if enabledCheckbox then enabledCheckbox:SetChecked(flag) end
-        if not flag then
-            qrAlwaysVisible = false
-            qrMoveMode = false
-            _RefreshQRMouse()
-            if qrFrame then qrFrame:Hide() end
+        if flag then
+            EnsureScreenshotCVars()
+        else
+            _RunDisabledCleanup()
         end
         APSPrint(flag and "already enabled" or "already disabled")
         return
     end
     if flag then
         ApplicantScoutDB.enabled = true
+        EnsureScreenshotCVars()
         scanDirty = true  -- next 0.25s tick recovers session if listing active
         APSPrint("enabled — will emit during LFG hosting")
     else
-        local wasSessionActive = isSessionActive
-        if wasSessionActive then EndSession() end  -- final clear-shot for companion
-        ApplicantScoutDB.enabled = false
-        -- Reset before EndSession's deferred 0.3s Hide closure fires so it
-        -- respects "off" semantics even when user had debug toggle on.
-        qrAlwaysVisible = false
-        qrMoveMode = false
-        _RefreshQRMouse()
-        -- If no session was active, EndSession didn't schedule deferred Hide;
-        -- sync Hide here. Active-session case handled by EndSession.
-        if qrFrame and not wasSessionActive then qrFrame:Hide() end
-        RestoreScreenshotCVars()
+        _RunDisabledCleanup()
         APSPrint("disabled (kill switch — no scans, no emits)")
     end
     -- Sync GUI checkbox if attached. Slash refresh without waiting for OnShow.
@@ -1942,6 +1987,10 @@ SlashCmdList.APSCOUT = function(msg)
         print("  last QR error: " .. tostring(lastQREncodeError or "none"))
         print("  screenshotQuality: " .. tostring(GetCVar("screenshotQuality")))
         print("  screenshotFormat: " .. tostring(GetCVar("screenshotFormat")))
+        print("  prior screenshotQuality stash: " ..
+              tostring(ApplicantScoutDB.priorScreenshotQuality))
+        print("  prior screenshotFormat stash: " ..
+              tostring(ApplicantScoutDB.priorScreenshotFormat))
         -- raw API diagnostics
         print("|cff00ff7f---|r raw API:")
         print("  HasActiveEntryInfo: " .. tostring(C_LFGList.HasActiveEntryInfo()))
