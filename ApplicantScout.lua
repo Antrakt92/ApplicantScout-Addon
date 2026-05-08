@@ -26,6 +26,7 @@ local ADDON_VERSION = (C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadat
 local DB_DEFAULTS = {
     enabled = true,
     debug = false,
+    autoCompetitivePlaystyle = true,
     -- One-shot migration sentinel. Existing installs may have `debug=true`
     -- stuck from a prior `/apscout debug on` (default flipped from "on-stuck"
     -- to "off after explicit toggle" in this version). When the key is
@@ -119,7 +120,8 @@ local SafeStr, APSPrint, InitDB, StartSession, EndSession, CheckSessionTransitio
       MaybeTriggerScreenshot,
       -- Settings panel (pinned above PVEFrame). Forward-decl'd so slash handler
       -- + PLAYER_LOGIN handler can reference before bodies are defined.
-      _SetEnabled, _SetDebug, _AttachSettingsPanel, _AddSettingsRow, _SetWidgetTooltip,
+      _SetEnabled, _SetDebug, _SetAutoCompetitivePlaystyle, _AttachSettingsPanel,
+      _AddSettingsRow, _SetWidgetTooltip,
       -- Visibility coordinator + interaction-frame tracking. Replaces direct
       -- qrFrame:Show/Hide calls so a single function decides visibility from
       -- three orthogonal axes: isSessionActive (auto), _qrSuppressedByInteraction
@@ -129,7 +131,10 @@ local SafeStr, APSPrint, InitDB, StartSession, EndSession, CheckSessionTransitio
       -- PVEFrame movement (Phase 2). Forward-decl'd so PLAYER_LOGIN handler
       -- and _AttachSettingsPanel's ADDON_LOADED watcher can both reference it
       -- before the body is defined further down.
-      _SetupPVEFrameMovement
+      _SetupPVEFrameMovement,
+      -- Group Finder creation helpers. Kept separate from QR/session state:
+      -- this defaults Blizzard's own entry-creation form only.
+      _SetupLFGAutoCompetitive, _MaybeAutoSelectCompetitive
 -- Forward-decl mutable state used by StartSession/EndSession/reset. WHY: those
 -- functions assign via bare `x = ...`; without forward-decl, the `local` keyword
 -- on declarations later in this file would shadow them and the bare assignments
@@ -153,9 +158,14 @@ local lastSnapshotHash, lastShotTime, pendingShotDirty,
 -- in _AttachSettingsPanel. settingsFrameAttached = one-shot init guard.
 -- stackedHeight = running tally of (rowHeight + ROW_GAP) used by
 -- _AddSettingsRow to anchor next widget under the title and resize the frame.
-local settingsFrame, enabledCheckbox, debugCheckbox
+local settingsFrame, enabledCheckbox, debugCheckbox, autoCompetitiveCheckbox
 local settingsFrameAttached = false
 local stackedHeight = 0
+
+local lfgAutoCompetitiveHooksSetup = false
+local lfgAutoCompetitiveApplying = false
+local lfgAutoCompetitiveHookError = nil
+local lfgAutoCompetitiveTouchedPanels = setmetatable({}, { __mode = "k" })
 
 -- ───────────────────────────────────────────────────────────
 -- helpers
@@ -1551,12 +1561,142 @@ MaybeTriggerScreenshot = function(force, entryHint)
     end
 end
 
+-- ───────────────────────────────────────────────────────────
+-- LFG entry creation: default Mythic+ playstyle to Competitive
+--
+-- WARNING: this intentionally keeps addon-owned state out of Blizzard frame
+-- fields. The only Blizzard field we mutate is the actual form value the user
+-- asked us to prefill, and live `/reload` + test-listing taint verification is
+-- still required before release.
+-- WHY this writes only Blizzard's entry-creation form state: C_LFGList
+-- CreateListing/UpdateListing and title helpers are restricted /
+-- AllowedWhenUntainted in 12.x. We prefill `generalPlaystyle` before the user
+-- clicks List Group, then let Blizzard's own hardware-event path submit it.
+-- Do not replace Blizzard functions or call CreateListing/UpdateListing here.
+
+_MaybeAutoSelectCompetitive = function(panel, reason)
+    if not (ApplicantScoutDB and ApplicantScoutDB.enabled
+            and ApplicantScoutDB.autoCompetitivePlaystyle) then
+        return false
+    end
+
+    local enum = _G.Enum
+    local generalPlaystyleEnum = enum and enum.LFGEntryGeneralPlaystyle
+    local competitive = generalPlaystyleEnum and generalPlaystyleEnum.FunSerious
+    if competitive == nil then return false end
+
+    if not panel or lfgAutoCompetitiveTouchedPanels[panel] then return false end
+
+    local isEditMode = _G.LFGListEntryCreation_IsEditMode
+    if type(isEditMode) ~= "function" or isEditMode(panel) then return false end
+
+    local activityID = panel.selectedActivity
+    if activityID == nil or IsSecretValue(activityID) then return false end
+    if not (C_LFGList and C_LFGList.GetActivityInfoTable) then return false end
+
+    local activityInfo = SafeTable(C_LFGList.GetActivityInfoTable(activityID))
+    if not activityInfo then return false end
+    if IsSecretValue(activityInfo.isMythicPlusActivity)
+       or activityInfo.isMythicPlusActivity ~= true then
+        return false
+    end
+
+    local currentPlaystyle = panel.generalPlaystyle
+    if IsSecretValue(currentPlaystyle) then return false end
+    if currentPlaystyle == competitive then return true end
+
+    lfgAutoCompetitiveApplying = true
+    local ok, err = pcall(function()
+        panel.generalPlaystyle = competitive
+
+        local updateValidState = _G.LFGListEntryCreation_UpdateValidState
+        if type(updateValidState) == "function" then
+            updateValidState(panel)
+        end
+
+        local dropdown = panel.PlayStyleDropdown
+        if dropdown and type(dropdown.GenerateMenu) == "function" then
+            dropdown:GenerateMenu()
+        end
+    end)
+    lfgAutoCompetitiveApplying = false
+    if not ok then
+        if ApplicantScoutDB.debug then
+            print("|cff999999[APS-debug]|r LFG auto-competitive failed: "
+                  .. tostring(err))
+        end
+        return false
+    end
+
+    if ApplicantScoutDB.debug then
+        print("|cff999999[APS-debug]|r LFG auto-competitive applied"
+              .. (reason and (" (" .. reason .. ")") or ""))
+    end
+    return true
+end
+
+_SetupLFGAutoCompetitive = function()
+    if lfgAutoCompetitiveHooksSetup or lfgAutoCompetitiveHookError then
+        return lfgAutoCompetitiveHooksSetup
+    end
+
+    local hook = _G.hooksecurefunc
+    local selectFn = _G.LFGListEntryCreation_Select
+    local showFn = _G.LFGListEntryCreation_Show
+    local setEditModeFn = _G.LFGListEntryCreation_SetEditMode
+    local selectPlaystyleFn = _G.LFGListEntryCreation_OnPlayStyleSelectedInternal
+    if type(hook) ~= "function"
+       or type(selectFn) ~= "function"
+       or type(showFn) ~= "function"
+       or type(setEditModeFn) ~= "function"
+       or type(selectPlaystyleFn) ~= "function" then
+        return false
+    end
+
+    local ok, err = pcall(function()
+        hook("LFGListEntryCreation_Select", function(panel)
+            _MaybeAutoSelectCompetitive(panel, "select")
+        end)
+        hook("LFGListEntryCreation_Show", function(panel)
+            if panel then lfgAutoCompetitiveTouchedPanels[panel] = nil end
+            _MaybeAutoSelectCompetitive(panel, "show")
+        end)
+        hook("LFGListEntryCreation_SetEditMode", function(panel, editMode)
+            if not editMode then
+                _MaybeAutoSelectCompetitive(panel, "create-mode")
+            end
+        end)
+        hook("LFGListEntryCreation_OnPlayStyleSelectedInternal", function(panel)
+            if panel and not lfgAutoCompetitiveApplying then
+                lfgAutoCompetitiveTouchedPanels[panel] = true
+            end
+        end)
+    end)
+
+    if not ok then
+        lfgAutoCompetitiveHookError = tostring(err)
+        if ApplicantScoutDB and ApplicantScoutDB.debug then
+            print("|cff999999[APS-debug]|r LFG auto-competitive hook failed: "
+                  .. lfgAutoCompetitiveHookError)
+        end
+        return false
+    end
+
+    lfgAutoCompetitiveHooksSetup = true
+    local frame = _G.LFGListFrame
+    if frame and frame.EntryCreation then
+        _MaybeAutoSelectCompetitive(frame.EntryCreation, "setup")
+    end
+    return true
+end
+
 local EVENT_HANDLERS = {
     PLAYER_LOGIN                     = function()
         InitDB()
         MarkDirty("login")
         _AttachSettingsPanel()
         _SetupPVEFrameMovement()  -- no-ops if BlizzMove loaded OR PVEFrame missing
+        _SetupLFGAutoCompetitive() -- no-ops until Blizzard LFG globals exist
         _TryHookInfoPanels()      -- initial scan; ADDON_LOADED catches LoD frames later
     end,
     PLAYER_ENTERING_WORLD            = function()
@@ -1573,7 +1713,10 @@ local EVENT_HANDLERS = {
     -- They don't exist at PLAYER_LOGIN. Re-scan on every ADDON_LOADED catches
     -- each as its addon loads. Cost: ~10-15 fires per session × 12-frame
     -- iteration = microseconds.
-    ADDON_LOADED                     = function() _TryHookInfoPanels() end,
+    ADDON_LOADED                     = function()
+        _SetupLFGAutoCompetitive()
+        _TryHookInfoPanels()
+    end,
     -- WHY persist on logout (Phase 2): PLAYER_LOGOUT fires after UI teardown
     -- begins but BEFORE SavedVariables flush. Drag-stop covers obvious paths;
     -- this catches positions changed via slash macros / scripted moves /
@@ -1754,6 +1897,20 @@ _SetDebug = function(flag)
     APSPrint("debug " .. (flag and "ON — every scan/emit will print" or "OFF"))
 end
 
+_SetAutoCompetitivePlaystyle = function(flag)
+    flag = not not flag
+    ApplicantScoutDB.autoCompetitivePlaystyle = flag
+    if autoCompetitiveCheckbox then autoCompetitiveCheckbox:SetChecked(flag) end
+    if flag then
+        _SetupLFGAutoCompetitive()
+        local frame = _G.LFGListFrame
+        if frame and frame.EntryCreation then
+            _MaybeAutoSelectCompetitive(frame.EntryCreation, "toggle")
+        end
+    end
+    APSPrint("auto-competitive M+ playstyle " .. (flag and "ON" or "OFF"))
+end
+
 -- Layout constants for the Blizzard-tooltip-style panel chrome.
 local _SETTINGS_FRAME_WIDTH = 240
 local _SETTINGS_TOP_PAD = 10        -- clearance under the rope-border top edge
@@ -1898,15 +2055,35 @@ _AttachSettingsPanel = function()
     )
     _AddSettingsRow(debugCheckbox)
 
+    autoCompetitiveCheckbox = CreateFrame(
+        "CheckButton",
+        "ApplicantScoutSettingsAutoCompetitiveCheckbox",
+        settingsFrame,
+        "UICheckButtonTemplate"
+    )
+    _StyleCheckboxLabel(autoCompetitiveCheckbox, "Auto-select Competitive for M+")
+    autoCompetitiveCheckbox:SetScript("OnClick", function(self)
+        _SetAutoCompetitivePlaystyle(not not self:GetChecked())
+    end)
+    autoCompetitiveCheckbox:SetHitRectInsets(0, -180, 0, 0)
+    _SetWidgetTooltip(
+        autoCompetitiveCheckbox,
+        "Auto-select Competitive for M+",
+        "When on, ApplicantScout defaults new Mythic+ group listings to Competitive in Blizzard's playstyle dropdown. Manual changes in the same form are left alone."
+    )
+    _AddSettingsRow(autoCompetitiveCheckbox)
+
     -- Re-sync checkboxes from DB on each show. Handles slash-toggle-while-
     -- panel-was-hidden case: open via /apscout config → checkboxes reflect DB truth.
     settingsFrame:HookScript("OnShow", function()
         enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
         debugCheckbox:SetChecked(ApplicantScoutDB.debug)
+        autoCompetitiveCheckbox:SetChecked(ApplicantScoutDB.autoCompetitivePlaystyle)
     end)
 
     enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
     debugCheckbox:SetChecked(ApplicantScoutDB.debug)
+    autoCompetitiveCheckbox:SetChecked(ApplicantScoutDB.autoCompetitivePlaystyle)
 
     settingsFrameAttached = true  -- LAST: any earlier failure leaves false → retry next PLAYER_LOGIN
 end
@@ -1928,6 +2105,7 @@ local function PrintHelp()
     print("  /apscout qrreset        reset QR frame position to top-left")
     print("  /apscout taintcheck     probe C_LFGList field secret-tagging")
     print("  /apscout debug [on|off] toggle debug logging")
+    print("  /apscout competitive [on|off] auto-select Competitive for M+ listings")
 end
 
 SLASH_APSCOUT1 = "/apscout"
@@ -1940,6 +2118,10 @@ SlashCmdList.APSCOUT = function(msg)
         _SetEnabled(false)
     elseif msg == "toggle" then
         _SetEnabled(not ApplicantScoutDB.enabled)
+    elseif msg == "competitive" or msg == "competitive on" then
+        _SetAutoCompetitivePlaystyle(true)
+    elseif msg == "competitive off" or msg == "nocompetitive" then
+        _SetAutoCompetitivePlaystyle(false)
     elseif msg == "config" or msg == "settings" then
         -- Toggle settings panel visibility. Lazy-attach if PLAYER_LOGIN race
         -- left settingsFrameAttached=false (PVEFrame still loading). Open via
@@ -1955,6 +2137,7 @@ SlashCmdList.APSCOUT = function(msg)
     elseif msg == "status" then
         print("|cff00ff7fApplicantScout|r status:")
         print("  enabled: " .. tostring(ApplicantScoutDB.enabled))
+        print("  auto-competitive M+: " .. tostring(ApplicantScoutDB.autoCompetitivePlaystyle))
         print("  settings panel attached: " .. tostring(settingsFrameAttached))
         print("  session active: " .. tostring(isSessionActive))
         print("  session gen: " .. tostring(sessionGen))
@@ -2059,6 +2242,10 @@ SlashCmdList.APSCOUT = function(msg)
         print("  BlizzMove loaded: " .. tostring(hasBlizzMove))
         print("  movement setup: " .. tostring(PVEFrame
               and PVEFrame.apsMovementSetup or false))
+        print("  auto-competitive hooks: " .. tostring(lfgAutoCompetitiveHooksSetup)
+              .. (lfgAutoCompetitiveHookError
+                  and (" (error: " .. lfgAutoCompetitiveHookError .. ")")
+                  or ""))
         if ApplicantScoutDB.pveFramePosition then
             local pos = ApplicantScoutDB.pveFramePosition
             print(string.format("  saved position: %s @ (%.0f, %.0f)",

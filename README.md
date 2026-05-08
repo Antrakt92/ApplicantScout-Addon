@@ -19,6 +19,9 @@ external overlay.
 4. Create your Mythic+ listing as usual.
 5. Keep ApplicantScout enabled while scouting applicants.
 
+ApplicantScout defaults new Mythic+ listings to the `Competitive` playstyle.
+Use `/apscout competitive off` or the settings panel to disable that helper.
+
 The QR frame defaults to the top-left of the UI and stays visible during an
 active capture session so the screenshot transport is reliable. Use
 `/apscout qrmove` and Alt+drag the QR frame to move it. ApplicantScout
@@ -39,6 +42,7 @@ restores your prior screenshot settings when you turn it off with `/apscout off`
 /apscout qrreset        reset QR frame position to top-left
 /apscout taintcheck     inspect LFG field secret-tagging diagnostics
 /apscout debug [on|off] toggle debug logging
+/apscout competitive [on|off] auto-select Competitive for M+ listings
 ```
 
 ## Transport
