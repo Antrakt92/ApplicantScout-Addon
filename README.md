@@ -20,7 +20,9 @@ external overlay.
 5. Keep ApplicantScout enabled while scouting applicants.
 
 ApplicantScout defaults new Mythic+ listings to the `Competitive` playstyle.
-Use `/apscout competitive off` or the settings panel to disable that helper.
+Use the settings panel or `/apscout playstyle ...` to choose Off, Learning,
+Relaxed, Competitive, or Carry Offered. The legacy `/apscout competitive off`
+alias still disables the helper.
 
 The QR frame defaults to the top-left of the UI and stays visible during an
 active capture session so the screenshot transport is reliable. Use
@@ -35,6 +37,7 @@ restores your prior screenshot settings when you turn it off with `/apscout off`
 /apscout toggle         flip enabled state
 /apscout config         open or close the settings panel
 /apscout status         show current state and QR diagnostics
+/apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle
 /apscout reset          clear dedup cache and force a fresh snapshot
 /apscout shotnow        force a snapshot now
 /apscout qrvisible      keep the QR frame visible for debugging
@@ -42,7 +45,7 @@ restores your prior screenshot settings when you turn it off with `/apscout off`
 /apscout qrreset        reset QR frame position to top-left
 /apscout taintcheck     inspect LFG field secret-tagging diagnostics
 /apscout debug [on|off] toggle debug logging
-/apscout competitive [on|off] auto-select Competitive for M+ listings
+/apscout competitive [on|off] legacy alias for Competitive / Off
 ```
 
 ## Transport

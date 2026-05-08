@@ -23,10 +23,33 @@
 local addonName = ...
 local ADDON_VERSION = (C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata)(addonName, "Version") or "?"
 
+local AUTO_MPLUS_PLAYSTYLE_DISABLED = "disabled"
+local AUTO_MPLUS_PLAYSTYLE_DEFAULT = "FunSerious"
+local AUTO_MPLUS_PLAYSTYLE_OPTIONS = {
+    { token = AUTO_MPLUS_PLAYSTYLE_DISABLED, fallback = "Off" },
+    { token = "Learning", labelGlobal = "GROUP_FINDER_GENERAL_PLAYSTYLE1", fallback = "Learning" },
+    { token = "FunRelaxed", labelGlobal = "GROUP_FINDER_GENERAL_PLAYSTYLE2", fallback = "Relaxed" },
+    { token = "FunSerious", labelGlobal = "GROUP_FINDER_GENERAL_PLAYSTYLE3", fallback = "Competitive" },
+    { token = "Expert", labelGlobal = "GROUP_FINDER_GENERAL_PLAYSTYLE4", fallback = "Carry Offered" },
+}
+local AUTO_MPLUS_PLAYSTYLE_ALIASES = {
+    off = AUTO_MPLUS_PLAYSTYLE_DISABLED,
+    disabled = AUTO_MPLUS_PLAYSTYLE_DISABLED,
+    none = AUTO_MPLUS_PLAYSTYLE_DISABLED,
+    learning = "Learning",
+    relaxed = "FunRelaxed",
+    funrelaxed = "FunRelaxed",
+    competitive = "FunSerious",
+    serious = "FunSerious",
+    funserious = "FunSerious",
+    carry = "Expert",
+    expert = "Expert",
+}
+
 local DB_DEFAULTS = {
     enabled = true,
     debug = false,
-    autoCompetitivePlaystyle = true,
+    autoMPlusPlaystyle = AUTO_MPLUS_PLAYSTYLE_DEFAULT,
     -- One-shot migration sentinel. Existing installs may have `debug=true`
     -- stuck from a prior `/apscout debug on` (default flipped from "on-stuck"
     -- to "off after explicit toggle" in this version). When the key is
@@ -120,8 +143,8 @@ local SafeStr, APSPrint, InitDB, StartSession, EndSession, CheckSessionTransitio
       MaybeTriggerScreenshot,
       -- Settings panel (pinned above PVEFrame). Forward-decl'd so slash handler
       -- + PLAYER_LOGIN handler can reference before bodies are defined.
-      _SetEnabled, _SetDebug, _SetAutoCompetitivePlaystyle, _AttachSettingsPanel,
-      _AddSettingsRow, _SetWidgetTooltip,
+      _SetEnabled, _SetDebug, _SetAutoMPlusPlaystyle, _AttachSettingsPanel,
+      _SetWidgetTooltip, _SyncAutoMPlusPlaystyleDropdown,
       -- Visibility coordinator + interaction-frame tracking. Replaces direct
       -- qrFrame:Show/Hide calls so a single function decides visibility from
       -- three orthogonal axes: isSessionActive (auto), _qrSuppressedByInteraction
@@ -134,7 +157,7 @@ local SafeStr, APSPrint, InitDB, StartSession, EndSession, CheckSessionTransitio
       _SetupPVEFrameMovement,
       -- Group Finder creation helpers. Kept separate from QR/session state:
       -- this defaults Blizzard's own entry-creation form only.
-      _SetupLFGAutoCompetitive, _MaybeAutoSelectCompetitive
+      _SetupLFGDefaultPlaystyle, _MaybeAutoSelectDefaultPlaystyle
 -- Forward-decl mutable state used by StartSession/EndSession/reset. WHY: those
 -- functions assign via bare `x = ...`; without forward-decl, the `local` keyword
 -- on declarations later in this file would shadow them and the bare assignments
@@ -156,16 +179,15 @@ local lastSnapshotHash, lastShotTime, pendingShotDirty,
 
 -- Settings panel state. settingsFrame = parent of all widgets; created lazily
 -- in _AttachSettingsPanel. settingsFrameAttached = one-shot init guard.
--- stackedHeight = running tally of (rowHeight + ROW_GAP) used by
--- _AddSettingsRow to anchor next widget under the title and resize the frame.
-local settingsFrame, enabledCheckbox, debugCheckbox, autoCompetitiveCheckbox
+local settingsFrame, enabledCheckbox, debugCheckbox,
+      autoMPlusPlaystyleLabel, autoMPlusPlaystyleDropdown,
+      autoMPlusPlaystyleFallbackText
 local settingsFrameAttached = false
-local stackedHeight = 0
 
-local lfgAutoCompetitiveHooksSetup = false
-local lfgAutoCompetitiveApplying = false
-local lfgAutoCompetitiveHookError = nil
-local lfgAutoCompetitiveTouchedPanels = setmetatable({}, { __mode = "k" })
+local lfgDefaultPlaystyleHooksSetup = false
+local lfgDefaultPlaystyleApplying = false
+local lfgDefaultPlaystyleHookError = nil
+local lfgDefaultPlaystyleTouchedPanels = setmetatable({}, { __mode = "k" })
 
 -- ───────────────────────────────────────────────────────────
 -- helpers
@@ -244,11 +266,78 @@ local function IsChatMessagingLockdown()
            and C_ChatInfo.InChatMessagingLockdown() or false
 end
 
+local function _NormalizeAutoMPlusPlaystyleToken(token)
+    if IsSecretValue(token) or type(token) ~= "string" then
+        return AUTO_MPLUS_PLAYSTYLE_DEFAULT
+    end
+    if token == AUTO_MPLUS_PLAYSTYLE_DISABLED then
+        return token
+    end
+    for _, option in ipairs(AUTO_MPLUS_PLAYSTYLE_OPTIONS) do
+        if token == option.token then
+            return token
+        end
+    end
+    return AUTO_MPLUS_PLAYSTYLE_DEFAULT
+end
+
+local function _NormalizeAutoMPlusPlaystyleCommand(token)
+    if IsSecretValue(token) or type(token) ~= "string" then return nil end
+    token = token:lower():gsub("^%s+", ""):gsub("%s+$", "")
+    if token == "" then return nil end
+    return AUTO_MPLUS_PLAYSTYLE_ALIASES[token]
+end
+
+local function _GetAutoMPlusPlaystyleLabel(token)
+    token = _NormalizeAutoMPlusPlaystyleToken(token)
+    for _, option in ipairs(AUTO_MPLUS_PLAYSTYLE_OPTIONS) do
+        if token == option.token then
+            if option.labelGlobal and _G[option.labelGlobal] then
+                return _G[option.labelGlobal]
+            end
+            return option.fallback
+        end
+    end
+    return "Competitive"
+end
+
+local function _GetAutoMPlusPlaystyleStatusText()
+    local token = _NormalizeAutoMPlusPlaystyleToken(
+        ApplicantScoutDB and ApplicantScoutDB.autoMPlusPlaystyle)
+    local label = _GetAutoMPlusPlaystyleLabel(token)
+    if token == AUTO_MPLUS_PLAYSTYLE_DISABLED then
+        return label
+    end
+    return label .. " (" .. token .. ")"
+end
+
+local function _GetConfiguredMPlusPlaystyleEnum()
+    local token = _NormalizeAutoMPlusPlaystyleToken(
+        ApplicantScoutDB and ApplicantScoutDB.autoMPlusPlaystyle)
+    if token == AUTO_MPLUS_PLAYSTYLE_DISABLED then return nil, token end
+
+    local enum = _G.Enum
+    local generalPlaystyleEnum = enum and enum.LFGEntryGeneralPlaystyle
+    local value = generalPlaystyleEnum and generalPlaystyleEnum[token]
+    if value == nil or IsSecretValue(value) then return nil, token end
+    return value, token
+end
+
 InitDB = function()
     if type(ApplicantScoutDB) ~= "table" then ApplicantScoutDB = {} end
+    if ApplicantScoutDB.autoMPlusPlaystyle == nil
+       and ApplicantScoutDB.autoCompetitivePlaystyle ~= nil then
+        ApplicantScoutDB.autoMPlusPlaystyle =
+            ApplicantScoutDB.autoCompetitivePlaystyle
+            and AUTO_MPLUS_PLAYSTYLE_DEFAULT
+            or AUTO_MPLUS_PLAYSTYLE_DISABLED
+    end
     for k, v in pairs(DB_DEFAULTS) do
         if ApplicantScoutDB[k] == nil then ApplicantScoutDB[k] = v end
     end
+    ApplicantScoutDB.autoMPlusPlaystyle =
+        _NormalizeAutoMPlusPlaystyleToken(ApplicantScoutDB.autoMPlusPlaystyle)
+    ApplicantScoutDB.autoCompetitivePlaystyle = nil
     if not ApplicantScoutDB.debugDefaultMigrated then
         ApplicantScoutDB.debug = false
         ApplicantScoutDB.debugDefaultMigrated = true
@@ -1562,7 +1651,7 @@ MaybeTriggerScreenshot = function(force, entryHint)
 end
 
 -- ───────────────────────────────────────────────────────────
--- LFG entry creation: default Mythic+ playstyle to Competitive
+-- LFG entry creation: default Mythic+ playstyle
 --
 -- WARNING: this intentionally keeps addon-owned state out of Blizzard frame
 -- fields. The only Blizzard field we mutate is the actual form value the user
@@ -1574,18 +1663,15 @@ end
 -- clicks List Group, then let Blizzard's own hardware-event path submit it.
 -- Do not replace Blizzard functions or call CreateListing/UpdateListing here.
 
-_MaybeAutoSelectCompetitive = function(panel, reason)
-    if not (ApplicantScoutDB and ApplicantScoutDB.enabled
-            and ApplicantScoutDB.autoCompetitivePlaystyle) then
+_MaybeAutoSelectDefaultPlaystyle = function(panel, reason)
+    if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then
         return false
     end
 
-    local enum = _G.Enum
-    local generalPlaystyleEnum = enum and enum.LFGEntryGeneralPlaystyle
-    local competitive = generalPlaystyleEnum and generalPlaystyleEnum.FunSerious
-    if competitive == nil then return false end
+    local configuredPlaystyle, token = _GetConfiguredMPlusPlaystyleEnum()
+    if configuredPlaystyle == nil then return false end
 
-    if not panel or lfgAutoCompetitiveTouchedPanels[panel] then return false end
+    if not panel or lfgDefaultPlaystyleTouchedPanels[panel] then return false end
 
     local isEditMode = _G.LFGListEntryCreation_IsEditMode
     if type(isEditMode) ~= "function" or isEditMode(panel) then return false end
@@ -1603,11 +1689,11 @@ _MaybeAutoSelectCompetitive = function(panel, reason)
 
     local currentPlaystyle = panel.generalPlaystyle
     if IsSecretValue(currentPlaystyle) then return false end
-    if currentPlaystyle == competitive then return true end
+    if currentPlaystyle == configuredPlaystyle then return true end
 
-    lfgAutoCompetitiveApplying = true
+    lfgDefaultPlaystyleApplying = true
     local ok, err = pcall(function()
-        panel.generalPlaystyle = competitive
+        panel.generalPlaystyle = configuredPlaystyle
 
         local updateValidState = _G.LFGListEntryCreation_UpdateValidState
         if type(updateValidState) == "function" then
@@ -1619,25 +1705,26 @@ _MaybeAutoSelectCompetitive = function(panel, reason)
             dropdown:GenerateMenu()
         end
     end)
-    lfgAutoCompetitiveApplying = false
+    lfgDefaultPlaystyleApplying = false
     if not ok then
         if ApplicantScoutDB.debug then
-            print("|cff999999[APS-debug]|r LFG auto-competitive failed: "
+            print("|cff999999[APS-debug]|r LFG default playstyle failed: "
                   .. tostring(err))
         end
         return false
     end
 
     if ApplicantScoutDB.debug then
-        print("|cff999999[APS-debug]|r LFG auto-competitive applied"
+        print("|cff999999[APS-debug]|r LFG default playstyle applied: "
+              .. _GetAutoMPlusPlaystyleLabel(token)
               .. (reason and (" (" .. reason .. ")") or ""))
     end
     return true
 end
 
-_SetupLFGAutoCompetitive = function()
-    if lfgAutoCompetitiveHooksSetup or lfgAutoCompetitiveHookError then
-        return lfgAutoCompetitiveHooksSetup
+_SetupLFGDefaultPlaystyle = function()
+    if lfgDefaultPlaystyleHooksSetup or lfgDefaultPlaystyleHookError then
+        return lfgDefaultPlaystyleHooksSetup
     end
 
     local hook = _G.hooksecurefunc
@@ -1655,37 +1742,37 @@ _SetupLFGAutoCompetitive = function()
 
     local ok, err = pcall(function()
         hook("LFGListEntryCreation_Select", function(panel)
-            _MaybeAutoSelectCompetitive(panel, "select")
+            _MaybeAutoSelectDefaultPlaystyle(panel, "select")
         end)
         hook("LFGListEntryCreation_Show", function(panel)
-            if panel then lfgAutoCompetitiveTouchedPanels[panel] = nil end
-            _MaybeAutoSelectCompetitive(panel, "show")
+            if panel then lfgDefaultPlaystyleTouchedPanels[panel] = nil end
+            _MaybeAutoSelectDefaultPlaystyle(panel, "show")
         end)
         hook("LFGListEntryCreation_SetEditMode", function(panel, editMode)
             if not editMode then
-                _MaybeAutoSelectCompetitive(panel, "create-mode")
+                _MaybeAutoSelectDefaultPlaystyle(panel, "create-mode")
             end
         end)
         hook("LFGListEntryCreation_OnPlayStyleSelectedInternal", function(panel)
-            if panel and not lfgAutoCompetitiveApplying then
-                lfgAutoCompetitiveTouchedPanels[panel] = true
+            if panel and not lfgDefaultPlaystyleApplying then
+                lfgDefaultPlaystyleTouchedPanels[panel] = true
             end
         end)
     end)
 
     if not ok then
-        lfgAutoCompetitiveHookError = tostring(err)
+        lfgDefaultPlaystyleHookError = tostring(err)
         if ApplicantScoutDB and ApplicantScoutDB.debug then
-            print("|cff999999[APS-debug]|r LFG auto-competitive hook failed: "
-                  .. lfgAutoCompetitiveHookError)
+            print("|cff999999[APS-debug]|r LFG default playstyle hook failed: "
+                  .. lfgDefaultPlaystyleHookError)
         end
         return false
     end
 
-    lfgAutoCompetitiveHooksSetup = true
+    lfgDefaultPlaystyleHooksSetup = true
     local frame = _G.LFGListFrame
     if frame and frame.EntryCreation then
-        _MaybeAutoSelectCompetitive(frame.EntryCreation, "setup")
+        _MaybeAutoSelectDefaultPlaystyle(frame.EntryCreation, "setup")
     end
     return true
 end
@@ -1696,7 +1783,7 @@ local EVENT_HANDLERS = {
         MarkDirty("login")
         _AttachSettingsPanel()
         _SetupPVEFrameMovement()  -- no-ops if BlizzMove loaded OR PVEFrame missing
-        _SetupLFGAutoCompetitive() -- no-ops until Blizzard LFG globals exist
+        _SetupLFGDefaultPlaystyle() -- no-ops until Blizzard LFG globals exist
         _TryHookInfoPanels()      -- initial scan; ADDON_LOADED catches LoD frames later
     end,
     PLAYER_ENTERING_WORLD            = function()
@@ -1714,7 +1801,7 @@ local EVENT_HANDLERS = {
     -- each as its addon loads. Cost: ~10-15 fires per session × 12-frame
     -- iteration = microseconds.
     ADDON_LOADED                     = function()
-        _SetupLFGAutoCompetitive()
+        _SetupLFGDefaultPlaystyle()
         _TryHookInfoPanels()
     end,
     -- WHY persist on logout (Phase 2): PLAYER_LOGOUT fires after UI teardown
@@ -1897,55 +1984,47 @@ _SetDebug = function(flag)
     APSPrint("debug " .. (flag and "ON — every scan/emit will print" or "OFF"))
 end
 
-_SetAutoCompetitivePlaystyle = function(flag)
-    flag = not not flag
-    ApplicantScoutDB.autoCompetitivePlaystyle = flag
-    if autoCompetitiveCheckbox then autoCompetitiveCheckbox:SetChecked(flag) end
-    if flag then
-        _SetupLFGAutoCompetitive()
-        local frame = _G.LFGListFrame
-        if frame and frame.EntryCreation then
-            _MaybeAutoSelectCompetitive(frame.EntryCreation, "toggle")
+_SyncAutoMPlusPlaystyleDropdown = function()
+    local label = _GetAutoMPlusPlaystyleLabel(
+        ApplicantScoutDB and ApplicantScoutDB.autoMPlusPlaystyle)
+    if autoMPlusPlaystyleDropdown then
+        if type(autoMPlusPlaystyleDropdown.SetDefaultText) == "function" then
+            autoMPlusPlaystyleDropdown:SetDefaultText(label)
+        end
+        if type(autoMPlusPlaystyleDropdown.GenerateMenu) == "function" then
+            pcall(autoMPlusPlaystyleDropdown.GenerateMenu, autoMPlusPlaystyleDropdown)
         end
     end
-    APSPrint("auto-competitive M+ playstyle " .. (flag and "ON" or "OFF"))
+    if autoMPlusPlaystyleFallbackText then
+        autoMPlusPlaystyleFallbackText:SetText(label .. " (/apscout playstyle)")
+    end
+end
+
+_SetAutoMPlusPlaystyle = function(token, quiet)
+    token = _NormalizeAutoMPlusPlaystyleToken(token)
+    ApplicantScoutDB.autoMPlusPlaystyle = token
+    _SyncAutoMPlusPlaystyleDropdown()
+    if token ~= AUTO_MPLUS_PLAYSTYLE_DISABLED then
+        _SetupLFGDefaultPlaystyle()
+        local frame = _G.LFGListFrame
+        if frame and frame.EntryCreation then
+            _MaybeAutoSelectDefaultPlaystyle(frame.EntryCreation, "toggle")
+        end
+    end
+    if not quiet then
+        APSPrint("M+ default playstyle: " .. _GetAutoMPlusPlaystyleStatusText())
+    end
 end
 
 -- Layout constants for the Blizzard-tooltip-style panel chrome.
-local _SETTINGS_FRAME_WIDTH = 240
+local _SETTINGS_FRAME_WIDTH = 420
+local _SETTINGS_FRAME_HEIGHT = 96
+local _SETTINGS_ANCHOR_X = 300
+local _SETTINGS_ANCHOR_Y = 6
 local _SETTINGS_TOP_PAD = 10        -- clearance under the rope-border top edge
-local _SETTINGS_BOTTOM_PAD = 8      -- clearance above rope-border bottom edge
 local _SETTINGS_LEFT_PAD = 14
-local _SETTINGS_RIGHT_PAD = 12
-local _SETTINGS_TITLE_HEIGHT = 16
-local _SETTINGS_TITLE_GAP = 6       -- gap between title row and first widget
-local _SETTINGS_DEFAULT_ROW_HEIGHT = 22
-local _SETTINGS_ROW_GAP = 4         -- gap BETWEEN rows; not added after last row
--- Y offset of first widget row from the frame TOPLEFT.
-local _SETTINGS_CONTENT_TOP_OFFSET = _SETTINGS_TOP_PAD
-                                     + _SETTINGS_TITLE_HEIGHT
-                                     + _SETTINGS_TITLE_GAP
-
--- Caller convention: widget already has parent=settingsFrame when created.
--- Helper does NOT call SetParent — explicit ownership, less magic.
--- Frame height = top offset + content (rows + interior gaps) + bottom pad.
--- We add ROW_GAP after each row in stackedHeight, then subtract it from the
--- frame size formula so the trailing gap below the last row stays visual zero.
-_AddSettingsRow = function(widget, customHeight)
-    local h = customHeight or _SETTINGS_DEFAULT_ROW_HEIGHT
-    widget:SetPoint(
-        "TOPLEFT",
-        settingsFrame,
-        "TOPLEFT",
-        _SETTINGS_LEFT_PAD,
-        -(_SETTINGS_CONTENT_TOP_OFFSET + stackedHeight)
-    )
-    stackedHeight = stackedHeight + h + _SETTINGS_ROW_GAP
-    settingsFrame:SetSize(
-        _SETTINGS_FRAME_WIDTH,
-        _SETTINGS_CONTENT_TOP_OFFSET + (stackedHeight - _SETTINGS_ROW_GAP) + _SETTINGS_BOTTOM_PAD
-    )
-end
+local _SETTINGS_RIGHT_COL_X = 238
+local _SETTINGS_DROPDOWN_WIDTH = 170
 
 -- Lazily creates the settings panel as a child of PVEFrame, anchored above
 -- the LFG title bar. Idempotent (one-shot via settingsFrameAttached flag).
@@ -1975,13 +2054,17 @@ _AttachSettingsPanel = function()
         PVEFrame,
         "BackdropTemplate"
     )
-    settingsFrame:SetSize(_SETTINGS_FRAME_WIDTH, 88)  -- placeholder; _AddSettingsRow grows
-    -- Anchor BOTTOMLEFT of panel to TOPLEFT of PVEFrame +6 px gap. WHY left
-    -- side: BOTTOMRIGHT-to-TOPRIGHT placed the panel inside PVEFrame's nine-
-    -- slice chrome / close-button hit zone and rendered nothing visible. Left-
-    -- side placement is the known-good anchor — panel hangs cleanly above the
-    -- PVEFrame title bar with no chrome interference.
-    settingsFrame:SetPoint("BOTTOMLEFT", PVEFrame, "TOPLEFT", 0, 6)
+    settingsFrame:SetSize(_SETTINGS_FRAME_WIDTH, _SETTINGS_FRAME_HEIGHT)
+    -- Anchor with BOTTOMLEFT even for the right-shifted layout. A prior
+    -- BOTTOMRIGHT/TOPRIGHT attempt collided with PVEFrame chrome; offsetting
+    -- from the known-good top-left anchor keeps the panel visible and clamped.
+    settingsFrame:SetPoint(
+        "BOTTOMLEFT",
+        PVEFrame,
+        "TOPLEFT",
+        _SETTINGS_ANCHOR_X,
+        _SETTINGS_ANCHOR_Y
+    )
     settingsFrame:SetClampedToScreen(true)
     settingsFrame:SetFrameStrata("DIALOG")
 
@@ -2025,6 +2108,7 @@ _AttachSettingsPanel = function()
         settingsFrame,
         "UICheckButtonTemplate"
     )
+    enabledCheckbox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -32)
     _StyleCheckboxLabel(enabledCheckbox, "Enable applicant scouting")
     enabledCheckbox:SetScript("OnClick", function(self)
         _SetEnabled(not not self:GetChecked())
@@ -2035,7 +2119,6 @@ _AttachSettingsPanel = function()
         "Enable applicant scouting",
         "When on, ApplicantScout captures listing applicants and emits QR codes for the companion to decode. When off, no scans / no QR / no Screenshot() calls — addon stays loaded but idle."
     )
-    _AddSettingsRow(enabledCheckbox)
 
     debugCheckbox = CreateFrame(
         "CheckButton",
@@ -2043,6 +2126,7 @@ _AttachSettingsPanel = function()
         settingsFrame,
         "UICheckButtonTemplate"
     )
+    debugCheckbox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -58)
     _StyleCheckboxLabel(debugCheckbox, "Debug logging")
     debugCheckbox:SetScript("OnClick", function(self)
         _SetDebug(not not self:GetChecked())
@@ -2053,37 +2137,86 @@ _AttachSettingsPanel = function()
         "Debug logging",
         "Prints scan / capture / emit diagnostics to chat ([APS-debug] lines). Off by default — enable only for troubleshooting why an LFG listing isn't captured or to verify QR emit timing. No effect on overlay behavior."
     )
-    _AddSettingsRow(debugCheckbox)
 
-    autoCompetitiveCheckbox = CreateFrame(
-        "CheckButton",
-        "ApplicantScoutSettingsAutoCompetitiveCheckbox",
+    autoMPlusPlaystyleLabel = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    autoMPlusPlaystyleLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_RIGHT_COL_X, -31)
+    autoMPlusPlaystyleLabel:SetText("M+ default playstyle")
+
+    local dropdownOK, dropdown = pcall(
+        CreateFrame,
+        "DropdownButton",
+        "ApplicantScoutSettingsMPlusPlaystyleDropdown",
         settingsFrame,
-        "UICheckButtonTemplate"
+        "WowStyle1DropdownTemplate"
     )
-    _StyleCheckboxLabel(autoCompetitiveCheckbox, "Auto-select Competitive for M+")
-    autoCompetitiveCheckbox:SetScript("OnClick", function(self)
-        _SetAutoCompetitivePlaystyle(not not self:GetChecked())
-    end)
-    autoCompetitiveCheckbox:SetHitRectInsets(0, -180, 0, 0)
-    _SetWidgetTooltip(
-        autoCompetitiveCheckbox,
-        "Auto-select Competitive for M+",
-        "When on, ApplicantScout defaults new Mythic+ group listings to Competitive in Blizzard's playstyle dropdown. Manual changes in the same form are left alone."
-    )
-    _AddSettingsRow(autoCompetitiveCheckbox)
+    if dropdownOK and dropdown and type(dropdown.SetupMenu) == "function" then
+        autoMPlusPlaystyleDropdown = dropdown
+        autoMPlusPlaystyleDropdown:SetPoint(
+            "TOPLEFT",
+            settingsFrame,
+            "TOPLEFT",
+            _SETTINGS_RIGHT_COL_X,
+            -50
+        )
+        autoMPlusPlaystyleDropdown:SetWidth(_SETTINGS_DROPDOWN_WIDTH)
+        if type(autoMPlusPlaystyleDropdown.SetDefaultText) == "function" then
+            autoMPlusPlaystyleDropdown:SetDefaultText(
+                _GetAutoMPlusPlaystyleLabel(ApplicantScoutDB.autoMPlusPlaystyle)
+            )
+        end
+        autoMPlusPlaystyleDropdown:SetupMenu(function(_, rootDescription)
+            if not rootDescription or type(rootDescription.CreateRadio) ~= "function" then return end
+            if type(rootDescription.SetTag) == "function" then
+                rootDescription:SetTag("MENU_APPLICANTSCOUT_MPLUS_PLAYSTYLE")
+            end
+
+            local function IsSelected(token)
+                return ApplicantScoutDB
+                       and ApplicantScoutDB.autoMPlusPlaystyle == token
+            end
+
+            local function SetSelected(token)
+                _SetAutoMPlusPlaystyle(token)
+            end
+
+            for _, option in ipairs(AUTO_MPLUS_PLAYSTYLE_OPTIONS) do
+                rootDescription:CreateRadio(
+                    _GetAutoMPlusPlaystyleLabel(option.token),
+                    IsSelected,
+                    SetSelected,
+                    option.token
+                )
+            end
+        end)
+        _SetWidgetTooltip(
+            autoMPlusPlaystyleDropdown,
+            "M+ default playstyle",
+            "Defaults new Mythic+ group listings to the selected playstyle. Off leaves Blizzard's field alone. Manual changes in the same form are left alone."
+        )
+    else
+        autoMPlusPlaystyleFallbackText = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        autoMPlusPlaystyleFallbackText:SetPoint(
+            "TOPLEFT",
+            settingsFrame,
+            "TOPLEFT",
+            _SETTINGS_RIGHT_COL_X,
+            -55
+        )
+        autoMPlusPlaystyleFallbackText:SetWidth(_SETTINGS_DROPDOWN_WIDTH)
+        autoMPlusPlaystyleFallbackText:SetJustifyH("LEFT")
+    end
 
     -- Re-sync checkboxes from DB on each show. Handles slash-toggle-while-
     -- panel-was-hidden case: open via /apscout config → checkboxes reflect DB truth.
     settingsFrame:HookScript("OnShow", function()
         enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
         debugCheckbox:SetChecked(ApplicantScoutDB.debug)
-        autoCompetitiveCheckbox:SetChecked(ApplicantScoutDB.autoCompetitivePlaystyle)
+        _SyncAutoMPlusPlaystyleDropdown()
     end)
 
     enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
     debugCheckbox:SetChecked(ApplicantScoutDB.debug)
-    autoCompetitiveCheckbox:SetChecked(ApplicantScoutDB.autoCompetitivePlaystyle)
+    _SyncAutoMPlusPlaystyleDropdown()
 
     settingsFrameAttached = true  -- LAST: any earlier failure leaves false → retry next PLAYER_LOGIN
 end
@@ -2098,6 +2231,7 @@ local function PrintHelp()
     print("  /apscout toggle         flip enabled state")
     print("  /apscout config         open/close settings panel")
     print("  /apscout status         show current state + QR diagnostics")
+    print("  /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle")
     print("  /apscout reset          clear dedup cache, force fresh full snapshot")
     print("  /apscout shotnow        force snapshot now (debug / manual sync)")
     print("  /apscout qrvisible      toggle QR frame always-visible (debug aid)")
@@ -2105,23 +2239,40 @@ local function PrintHelp()
     print("  /apscout qrreset        reset QR frame position to top-left")
     print("  /apscout taintcheck     probe C_LFGList field secret-tagging")
     print("  /apscout debug [on|off] toggle debug logging")
-    print("  /apscout competitive [on|off] auto-select Competitive for M+ listings")
+    print("  /apscout competitive [on|off] legacy alias for Competitive / Off")
+end
+
+local function PrintPlaystyleHelp()
+    APSPrint("M+ default playstyle: " .. _GetAutoMPlusPlaystyleStatusText())
+    print("  /apscout playstyle off")
+    print("  /apscout playstyle learning")
+    print("  /apscout playstyle relaxed")
+    print("  /apscout playstyle competitive")
+    print("  /apscout playstyle carry")
 end
 
 SLASH_APSCOUT1 = "/apscout"
 SlashCmdList.APSCOUT = function(msg)
     InitDB()
     msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    local command, arg = msg:match("^(%S+)%s*(.-)$")
     if msg == "on" then
         _SetEnabled(true)
     elseif msg == "off" then
         _SetEnabled(false)
     elseif msg == "toggle" then
         _SetEnabled(not ApplicantScoutDB.enabled)
+    elseif command == "playstyle" then
+        local token = _NormalizeAutoMPlusPlaystyleCommand(arg)
+        if token then
+            _SetAutoMPlusPlaystyle(token)
+        else
+            PrintPlaystyleHelp()
+        end
     elseif msg == "competitive" or msg == "competitive on" then
-        _SetAutoCompetitivePlaystyle(true)
+        _SetAutoMPlusPlaystyle(AUTO_MPLUS_PLAYSTYLE_DEFAULT)
     elseif msg == "competitive off" or msg == "nocompetitive" then
-        _SetAutoCompetitivePlaystyle(false)
+        _SetAutoMPlusPlaystyle(AUTO_MPLUS_PLAYSTYLE_DISABLED)
     elseif msg == "config" or msg == "settings" then
         -- Toggle settings panel visibility. Lazy-attach if PLAYER_LOGIN race
         -- left settingsFrameAttached=false (PVEFrame still loading). Open via
@@ -2137,7 +2288,7 @@ SlashCmdList.APSCOUT = function(msg)
     elseif msg == "status" then
         print("|cff00ff7fApplicantScout|r status:")
         print("  enabled: " .. tostring(ApplicantScoutDB.enabled))
-        print("  auto-competitive M+: " .. tostring(ApplicantScoutDB.autoCompetitivePlaystyle))
+        print("  M+ default playstyle: " .. _GetAutoMPlusPlaystyleStatusText())
         print("  settings panel attached: " .. tostring(settingsFrameAttached))
         print("  session active: " .. tostring(isSessionActive))
         print("  session gen: " .. tostring(sessionGen))
@@ -2242,9 +2393,9 @@ SlashCmdList.APSCOUT = function(msg)
         print("  BlizzMove loaded: " .. tostring(hasBlizzMove))
         print("  movement setup: " .. tostring(PVEFrame
               and PVEFrame.apsMovementSetup or false))
-        print("  auto-competitive hooks: " .. tostring(lfgAutoCompetitiveHooksSetup)
-              .. (lfgAutoCompetitiveHookError
-                  and (" (error: " .. lfgAutoCompetitiveHookError .. ")")
+        print("  default playstyle hooks: " .. tostring(lfgDefaultPlaystyleHooksSetup)
+              .. (lfgDefaultPlaystyleHookError
+                  and (" (error: " .. lfgDefaultPlaystyleHookError .. ")")
                   or ""))
         if ApplicantScoutDB.pveFramePosition then
             local pos = ApplicantScoutDB.pveFramePosition
