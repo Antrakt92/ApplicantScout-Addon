@@ -2019,7 +2019,7 @@ end
 -- Layout constants for the Blizzard-tooltip-style panel chrome.
 local _SETTINGS_FRAME_WIDTH = 420
 local _SETTINGS_FRAME_HEIGHT = 96
-local _SETTINGS_ANCHOR_X = 300
+local _SETTINGS_ANCHOR_X = 0
 local _SETTINGS_ANCHOR_Y = 6
 local _SETTINGS_TOP_PAD = 10        -- clearance under the rope-border top edge
 local _SETTINGS_LEFT_PAD = 14
@@ -2055,9 +2055,8 @@ _AttachSettingsPanel = function()
         "BackdropTemplate"
     )
     settingsFrame:SetSize(_SETTINGS_FRAME_WIDTH, _SETTINGS_FRAME_HEIGHT)
-    -- Anchor with BOTTOMLEFT even for the right-shifted layout. A prior
-    -- BOTTOMRIGHT/TOPRIGHT attempt collided with PVEFrame chrome; offsetting
-    -- from the known-good top-left anchor keeps the panel visible and clamped.
+    -- Keep the panel visually attached to PVEFrame's left edge; the two-column
+    -- layout happens inside the panel rather than floating the whole frame away.
     settingsFrame:SetPoint(
         "BOTTOMLEFT",
         PVEFrame,
