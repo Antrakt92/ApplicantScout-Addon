@@ -1003,7 +1003,8 @@ end
 --              region_id byte + len-prefixed playerName
 --   Apps:      uint16 count; per applicant: uint32 id + uint8 member_idx +
 --              uint8 classID + uint16 specID + uint16 ilvl + uint16 score +
---              uint8 role + uint8 nameLen + utf8 name (CLAMPED to 255 bytes)
+--              uint16 mainScore + uint8 role + uint8 nameLen + utf8 name
+--              (CLAMPED to 255 bytes)
 --   Trailer:   uint32 CRC32 (IEEE 802.3) over [magic..last applicant byte]
 --
 -- WHY keep the magic + CRC even though QR has its own ECC: the magic gives the
@@ -1045,6 +1046,13 @@ end
 local function _Uint16BE(n)
     n = math.floor(SafeNumber(n, 0)) % 65536
     return string.char(math.floor(n / 256), n % 256)
+end
+
+local function _ClampUInt16(n)
+    n = math.floor(SafeNumber(n, 0))
+    if n < 0 then return 0 end
+    if n > 65535 then return 65535 end
+    return n
 end
 
 -- Return a prefix no longer than maxBytes that never ends inside a UTF-8
@@ -1130,6 +1138,31 @@ local function _GetListingKeystoneLevel(activityID, listingName, listingComment)
     return keyLevel
 end
 
+local function _GetRaiderIOMainScore(memberName)
+    -- RaiderIO is optional. Query only with the SafeStr-cleaned applicant name:
+    -- the raw LFG name can be secret-tagged, and RaiderIO's public API performs
+    -- string parsing internally.
+    if memberName == "" or memberName == "?" then return 0 end
+    local rio = SafeTable(_G.RaiderIO)
+    if not rio or type(rio.GetProfile) ~= "function" then return 0 end
+
+    local ok, profile = pcall(rio.GetProfile, memberName)
+    if not ok then return 0 end
+    profile = SafeTable(profile)
+    if not profile then return 0 end
+
+    local keystoneProfile = SafeTable(profile.mythicKeystoneProfile)
+    if not keystoneProfile then return 0 end
+    if IsSecretValue(keystoneProfile.blocked) or keystoneProfile.blocked then return 0 end
+
+    local mainCurrent = SafeTable(keystoneProfile.mplusMainCurrent)
+    local mainScore = keystoneProfile.mainCurrentScore
+    if mainCurrent then
+        mainScore = mainCurrent.score
+    end
+    return _ClampUInt16(mainScore)
+end
+
 -- CRC32 IEEE-802.3, table-based. Built once at file load (~5KB memory).
 local CRC32_TABLE = {}
 do
@@ -1161,7 +1194,7 @@ local function BuildPayload(entry, applicantIDs)
 
     -- Header (length patched after we know body size)
     table.insert(out, "APS1")
-    table.insert(out, string.char(0x03))    -- protocol version (v3: listing category/difficulty)
+    table.insert(out, string.char(0x04))    -- protocol version (v4: RaiderIO main score)
     table.insert(out, "\0\0")                -- length placeholder (uint16 BE)
     table.insert(out, "\0\0")                -- reserved
 
@@ -1272,9 +1305,10 @@ local function BuildPayload(entry, applicantIDs)
     --       member-load lag (rare; members 2+ may lag by ≤1 frame on first
     --       list-update). We just skip the block; next snapshot ≤0.5s later
     --       picks them up.
-    -- Per-block byte layout (v2):
+    -- Per-block byte layout (v4):
     --   uint32 applicant_id, u8 member_idx (1-based), u8 class_id,
-    --   u16 spec_id, u16 ilvl, u16 score, u8 role, len-prefixed name.
+    --   u16 spec_id, u16 ilvl, u16 score, u16 main_score, u8 role,
+    --   len-prefixed name.
     local memberOut = {}
     local emittedCount = 0
     for _, app in ipairs(validApps) do
@@ -1290,7 +1324,8 @@ local function BuildPayload(entry, applicantIDs)
                 table.insert(memberOut, string.char(CLASS_NAME_TO_ID[classToken] or 0))
                 table.insert(memberOut, _Uint16BE(SafeNumber(specID, 0)))
                 table.insert(memberOut, _Uint16BE(SafeRoundedNumber(ilvl, 0)))
-                table.insert(memberOut, _Uint16BE(SafeRoundedNumber(score, 0)))
+                table.insert(memberOut, _Uint16BE(_ClampUInt16(SafeRoundedNumber(score, 0))))
+                table.insert(memberOut, _Uint16BE(_GetRaiderIOMainScore(memberName)))
                 table.insert(memberOut, string.char(ROLE_NAME_TO_BYTE[roleToken] or 2))
                 _PackLenStr(memberOut, memberName)
                 emittedCount = emittedCount + 1

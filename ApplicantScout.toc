@@ -1,6 +1,6 @@
 ## Interface: 120005
 ## Title: |cff00ff7fApplicantScout|r
-## Notes: M+ key host helper - emits QR screenshot snapshots for the local companion overlay to show Warcraft Logs applicant context.
+## Notes: M+ key host helper - emits QR screenshot snapshots for the local companion overlay to show fit, WCL, and RaiderIO context.
 ## Author: Antrakt
 ## Version: 0.1.0-dev
 ## SavedVariables: ApplicantScoutDB

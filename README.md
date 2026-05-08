@@ -7,7 +7,8 @@ The addon is the in-game data-source half of a two-component setup. While you
 host a Mythic+ listing, it renders a QR code in the UI and triggers
 screenshots. The companion watches the WoW `Screenshots` folder,
 decodes the ApplicantScout QR payloads, queries Warcraft Logs, and displays the
-external overlay.
+external overlay. If RaiderIO is installed, ApplicantScout also includes the
+applicant's current-season main score when RaiderIO exposes one.
 
 ## Usage
 
@@ -57,7 +58,9 @@ then falls back to raw byte mode when a large snapshot would exceed QR capacity.
 The companion accepts both forms.
 
 The wire protocol is intentionally owned by the addon and companion together;
-run both from matching source versions when developing transport changes.
+run both from matching source versions when developing transport changes. Wire
+v4 adds optional RaiderIO main-score data for the companion's `current [main]`
+RIO display and sorting fallback.
 
 ## Companion Trust Model
 
