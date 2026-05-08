@@ -13,8 +13,9 @@ external overlay.
 
 1. Install `ApplicantScout\` into `_retail_\Interface\AddOns\`.
 2. Reload WoW.
-3. Start the local companion from source/dev checkout. A public companion
-   installer and release repo are still gated on companion-side release work.
+3. Start the local companion from the paired source/dev checkout. The public
+   companion download link is intentionally not published yet; it will be added
+   here when the companion release repo and installer are ready.
 4. Create your Mythic+ listing as usual.
 5. Keep ApplicantScout enabled while scouting applicants.
 
