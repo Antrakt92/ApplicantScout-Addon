@@ -14,10 +14,9 @@ applicant's current-season main score when RaiderIO exposes one.
 
 1. Install `ApplicantScout\` into `_retail_\Interface\AddOns\`.
 2. Reload WoW.
-3. Install and start ApplicantScout Companion. Public companion builds are
-   planned for `Antrakt92/ApplicantScout-Companion` GitHub Releases; until the
-   first release is published, run the companion from the paired source/dev
-   checkout.
+3. Install and start ApplicantScout Companion from
+   `Antrakt92/ApplicantScout-WoWCompanion` GitHub Releases when a release is
+   published. Until then, run the companion from the paired source/dev checkout.
 4. Create your Mythic+ listing as usual.
 5. Keep ApplicantScout enabled while scouting applicants.
 
