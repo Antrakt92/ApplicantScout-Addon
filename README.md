@@ -58,9 +58,10 @@ then falls back to raw byte mode when a large snapshot would exceed QR capacity.
 The companion accepts both forms.
 
 The wire protocol is intentionally owned by the addon and companion together;
-run both from matching source versions when developing transport changes. Wire
-v4 adds optional RaiderIO main-score data for the companion's `current [main]`
-RIO display and sorting fallback.
+run compatible addon and companion versions when developing transport changes.
+ApplicantScout addon `0.1.0` pairs with ApplicantScout Companion `0.1.0` and
+uses wire v4 for optional RaiderIO main-score data in the companion's
+`current [main]` RIO display and sorting fallback.
 
 ## Companion Trust Model
 
@@ -71,4 +72,7 @@ companion under the current Windows user profile.
 
 ## License
 
-MIT
+MIT; see `LICENSE`.
+
+The bundled `libs/qrencode.lua` library retains its upstream 3-clause BSD
+license header.

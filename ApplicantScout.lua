@@ -9,11 +9,11 @@
 -- can block protected-mode APIs. Raw frame + NewTicker drains the dirty flag
 -- from a clean C-side scheduler, immune to peer-addon taint propagation.
 --
--- WHY screenshot transport, not chatlog/SendChatMessage: see CLAUDE.md
--- "WoW chatlog file is fundamentally unsuitable for real-time addon→external
--- transport in Midnight 12.0" trap row. Screenshot() is unprotected in 12.0
--- and produces a JPG within ~0.5s synchronously, with no taint propagation,
--- no chat anti-spam, no file buffer.
+-- WHY screenshot transport, not chatlog/SendChatMessage: WoW chatlog delivery
+-- is buffered and unsuitable for real-time addon-to-companion transport in
+-- Midnight 12.x. Screenshot() is unprotected in 12.x and produces a JPG within
+-- ~0.5s synchronously, with no taint propagation, no chat anti-spam, no file
+-- buffer.
 --
 -- WHY QR over custom pixel marker: Reed-Solomon ECC built in (15% recovery at
 -- level M); industry-standard finder/alignment patterns survive any DPI scale,
@@ -818,7 +818,7 @@ local function _OnPVEFrameDragStop()
     if not PVEFrame.apsMoving then return end
     PVEFrame:StopMovingOrSizing()
     PVEFrame.apsMoving = false
-    -- WARNING (CLAUDE.md trap): GetPoint() returns nil if no anchor set.
+    -- WARNING: GetPoint() returns nil if no anchor set.
     -- Guard before writing to DB to avoid clobbering valid prior position
     -- with a nil entry that next OnShow would silently skip.
     local point, _, _, x, y = PVEFrame:GetPoint()
@@ -872,7 +872,7 @@ _SetupPVEFrameMovement = function()
         C_Timer.After(0, function()
             if InCombatLockdown() then return end
             if not self:IsShown() then return end
-            -- WARNING (CLAUDE.md SetUserPlaced trap): order is
+            -- WARNING: SetUserPlaced order is
             -- ClearAllPoints -> SetPoint -> SetUserPlaced(true). Wrong
             -- order leaks WoW's layout-cache restore atop our anchor.
             self:ClearAllPoints()

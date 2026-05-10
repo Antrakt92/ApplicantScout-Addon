@@ -1,9 +1,10 @@
-## Interface: 120005
+## Interface: 120005, 120007
 ## Title: |cff00ff7fApplicantScout|r
 ## Notes: M+ key host helper - emits QR screenshot snapshots for the local companion overlay to show fit, WCL, and RaiderIO context.
 ## Author: Antrakt
-## Version: 0.1.0-dev
+## Version: 0.1.0
 ## SavedVariables: ApplicantScoutDB
+## OptionalDeps: RaiderIO
 ## DefaultState: enabled
 ## X-Category: Group Finder
 ## X-License: MIT
