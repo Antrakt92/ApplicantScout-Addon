@@ -12,13 +12,18 @@ applicant's current-season main score when RaiderIO exposes one.
 
 ## Usage
 
-1. Install `ApplicantScout\` into `_retail_\Interface\AddOns\`.
-2. Reload WoW.
-3. Install and start ApplicantScout Companion from
+1. Download the packaged addon ZIP, `ApplicantScout-0.1.0.zip`, from
+   `Antrakt92/ApplicantScout` GitHub Releases when a release is published.
+   Do not use GitHub's automatic source-code ZIP for normal installs; it
+   extracts to the wrong folder name for WoW.
+2. Extract the ZIP so the TOC is at
+   `_retail_\Interface\AddOns\ApplicantScout\ApplicantScout.toc`.
+3. Reload WoW.
+4. Install and start ApplicantScout Companion from
    `Antrakt92/ApplicantScout-WoWCompanion` GitHub Releases when a release is
    published. Until then, run the companion from the paired source/dev checkout.
-4. Create your Mythic+ listing as usual.
-5. Keep ApplicantScout enabled while scouting applicants.
+5. Create your Mythic+ listing as usual.
+6. Keep ApplicantScout enabled while scouting applicants.
 
 ApplicantScout defaults new Mythic+ listings to the `Competitive` playstyle.
 Use the settings panel or `/apscout playstyle ...` to choose Off, Learning,
@@ -75,3 +80,15 @@ MIT; see `LICENSE`.
 
 The bundled `libs/qrencode.lua` library retains its upstream 3-clause BSD
 license header.
+
+## Packaging
+
+Build the installable addon ZIP from a clean checkout:
+
+```powershell
+.\scripts\package-addon.ps1
+```
+
+The script emits `dist\ApplicantScout-<version>.zip` using the version in
+`ApplicantScout.toc` and verifies that the archive contains a top-level
+`ApplicantScout\` addon folder.

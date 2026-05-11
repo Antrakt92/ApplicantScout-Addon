@@ -12,6 +12,7 @@ desktop.ini
 
 # WoW runtime artefacts (SavedVariables live outside the addon folder, but
 # guard against accidental commits if anyone copies them in for debugging)
+dist/
 *.bak
 *.lua.bak
 SavedVariables/
