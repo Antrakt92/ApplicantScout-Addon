@@ -1,0 +1,20 @@
+package-as: ApplicantScout
+
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+
+ignore:
+  - .github
+  - .gitignore
+  - README.md
+  - .pkgmeta
+  - scripts
+  - docs
+  - dist
+  - AGENTS.md
+  - AUDIT.md
+  - PLAN.md
+  - NOTES.md
+  - TODO.md
+  - "*.private.md"

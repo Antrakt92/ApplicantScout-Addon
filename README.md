@@ -1,40 +1,65 @@
 # ApplicantScout
 
-Personal-tool WoW addon that feeds M+ applicant snapshots to Applicant Scout
-Companion.
+ApplicantScout helps Mythic+ key hosts review applicants without turning the
+in-game Group Finder into a spreadsheet. The addon captures applicant snapshots
+from Blizzard's LFG UI, sends them through QR screenshots, and pairs with the
+local Applicant Scout Companion overlay for Warcraft Logs, RaiderIO, role, group,
+and key-fit context.
 
-The addon is the in-game data-source half of a two-component setup. While you
-host a Mythic+ listing, it renders a QR code in the UI and triggers
-screenshots. The companion watches the WoW `Screenshots` folder,
-decodes the ApplicantScout QR payloads, queries Warcraft Logs, and displays the
-external overlay. If RaiderIO is installed, ApplicantScout also includes the
-applicant's current-season main score when RaiderIO exposes one.
+![ApplicantScout companion overlay showing applicant fit, WCL percentiles, RaiderIO score, and grouped applicant context](docs/visual/applicantscout-overlay-alpha.png)
 
-## Usage
+## What It Does
 
-1. Download the packaged addon ZIP, `ApplicantScout-0.1.0.zip`, from
-   `Antrakt92/ApplicantScout` GitHub Releases when a release is published.
-   Do not use GitHub's automatic source-code ZIP for normal installs; it
-   extracts to the wrong folder name for WoW.
+- Captures Mythic+ applicant snapshots while you host a listing.
+- Sends data through QR screenshots instead of chat messages, memory reads, or
+  gameplay automation.
+- Feeds Applicant Scout Companion, which shows Warcraft Logs raid/Mythic+
+  percentiles, RaiderIO current/main score context, role filters, grouped
+  applicant packages, and fit labels for your listed key.
+- Keeps grouped applications visible together so you can judge packages, not
+  just individual rows.
+- Defaults new Mythic+ listings to the `Competitive` playstyle, with Off,
+  Learning, Relaxed, Competitive, and Carry Offered choices available from the
+  settings panel or slash commands.
+
+## Requirements
+
+- World of Warcraft Retail / Midnight 12.x.
+- Applicant Scout Companion for the external overlay.
+- Warcraft Logs API credentials configured in the companion.
+- Optional: RaiderIO addon for current-season main-score context.
+
+## Installation
+
+### CurseForge
+
+Install ApplicantScout through the CurseForge app once the project is approved.
+The CurseForge file installs only the in-game addon. You still need Applicant
+Scout Companion for the overlay.
+
+### Manual
+
+1. Download the packaged addon ZIP, `ApplicantScout-0.1.0.zip`, from GitHub
+   Releases.
 2. Extract the ZIP so the TOC is at
    `_retail_\Interface\AddOns\ApplicantScout\ApplicantScout.toc`.
-3. Reload WoW.
-4. Install and start ApplicantScout Companion from
-   `Antrakt92/ApplicantScout-WoWCompanion` GitHub Releases when a release is
-   published. Until then, run the companion from the paired source/dev checkout.
-5. Create your Mythic+ listing as usual.
-6. Keep ApplicantScout enabled while scouting applicants.
+3. Do not use GitHub's automatic source-code ZIP for normal installs; it extracts
+   to the wrong folder name for WoW.
+4. Install and start Applicant Scout Companion from
+   `Antrakt92/ApplicantScout-WoWCompanion` GitHub Releases.
+5. Reload WoW.
+6. Create your Mythic+ listing as usual and keep ApplicantScout enabled while
+   scouting applicants.
 
-ApplicantScout defaults new Mythic+ listings to the `Competitive` playstyle.
-Use the settings panel or `/apscout playstyle ...` to choose Off, Learning,
-Relaxed, Competitive, or Carry Offered. The legacy `/apscout competitive off`
-alias still disables the helper.
+## Using ApplicantScout
 
 The QR frame defaults to the top-left of the UI and stays visible during an
-active capture session so the screenshot transport is reliable. Use
-`/apscout qrmove` and Alt+drag the QR frame to move it. ApplicantScout
-temporarily raises screenshot quality and uses JPG format while enabled, then
-restores your prior screenshot settings when you turn it off with `/apscout off`.
+active capture session so screenshot transport is reliable. Use `/apscout
+qrmove` and Alt-drag the QR frame to move it.
+
+ApplicantScout temporarily raises screenshot quality and uses JPG format while
+enabled, then restores your prior screenshot settings when you turn it off with
+`/apscout off`.
 
 ## Slash Commands
 
@@ -47,43 +72,48 @@ restores your prior screenshot settings when you turn it off with `/apscout off`
 /apscout reset          clear dedup cache and force a fresh snapshot
 /apscout shotnow        force a snapshot now
 /apscout qrvisible      keep the QR frame visible for debugging
-/apscout qrmove         toggle QR move mode; Alt+drag the QR frame
+/apscout qrmove         toggle QR move mode; Alt-drag the QR frame
 /apscout qrreset        reset QR frame position to top-left
 /apscout taintcheck     inspect LFG field secret-tagging diagnostics
 /apscout debug [on|off] toggle debug logging
 /apscout competitive [on|off] legacy alias for Competitive / Off
 ```
 
-## Transport
+## Transport And Privacy
 
 ApplicantScout emits versioned `APS1` snapshots through QR screenshots. The
 payload is binary and CRC-checked. QR generation uses legacy hex encoding first,
 then falls back to raw byte mode when a large snapshot would exceed QR capacity.
 The companion accepts both forms.
 
-The wire protocol is intentionally owned by the addon and companion together;
-run compatible addon and companion versions when developing transport changes.
-ApplicantScout addon `0.1.0` pairs with ApplicantScout Companion `0.1.0` and
-uses wire v4 for optional RaiderIO main-score data in the companion's
-`current [main]` RIO display and sorting fallback.
+ApplicantScout does not read WoW memory, inject code, automate gameplay, or send
+chat messages as a transport. The addon renders QR snapshots and triggers normal
+WoW screenshots. The companion watches only the configured WoW `Screenshots`
+folder and stores Warcraft Logs credentials/cache files locally under the current
+Windows user profile.
 
-## Companion Trust Model
+## Compatibility
 
-The addon and companion use QR screenshots only. ApplicantScout does not read
-WoW memory, inject code, automate gameplay, or use chat messages as a transport.
-Warcraft Logs credentials and OAuth/cache files are stored locally by the
-companion under the current Windows user profile.
+- WoW Retail Midnight: Interface `120005, 120007`
+- ApplicantScout addon `0.1.0`
+- Applicant Scout Companion `0.1.0`
+- Wire payload: v4, including optional RaiderIO main-score data
+- Classic-era clients are not supported
 
-## License
+## Troubleshooting
 
-MIT; see `LICENSE`.
+- Overlay stays empty: open companion Settings and confirm the Screenshots path
+  points at the active `_retail_\Screenshots` folder.
+- WoW side looks idle: run `/apscout status` while hosting a listing.
+- Need a manual sync: run `/apscout shotnow`.
+- Applicant state looks stale: run `/apscout reset`.
+- WCL cells stay empty: open companion Settings and use Test WCL.
+- QR frame is in the way: run `/apscout qrmove`, Alt-drag it, then run
+  `/apscout qrmove` again to lock placement.
 
-The bundled `libs/qrencode.lua` library retains its upstream 3-clause BSD
-license header.
+## Local Development
 
-## Packaging
-
-Build the installable addon ZIP from a clean checkout:
+Package the installable addon ZIP from a clean checkout:
 
 ```powershell
 .\scripts\package-addon.ps1
@@ -94,3 +124,25 @@ The script emits `dist\ApplicantScout-<version>.zip` using the version in
 `ApplicantScout\` addon folder. It refuses to package dirty release inputs by
 default; use `-AllowDirty` only for local smoke builds that will not be
 published.
+
+For workspace-wide Lua syntax and LuaLS diagnostics, run this from the private
+WOW coordination repo:
+
+```powershell
+.\scripts\check-wow-lua.ps1 -Project ApplicantScout
+```
+
+## Support
+
+- Addon source and in-game issues:
+  [github.com/Antrakt92/ApplicantScout](https://github.com/Antrakt92/ApplicantScout)
+- Companion, installer, WCL setup, and overlay issues:
+  [github.com/Antrakt92/ApplicantScout-WoWCompanion](https://github.com/Antrakt92/ApplicantScout-WoWCompanion)
+
+## License
+
+ApplicantScout is MIT licensed; see `LICENSE`.
+
+The bundled `libs/qrencode.lua` library retains its upstream 3-clause BSD
+license. See `THIRD-PARTY-NOTICES.md` and the source header in
+`libs/qrencode.lua`.

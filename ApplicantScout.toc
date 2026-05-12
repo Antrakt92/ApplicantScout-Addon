@@ -3,10 +3,11 @@
 ## Notes: M+ key host helper - emits QR screenshot snapshots for the local companion overlay to show fit, WCL, and RaiderIO context.
 ## Author: Antrakt
 ## Version: 0.1.0
+## IconTexture: Interface\AddOns\ApplicantScout\media\logo.png
 ## SavedVariables: ApplicantScoutDB
 ## OptionalDeps: RaiderIO
 ## DefaultState: enabled
-## X-Category: Group Finder
+## X-Category: Data Export
 ## X-License: MIT
 ## X-Website: https://github.com/Antrakt92/ApplicantScout
 
