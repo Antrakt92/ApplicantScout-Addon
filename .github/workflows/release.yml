@@ -25,7 +25,16 @@ jobs:
 
       - name: Lua syntax
         shell: pwsh
-        run: luac5.1 -p ApplicantScout.lua libs\qrencode.lua
+        run: |
+          $luac = Get-Command luac5.1 -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty Source
+          if (-not $luac) {
+            $luac = "C:\ProgramData\chocolatey\lib\lua51\tools\luac5.1.exe"
+          }
+          if (-not (Test-Path -LiteralPath $luac)) {
+            throw "Missing luac 5.1 compiler at $luac"
+          }
+          & $luac -p ApplicantScout.lua libs\qrencode.lua
 
       - name: Package smoke
         shell: pwsh
