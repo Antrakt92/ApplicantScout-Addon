@@ -49,8 +49,8 @@ Scout Companion for the overlay.
 
 ### Manual
 
-1. Download the packaged addon ZIP, `ApplicantScout-0.1.2.zip`, from GitHub
-   Releases.
+1. Download the packaged addon ZIP, `ApplicantScout-*.zip`, from the latest
+   GitHub Release.
 2. Extract the ZIP so the TOC is at
    `_retail_\Interface\AddOns\ApplicantScout\ApplicantScout.toc`.
 3. Do not use GitHub's automatic source-code ZIP for normal installs; it extracts
@@ -105,7 +105,7 @@ Windows user profile.
 ## Compatibility
 
 - WoW Retail Midnight: Interface `120005, 120007`
-- ApplicantScout addon `0.1.2`
+- Latest ApplicantScout addon release
 - Latest Applicant Scout Companion release
 - Wire payload: v4, including optional RaiderIO main-score data
 - Classic-era clients are not supported

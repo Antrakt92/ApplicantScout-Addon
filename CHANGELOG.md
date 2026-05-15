@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.3 - 15-May-2026 - Companion 0.2.0 release train
+
+### Changed
+
+- Refreshed the public addon release for the paired Applicant Scout Companion
+  `0.2.0` release.
+- Updated public install copy to point users at the latest companion release
+  without pinning a companion version in the addon README.
+
+### Notes
+
+- No Lua runtime or wire-format changes since `0.1.2`.
+- ApplicantScout remains the in-game data-source half of the setup; the desktop
+  companion renders Warcraft Logs / RaiderIO context.
+
 ## 0.1.2 - 14-May-2026 - Wago publishing
 
 ### Added
