@@ -106,7 +106,7 @@ Windows user profile.
 
 - WoW Retail Midnight: Interface `120005, 120007`
 - ApplicantScout addon `0.1.2`
-- Applicant Scout Companion `0.1.0`
+- Applicant Scout Companion `0.2.0`
 - Wire payload: v4, including optional RaiderIO main-score data
 - Classic-era clients are not supported
 
