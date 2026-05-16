@@ -52,3 +52,48 @@ def test_force_screenshot_temporarily_makes_hidden_qr_visible_for_clear_shot():
     assert "qrForceVisibleForShot = true" in screenshot_body
     assert "forceVisibleShotDelay = QR_RENDER_SETTLE_S" in screenshot_body
     assert "qrForceVisibleForShot = false" in screenshot_body
+
+
+def test_default_playstyle_checks_secret_activity_before_nil_comparison():
+    source = _lua_source()
+    body = _slice_between(
+        source,
+        "_MaybeAutoSelectDefaultPlaystyle = function(panel, reason)",
+        "_SetupLFGDefaultPlaystyle = function()",
+    )
+
+    activity_read_idx = body.index("local activityID = panel.selectedActivity")
+    secret_guard_idx = body.index("IsSecretValue(activityID)")
+    nil_compare_idx = body.index("activityID == nil")
+
+    assert activity_read_idx < secret_guard_idx < nil_compare_idx
+
+
+def test_pve_frame_drag_requires_alt_modifier():
+    source = _lua_source()
+    body = _slice_between(
+        source,
+        "local function _OnPVEFrameDragStart()",
+        "local function _OnPVEFrameDragStop()",
+    )
+
+    combat_guard_idx = body.index("InCombatLockdown()")
+    alt_guard_idx = body.index("not IsAltKeyDown()")
+    start_moving_idx = body.index("PVEFrame:StartMoving()")
+
+    assert combat_guard_idx < alt_guard_idx < start_moving_idx
+
+
+def test_shotnow_is_gated_when_addon_is_disabled():
+    source = _lua_source()
+    body = _slice_between(
+        source,
+        'elseif msg == "shotnow" then',
+        'elseif msg == "qrvisible" then',
+    )
+
+    disabled_guard_idx = body.index("not (ApplicantScoutDB and ApplicantScoutDB.enabled)")
+    screenshot_idx = body.index("MaybeTriggerScreenshot(true)")
+
+    assert disabled_guard_idx < screenshot_idx
+    assert "return" in body[disabled_guard_idx:screenshot_idx]

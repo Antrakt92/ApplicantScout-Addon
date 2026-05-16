@@ -876,6 +876,7 @@ end
 
 local function _OnPVEFrameDragStart()
     if InCombatLockdown() then return end
+    if not IsAltKeyDown() then return end
     PVEFrame:StartMoving()
     PVEFrame.apsMoving = true
 end
@@ -1902,7 +1903,7 @@ _MaybeAutoSelectDefaultPlaystyle = function(panel, reason)
     if type(isEditMode) ~= "function" or isEditMode(panel) then return false end
 
     local activityID = panel.selectedActivity
-    if activityID == nil or IsSecretValue(activityID) then return false end
+    if IsSecretValue(activityID) or activityID == nil then return false end
     if not (C_LFGList and C_LFGList.GetActivityInfoTable) then return false end
 
     local activityInfo = SafeTable(C_LFGList.GetActivityInfoTable(activityID))
@@ -2454,7 +2455,7 @@ local function PrintHelp()
     print("  /apscout status         show current state + QR diagnostics")
     print("  /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle")
     print("  /apscout reset          clear dedup cache, force fresh full snapshot")
-    print("  /apscout shotnow        force snapshot now (debug / manual sync)")
+    print("  /apscout shotnow        force snapshot now while enabled (debug / manual sync)")
     print("  /apscout qrvisible      toggle QR frame always-visible (debug aid)")
     print("  /apscout qrmove         toggle QR move mode (Alt+drag QR frame)")
     print("  /apscout qrreset        reset QR frame position to top-left")
@@ -2697,6 +2698,10 @@ SlashCmdList.APSCOUT = function(msg)
         -- end-to-end during dev: builds payload, encodes as QR, paints into frame,
         -- calls Screenshot(). Inspect the resulting JPG in any QR scanner — should
         -- decode to APS1 + length + listing/version/applicants + CRC32.
+        if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then
+            APSPrint("shotnow skipped — enable ApplicantScout first")
+            return
+        end
         MaybeTriggerScreenshot(true)
         APSPrint("forced snapshot — check Screenshots/ folder")
     elseif msg == "qrvisible" then
