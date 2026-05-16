@@ -21,12 +21,13 @@ def test_release_preflight_runs_transport_contract_tests():
     workflow = _workflow_source()
 
     setup_idx = workflow.index("actions/setup-python")
-    pytest_idx = workflow.index("python -m pytest -q tests/test_transport_contract.py")
+    pytest_idx = workflow.index("python -m pytest -q tests")
     package_idx = workflow.index("Development package smoke")
     packager_idx = workflow.index("BigWigsMods/packager@v2")
 
     assert setup_idx < pytest_idx < package_idx < packager_idx
     assert "python-version: '3.13'" in workflow
+    assert "tests/test_transport_contract.py" not in workflow
 
 
 def test_local_package_smoke_is_labeled_as_development_zip_only():
