@@ -165,6 +165,15 @@ def test_payload_uses_wire_v6_with_raiderio_dungeon_rows():
     assert "v6: RaiderIO dungeon rows" in payload_body
     assert "rioSummary.dungeons" in payload_body
     assert "_PackRaiderIODungeonRows(memberOut, rioSummary.dungeons)" in payload_body
+    packer_body = _slice_between(
+        source,
+        "local function _PackRaiderIODungeonRows(out, rows)",
+        "-- CRC32 IEEE-802.3",
+    )
+    assert "string.char(_ClampUInt8(keyLevel))" in packer_body
+    assert "_PackLenStr(chunks, name)" in packer_body
+    assert "timed" not in packer_body.casefold()
+    assert "depleted" not in packer_body.casefold()
 
 
 def test_raiderio_summary_reuses_one_profile_lookup_per_member():

@@ -1076,7 +1076,9 @@ end
 --              uint8 rioBestDungeonKey + uint8 rioTimedAtTarget +
 --              uint8 rioTimedAtMinus1 + uint8 rioTimedAtMinus2 +
 --              uint8 rioCompletedAtMinus1 + uint8 rioDungeonCount +
---              uint8 role + uint8 nameLen + utf8 name
+--              uint8 rioRowCount +
+--              repeated {uint8 rioKeyLevel + uint8 rioDungeonNameLen +
+--              utf8 rioDungeonName} + uint8 role + uint8 nameLen + utf8 name
 --              (CLAMPED to 255 bytes)
 --   Trailer:   uint32 CRC32 (IEEE 802.3) over [magic..last applicant byte]
 --
