@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.1.7 - 16-May-2026 - Companion 0.2.5 lifecycle hardening
+
+This paired addon + companion release tightens QR force-shot behavior, support
+commands, and release readiness around the desktop companion's screenshot
+pipeline hardening.
+
+### Improved
+
+- Forced QR snapshots now refresh the active LFG session immediately before
+  building the payload, so `/apscout shotnow` and cleanup shots use the latest
+  Blizzard listing state.
+- Hidden QR force shots stay visible long enough for the screenshot capture path
+  to finish before visibility cleanup runs.
+- Support/debug commands and QR drag handling now guard more edge cases instead
+  of surfacing Lua errors during troubleshooting.
+- Addon release preflight now runs transport contract tests and stricter version
+  checks before packaging.
+
+### Fixed
+
+- Fixed forced snapshots that could reuse stale session state after listing
+  changes.
+- Fixed cleanup/link paths around QR force shots that could miss the intended
+  final clear/update capture.
+
+### Notes
+
+- No wire-format changes since `0.1.4`; the companion still supports
+  ApplicantScout payloads through v4.
+- ApplicantScout remains the in-game data-source half of the setup; the desktop
+  companion renders Warcraft Logs / RaiderIO context.
+- Recommended companion version: `0.2.5` or newer.
+
 ## 0.1.6 - 16-May-2026 - Companion 0.2.4 live Mythic+ hardening
 
 This paired addon + companion release improves live Mythic+ key detection,
