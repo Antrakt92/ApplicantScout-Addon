@@ -192,3 +192,26 @@ def test_raiderio_summary_reuses_one_profile_lookup_per_member():
     assert summary_body.count("pcall(rio.GetProfile") == 1
     assert payload_body.count("_GetRaiderIOMPlusSummary(") == 1
     assert "_RaiderIODungeonMatchesActivity" in summary_body
+
+
+def test_raiderio_lookup_qualifies_same_realm_bare_applicant_names():
+    source = _lua_source()
+    helper_body = _slice_between(
+        source,
+        "local function _RaiderIOProfileLookupName(memberName)",
+        "local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey)",
+    )
+    payload_body = _slice_between(
+        source,
+        "local function BuildPayload(entry, applicantIDs)",
+        "local function HashSnapshot(payload)",
+    )
+
+    assert 'memberName:find("-", 1, true)' in helper_body
+    assert 'UnitFullName("player")' in helper_body
+    assert '"-" .. playerRealm' in helper_body
+    summary_idx = payload_body.index("local rioSummary = _GetRaiderIOMPlusSummary(")
+    lookup_idx = payload_body.index("_RaiderIOProfileLookupName(memberName)")
+    activity_idx = payload_body.index("listingActivityIDForRio", lookup_idx)
+    assert summary_idx < lookup_idx < activity_idx
+    assert "_PackLenStr(memberOut, memberName)" in payload_body

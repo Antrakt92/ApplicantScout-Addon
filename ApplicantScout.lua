@@ -1327,6 +1327,19 @@ local function _AddTimedRaiderIODungeon(summary, dungeonName, keyLevel)
     table.insert(summary.dungeons, { name = dungeonName, keyLevel = keyLevel })
 end
 
+local function _RaiderIOProfileLookupName(memberName)
+    memberName = SafeStr(memberName, "")
+    if memberName == "" or memberName == "?" or memberName:find("-", 1, true) then
+        return memberName
+    end
+    local _playerName, playerRealm = UnitFullName("player")
+    playerRealm = SafeStr(playerRealm, "")
+    if playerRealm == "" then return memberName end
+    -- WHY: LFG may emit same-realm applicants as bare "Name"; RaiderIO profile
+    -- lookups need the realm-qualified key to expose per-dungeon history.
+    return memberName .. "-" .. playerRealm
+end
+
 local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey)
     -- RaiderIO is optional. Query only with the SafeStr-cleaned applicant name:
     -- the raw LFG name can be secret-tagged, and RaiderIO's public API performs
@@ -1631,7 +1644,7 @@ local function BuildPayload(entry, applicantIDs)
                 table.insert(memberOut, _Uint16BE(SafeRoundedNumber(ilvl, 0)))
                 table.insert(memberOut, _Uint16BE(_ClampUInt16(SafeRoundedNumber(score, 0))))
                 local rioSummary = _GetRaiderIOMPlusSummary(
-                    memberName,
+                    _RaiderIOProfileLookupName(memberName),
                     listingActivityIDForRio,
                     listingKeyLevelForRio
                 )

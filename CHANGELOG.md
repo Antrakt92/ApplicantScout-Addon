@@ -38,6 +38,8 @@ experience alongside Warcraft Logs parses.
 - Fixed companion-side RaiderIO evidence display and scoring edge cases where
   RIO rows could be visible in the hover panel but ignored or underweighted by
   the fit formula.
+- Fixed same-realm applicants whose LFG names omit `-Realm` sometimes showing a
+  RaiderIO score but no RaiderIO dungeon rows in the companion.
 
 ### Notes
 
