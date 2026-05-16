@@ -123,17 +123,19 @@ Windows user profile.
 
 ## Local Development
 
-Package the installable addon ZIP from a clean checkout:
+Package a development-only addon ZIP from a clean checkout:
 
 ```powershell
 .\scripts\package-addon.ps1
 ```
 
-The script emits `dist\ApplicantScout-<version>.zip` using the version in
-`ApplicantScout.toc` and verifies that the archive contains a top-level
-`ApplicantScout\` addon folder. It refuses to package dirty release inputs by
-default; use `-AllowDirty` only for local smoke builds that will not be
-published.
+The script emits a development-only addon ZIP at
+`dist\ApplicantScout-<version>.zip` using the version in `ApplicantScout.toc`
+and verifies that the archive contains a top-level `ApplicantScout\` addon
+folder. Marketplace releases are produced by the BigWigs packager from
+`.pkgmeta`; use this local ZIP only for smoke testing. The script refuses to
+package dirty release inputs by default; use `-AllowDirty` only for local smoke
+builds that will not be published.
 
 For workspace-wide Lua syntax and LuaLS diagnostics, run this from the private
 WOW coordination repo:

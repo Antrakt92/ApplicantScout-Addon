@@ -17,12 +17,15 @@ $RequiredFiles = @(
     "ApplicantScout.toc",
     "ApplicantScout.lua",
     "LICENSE",
-    "README.md",
     "THIRD-PARTY-NOTICES.md",
     "media\logo.png",
     "libs\qrencode.lua"
 )
-$ReleaseInputFiles = $RequiredFiles + @("scripts\package-addon.ps1")
+$ReleaseInputFiles = $RequiredFiles + @(
+    ".pkgmeta",
+    "CHANGELOG.md",
+    "scripts\package-addon.ps1"
+)
 
 function Invoke-GitChecked {
     param(
@@ -45,7 +48,7 @@ function Assert-ZipContract {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $Zip = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
     try {
-        $Entries = @($Zip.Entries | ForEach-Object { $_.FullName })
+        $Entries = @($Zip.Entries | ForEach-Object { $_.FullName -replace '\\', '/' })
     }
     finally {
         $Zip.Dispose()
@@ -115,7 +118,7 @@ if (-not $AllowDirty) {
 
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 $ArchivePath = Join-Path $OutputDir "$AddonName-$Version.zip"
-$TempArchive = Join-Path $OutputDir ".$AddonName-$Version.zip.tmp"
+$TempArchive = Join-Path $OutputDir ".$AddonName-$Version.tmp.zip"
 $StagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) "$AddonName-package-$([System.Guid]::NewGuid().ToString('N'))"
 $AddonStage = Join-Path $StagingRoot $AddonName
 
@@ -141,7 +144,7 @@ try {
         Remove-Item -LiteralPath $ArchivePath -Force
     }
     Move-Item -LiteralPath $TempArchive -Destination $ArchivePath -Force
-    Write-Host "Packed addon ZIP: $ArchivePath"
+    Write-Host "Packed development-only addon ZIP: $ArchivePath"
 }
 finally {
     if (Test-Path -LiteralPath $TempArchive) {

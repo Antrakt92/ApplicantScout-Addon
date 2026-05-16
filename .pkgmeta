@@ -12,6 +12,7 @@ ignore:
   - scripts
   - docs
   - dist
+  - tests
   - AGENTS.md
   - AUDIT.md
   - PLAN.md
