@@ -14,6 +14,11 @@ experience alongside Warcraft Logs parses.
 - ApplicantScout payloads now also include each applicant's highest timed
   RaiderIO key per dungeon, allowing the companion to display RIO dungeon
   evidence beside Warcraft Logs key/percentile rows.
+- The paired companion now ranks applicants with no current Warcraft Logs data
+  from RaiderIO completion evidence instead of forcing them to the bottom.
+- The paired companion now uses localized LFG activity IDs and RaiderIO
+  per-dungeon rows for same-dungeon fit, so localized clients can keep RIO and
+  WCL evidence aligned.
 - Forced QR snapshots now refresh the active LFG session immediately before
   building the payload, so `/apscout shotnow` and cleanup shots use the latest
   Blizzard listing state.
@@ -30,6 +35,9 @@ experience alongside Warcraft Logs parses.
   changes.
 - Fixed cleanup/link paths around QR force shots that could miss the intended
   final clear/update capture.
+- Fixed companion-side RaiderIO evidence display and scoring edge cases where
+  RIO rows could be visible in the hover panel but ignored or underweighted by
+  the fit formula.
 
 ### Notes
 
