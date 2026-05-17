@@ -19,6 +19,13 @@ QR screenshot.
   overloading QR screenshots.
 - The paired companion now ranks applicants with no current Warcraft Logs data
   from RaiderIO completion evidence instead of forcing them to the bottom.
+- The paired companion now uses a combined Mythic+ scorecard: RaiderIO
+  per-dungeon keys define completion readiness, Warcraft Logs defines
+  performance quality, missing logs stay unknown instead of bad, and bad
+  relevant logs are worse than no logs.
+- The paired companion now shows Mythic+ fit as a numeric score plus key,
+  coloured with the Warcraft Logs palette, instead of adding extra
+  `TOP` / `FIT` / `OK` / `RISK` wording in M+ cells.
 - The paired companion now uses localized LFG activity IDs and RaiderIO
   per-dungeon rows for same-dungeon fit, so localized clients can keep RIO and
   WCL evidence aligned.

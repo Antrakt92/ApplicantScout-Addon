@@ -25,7 +25,7 @@ and key-fit context.
   gameplay automation.
 - Feeds Applicant Scout Companion, which shows Warcraft Logs raid/Mythic+
   percentiles, RaiderIO current/main score context, role filters, grouped
-  applicant packages, and fit labels for your listed key.
+  applicant packages, and a numeric fit score for your listed key.
 - Keeps grouped applications visible together so you can judge packages, not
   just individual rows.
 - Defaults new Mythic+ listings to the `Competitive` playstyle, with Off,
@@ -108,8 +108,9 @@ Windows user profile.
 - WoW Retail Midnight: Interface `120005, 120007`
 - Latest ApplicantScout addon release
 - Latest Applicant Scout Companion release
-- Wire payload: v6, including optional RaiderIO main-score, completion, and
-  highest timed key-per-dungeon data
+- Wire payload: compact v5, including optional RaiderIO main-score and
+  target-relative completion data. The companion enriches highest timed
+  key-per-dungeon context from the installed local RaiderIO database.
 - Classic-era clients are not supported
 
 ## Troubleshooting
