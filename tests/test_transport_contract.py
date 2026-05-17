@@ -16,7 +16,7 @@ def _slice_between(text: str, start: str, end: str) -> str:
     return text[start_idx:end_idx]
 
 
-def test_non_force_screenshot_waits_until_qr_is_visible_before_payload_dedup():
+def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
     source = _lua_source()
     body = _slice_between(
         source,
@@ -24,50 +24,61 @@ def test_non_force_screenshot_waits_until_qr_is_visible_before_payload_dedup():
         "-- LFG entry creation",
     )
 
-    guard_idx = body.index("not _IsQRVisibleForScreenshot()")
     payload_idx = body.index("local payload = BuildPayload(entry, applicantIDs)")
     hash_idx = body.index("local h = HashSnapshot(payload)")
-    guard_block = body[guard_idx : body.index("\n    end", guard_idx)]
+    matrix_idx = body.index("local matrix = BuildQRMatrix(payload)")
+    paint_idx = body.index("if not PaintQR(matrix) then")
+    lease_idx = body.index("local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()")
+    screenshot_idx = body.index("        Screenshot()")
 
-    assert guard_idx < payload_idx < hash_idx
-    assert "pendingShotDirty = true" in guard_block
-    assert "return" in guard_block
+    assert payload_idx < hash_idx < matrix_idx < paint_idx < lease_idx < screenshot_idx
+    assert "_ReleaseForceVisibleShotLease(forceVisibleShotGen)" in body[screenshot_idx:]
 
 
-def test_force_screenshot_temporarily_makes_hidden_qr_visible_for_clear_shot():
+def test_session_visibility_does_not_keep_qr_on_screen_between_shots():
     source = _lua_source()
     visibility_body = _slice_between(
         source,
         "_RefreshQRVisibility = function()",
         "_IsQRVisibleForScreenshot = function()",
     )
+
+    assert "isSessionActive and not _qrSuppressedByInteraction" not in visibility_body
+    assert "qrAlwaysVisible\n                       or qrMoveMode\n                       or qrForceVisibleForShot" in visibility_body
+
+
+def test_interaction_suppression_defers_non_force_payloads_before_dedup():
+    source = _lua_source()
     screenshot_body = _slice_between(
         source,
         "MaybeTriggerScreenshot = function(force, entryHint)",
         "-- LFG entry creation",
     )
 
-    assert "or qrForceVisibleForShot" in visibility_body
-    assert "force and not _IsQRVisibleForScreenshot()" in screenshot_body
-    assert "qrForceVisibleForShot = true" in screenshot_body
-    assert "forceVisibleShotDelay = QR_RENDER_SETTLE_S" in screenshot_body
-    assert "_ReleaseForceVisibleShotLease(forceVisibleShotGen)" in screenshot_body
-    assert "qrForceVisibleForShot = false" in source
+    suppression_idx = screenshot_body.index("not force and _qrSuppressedByInteraction")
+    payload_idx = screenshot_body.index("local payload = BuildPayload(entry, applicantIDs)")
+    suppression_block = screenshot_body[
+        suppression_idx : screenshot_body.index("\n    end", suppression_idx)
+    ]
+
+    assert suppression_idx < payload_idx
+    assert "pendingShotDirty = true" in suppression_block
+    assert "return" in suppression_block
 
 
-def test_force_screenshot_releases_visibility_lease_when_qr_encode_fails():
+def test_qr_shot_lease_shows_hidden_qr_and_releases_after_capture():
     source = _lua_source()
-    body = _slice_between(
+    lease_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint)",
-        "-- LFG entry creation",
+        "local function _AcquireQRShotLease()",
+        "-- Build payload, dedup vs last hash, throttle, paint QR, trigger Screenshot.",
     )
 
-    matrix_fail = _slice_between(body, "if not matrix then", "if not PaintQR(matrix) then")
-    paint_fail = _slice_between(body, "if not PaintQR(matrix) then", "lastShotTime = now")
-
-    assert "_ReleaseForceVisibleShotLease(forceVisibleShotGen)" in matrix_fail
-    assert "_ReleaseForceVisibleShotLease(forceVisibleShotGen)" in paint_fail
+    assert "qrForceVisibleForShot = true" in lease_body
+    assert "qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1" in lease_body
+    assert "_RefreshQRVisibility()" in lease_body
+    assert "QR_RENDER_SETTLE_S" in lease_body
+    assert "qrForceVisibleForShot = false" in source
 
 
 def test_safe_str_strips_player_links_before_bare_pipe_cleanup():

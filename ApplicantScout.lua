@@ -99,18 +99,14 @@ local scanDirty = false
 -- run count would exceed QR_TEXTURE_HARD_CAP and falls through to raw/lower-EC
 -- alternatives instead of painting an incomplete QR.
 --
--- WHY frame stays VISIBLE (alpha=1) for the entire active session, not
--- alpha=0 between shots: tried alpha-flicker (Show()'d at alpha=0 between
--- shots, alpha=1 for one frame around Screenshot()) — Screenshot() in the
--- After(0) callback empirically fires before SetAlpha(1) reaches the GPU
+-- WHY transient QR uses a settle lease, not alpha-flicker: Screenshot() in the
+-- After(0) callback empirically fired before SetAlpha(1) reached the GPU
 -- framebuffer on real-world WoW setups, capturing alpha=0 (= no QR on JPG, no
--- APS1 marker, companion logs "skip — no APS1 marker" forever). The earlier
--- Show→After(50ms)→Screenshot→Hide cycle had its own race at non-integer
--- DPI scales (first-render-missed-framebuffer). Constant alpha=1 from
--- StartSession to EndSession deferred-Hide is the only timing-robust mode:
--- frame is already fully painted by the time any Screenshot() can fire.
--- Trade-off: user sees the QR (defaults TOPLEFT, covers minimap area) for the whole
--- LFG-hosting duration. Acceptable vs the alternative of "doesn't work".
+-- APS1 marker, companion logs "skip — no APS1 marker" forever). The QR is now
+-- normally hidden, but a changed snapshot Show()s it, waits
+-- QR_RENDER_SETTLE_S, captures, then releases the lease immediately after the
+-- screenshot. This keeps the timing guard without leaving the QR over the UI
+-- for the whole LFG-hosting duration.
 --
 -- 3 px/module is a balance between screen footprint and JPG-quantization
 -- robustness. At 4 px the frame for 20 applicants was ~500 px (covered minimap
@@ -381,28 +377,11 @@ StartSession = function()
     lastQREncodeBytes = 0
     lastQREncodeError = nil
 
-    -- QR_RENDER_SETTLE_S grace before first snapshot. The frame just transitioned from
-    -- Hide()'d to Show()+alpha=1 — on some setups (high refresh rate, deferred
-    -- compositors, non-integer DPI) the GPU framebuffer needs multiple render
-    -- passes before the painted QR textures are visible to Screenshot(). Without
-    -- this gate, the very first snapshot after listing creation can capture an
-    -- empty-or-half-painted frame → no APS1 marker → companion logs "skip" and
-    -- overlay never appears. MaybeTriggerScreenshot honours this via
-    -- suppressShotsUntil; pendingShotDirty=true ensures the scan-tick drain
-    -- retries once the window expires (within ~0.55s of session start).
-    suppressShotsUntil = GetTime() + QR_RENDER_SETTLE_S
-
-    -- Show QR frame fully visible (alpha=1) for the entire active session.
-    -- Reasoning at top of file: alpha-flicker captured alpha=0 framebuffers
-    -- in real-world WoW setups (Screenshot() outraces SetAlpha propagation),
-    -- so the frame stays painted at alpha=1 from session start to
-    -- EndSession's deferred Hide. Visible cost: defaults over TOPLEFT minimap
-    -- region while user hosts. /apscout qrvisible toggle still overrides (forces
-    -- visible even outside session, debug aid). _qrSuppressedByInteraction
-    -- can also hide it transiently while user has vendor/NPC/etc open.
-    -- _RefreshQRVisibility encodes all three axes; suppressShotsUntil set
-    -- BEFORE the call so the hidden→shown transition guard inside doesn't
-    -- need to overwrite a freshly-set value.
+    -- QR is no longer shown for the entire session. The first changed snapshot
+    -- will paint the QR, take a short visibility lease, wait QR_RENDER_SETTLE_S,
+    -- capture, and hide it again. Manual debug/move modes still flow through
+    -- the same visibility coordinator.
+    suppressShotsUntil = 0
     _RefreshQRVisibility()
 end
 
@@ -614,8 +593,8 @@ local function CreateQRFrame()
     qrBackground:SetAllPoints(qrFrame)
 
     qrFrameCreated = true
-    -- Hidden by default. StartSession does Show()+SetAlpha(1); EndSession
-    -- defers Hide() after final clear-shot fires.
+    -- Hidden by default. Screenshot dispatch takes a temporary visibility
+    -- lease only after a changed payload has been painted.
     if _RefreshQRMouse then _RefreshQRMouse() end
     qrFrame:Hide()
 end
@@ -708,11 +687,12 @@ local _interactionSlots = {}  -- kind → bool (only set when active; nil = inac
 local _hookedInfoPanels  = {} -- frame name → true once OnShow/OnHide hooks installed
 
 -- Single visibility decision. Three axes:
---   isSessionActive             — auto: player is hosting an LFG listing
---   _qrSuppressedByInteraction  — auto: a tracked interaction frame is open
+--   qrForceVisibleForShot       — auto: changed snapshot is being captured
 --   qrAlwaysVisible             — manual: /apscout qrvisible debug override
 --   qrMoveMode                  — manual: /apscout qrmove drag/debug mode
--- Debug override wins over interaction fade (user explicitly said "show me").
+-- Debug override/move mode wins over normal hidden state (user explicitly said
+-- "show me"). Interaction suppression gates non-force dispatch before a lease
+-- is acquired.
 _RefreshQRMouse = function()
     if not qrFrame then return end
     qrFrame:EnableMouse(qrMoveMode and true or false)
@@ -721,8 +701,7 @@ end
 _RefreshQRVisibility = function()
     if not qrFrame then return end
     local wasShown = qrFrame:IsShown()
-    local shouldShow = (isSessionActive and not _qrSuppressedByInteraction)
-                       or qrAlwaysVisible
+    local shouldShow = qrAlwaysVisible
                        or qrMoveMode
                        or qrForceVisibleForShot
     if shouldShow and not wasShown then
@@ -2276,6 +2255,19 @@ local function _ReleaseForceVisibleShotLease(forceVisibleShotGen)
     end
 end
 
+local function _AcquireQRShotLease()
+    local wasVisible = _IsQRVisibleForScreenshot()
+    if qrAlwaysVisible or qrMoveMode then
+        _RefreshQRVisibility()
+        return nil, wasVisible and 0 or QR_RENDER_SETTLE_S
+    end
+    qrForceVisibleForShot = true
+    qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
+    local forceVisibleShotGen = qrForceVisibleShotGen
+    _RefreshQRVisibility()
+    return forceVisibleShotGen, wasVisible and 0 or QR_RENDER_SETTLE_S
+end
+
 -- Build payload, dedup vs last hash, throttle, paint QR, trigger Screenshot.
 -- force=true bypasses dedup AND throttle (used by EndSession + /apscout shotnow).
 -- entryHint: optional pre-fetched C_LFGList.GetActiveEntryInfo() result from
@@ -2318,22 +2310,12 @@ MaybeTriggerScreenshot = function(force, entryHint)
     end
 
     -- Interaction-hidden QR should not produce or dedupe a payload. Keep the
-    -- latest state pending and let the scan ticker emit once _RefreshQRVisibility
-    -- shows the frame again; force shots still bypass for EndSession cleanup and
+    -- latest state pending and let the scan ticker emit once the interaction
+    -- frame closes; force shots still bypass for EndSession cleanup and
     -- explicit support commands.
-    if not force and not _IsQRVisibleForScreenshot() then
+    if not force and _qrSuppressedByInteraction then
         pendingShotDirty = true
         return
-    end
-
-    local forceVisibleShotDelay = 0
-    local forceVisibleShotGen = nil
-    if force and not _IsQRVisibleForScreenshot() then
-        qrForceVisibleForShot = true
-        qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
-        forceVisibleShotGen = qrForceVisibleShotGen
-        _RefreshQRVisibility()
-        forceVisibleShotDelay = QR_RENDER_SETTLE_S
     end
 
     local entry = nil
@@ -2373,28 +2355,26 @@ MaybeTriggerScreenshot = function(force, entryHint)
         -- fire immediately when data changes, not wait out throttle.
         lastSnapshotHash = h
         pendingShotDirty = false
-        _ReleaseForceVisibleShotLease(forceVisibleShotGen)
         return
     end
     if not PaintQR(matrix) then
         -- Same retry-suppression rationale as above.
         lastSnapshotHash = h
         pendingShotDirty = false
-        _ReleaseForceVisibleShotLease(forceVisibleShotGen)
         return
     end
+
+    local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()
 
     lastSnapshotHash = h
     lastShotTime = now
     pendingShotDirty = false
 
-    -- Frame is already Show()'d at alpha=1 (StartSession kept it visible for
-    -- the entire session). PaintQR above just updated the textures; defer
-    -- Screenshot one frame so the new texture set commits to GPU framebuffer
-    -- before capture (PaintQR's SetSize + ClearAllPoints + Show stack on
-    -- pooled textures takes effect on the next render pass, not the current
-    -- one). No alpha dance — that empirically races Screenshot() and
-    -- captures alpha=0 → no APS1 marker on JPG.
+    -- PaintQR above just updated the textures. If the frame was hidden, the
+    -- visibility lease waits QR_RENDER_SETTLE_S so Show()+texture updates reach
+    -- the GPU framebuffer before capture. If it was already visible (debug/move
+    -- mode or overlapping shot lease), C_Timer.After(0) still gives the fresh
+    -- texture set one render pass before Screenshot().
     C_Timer.After(forceVisibleShotDelay, function()
         if ApplicantScoutDB and ApplicantScoutDB.debug then
             print(string.format("|cff999999[APS-debug]|r CAP qr_size=%dpx hash=%x t=%.2f",
