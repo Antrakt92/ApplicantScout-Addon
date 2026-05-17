@@ -60,8 +60,8 @@ QR screenshot.
 
 ### Notes
 
-- The paired companion supports older payloads through v6, but this release
-  addon emits compact v5 payloads for reliable QR capture.
+- The paired companion supports payloads through compact v5; RaiderIO dungeon
+  rows are enriched locally by the companion instead of transported in QR.
 - ApplicantScout remains the in-game data-source half of the setup; the desktop
   companion renders Warcraft Logs / RaiderIO context.
 - Recommended companion version: `0.3.0` or newer.
