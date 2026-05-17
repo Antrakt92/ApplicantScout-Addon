@@ -55,6 +55,11 @@ QR screenshot.
   the fit formula.
 - Fixed same-realm applicants whose LFG names omit `-Realm` sometimes showing a
   RaiderIO score but no RaiderIO dungeon rows in the companion.
+- Fixed RaiderIO summary best-key signals using depleted runs; compact payload
+  best keys now describe timed runs, matching the companion's local RaiderIO
+  dungeon-row enrichment.
+- Fixed paired companion edge cases where lower-key Warcraft Logs evidence or
+  hyphenated realm names could hide stronger RaiderIO timed-key evidence.
 - Fixed prepared QR snapshots becoming excessively large when repeated
   per-dungeon RaiderIO names were embedded for every applicant.
 

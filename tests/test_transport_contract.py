@@ -185,6 +185,19 @@ def test_raiderio_summary_reuses_one_profile_lookup_per_member():
     assert "_RaiderIODungeonMatchesActivity" in summary_body
 
 
+def test_raiderio_summary_reports_best_keys_from_timed_runs_only():
+    source = _lua_source()
+    summary_body = _slice_between(
+        source,
+        "local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey)",
+        "-- CRC32 IEEE-802.3",
+    )
+
+    assert "local timed = chests > 0" in summary_body
+    assert "if timed and keyLevel > summary.bestKey then" in summary_body
+    assert "and _RaiderIODungeonMatchesActivity(dungeon, listingActivityID)" in summary_body
+
+
 def test_raiderio_lookup_qualifies_same_realm_bare_applicant_names():
     source = _lua_source()
     helper_body = _slice_between(

@@ -1076,10 +1076,7 @@ end
 --              uint8 rioBestDungeonKey + uint8 rioTimedAtTarget +
 --              uint8 rioTimedAtMinus1 + uint8 rioTimedAtMinus2 +
 --              uint8 rioCompletedAtMinus1 + uint8 rioDungeonCount +
---              uint8 rioRowCount +
---              repeated {uint8 rioKeyLevel + uint8 rioDungeonNameLen +
---              utf8 rioDungeonName} + uint8 role + uint8 nameLen + utf8 name
---              (CLAMPED to 255 bytes)
+--              uint8 role + uint8 nameLen + utf8 name (CLAMPED to 255 bytes)
 --   Trailer:   uint32 CRC32 (IEEE 802.3) over [magic..last applicant byte]
 --
 -- WHY keep the magic + CRC even though QR has its own ECC: the magic gives the
@@ -1365,8 +1362,11 @@ local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey
                 local timed = chests > 0
                 local dungeon = SafeTable(entry.dungeon)
                 summary.dungeonCount = summary.dungeonCount + 1
-                if keyLevel > summary.bestKey then summary.bestKey = keyLevel end
-                if _RaiderIODungeonMatchesActivity(dungeon, listingActivityID)
+                if timed and keyLevel > summary.bestKey then
+                    summary.bestKey = keyLevel
+                end
+                if timed
+                   and _RaiderIODungeonMatchesActivity(dungeon, listingActivityID)
                    and keyLevel > summary.bestDungeonKey then
                     summary.bestDungeonKey = keyLevel
                 end
