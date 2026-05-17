@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 - 17-May-2026 - Companion 0.3.1 WCL resilience hotfix
+
+This paired addon release keeps the public addon release train aligned with
+ApplicantScout Companion `0.3.1`.
+
+### Changed
+
+- No addon Lua runtime or wire-format changes.
+- Companion `0.3.1` fixes slow Warcraft Logs timeout handling during busy
+  applicant waves and keeps cached WCL lookups off the overlay UI launch path.
+
 ## 0.2.0 - 17-May-2026 - Companion 0.3.0 RaiderIO completion and dungeon keys
 
 This paired addon + companion release adds compact RaiderIO completion signals
