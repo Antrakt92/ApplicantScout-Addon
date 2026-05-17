@@ -1081,7 +1081,10 @@ end
 --              uint8 rioTimedAtMinus1 + uint8 rioTimedAtMinus2 +
 --              uint8 rioCompletedAtMinus1 + uint8 rioDungeonCount +
 --              uint8 role + uint8 nameLen + utf8 name (CLAMPED to 255 bytes)
---   Trailer:   uint32 CRC32 (IEEE 802.3) over [magic..last applicant byte]
+--   Roster:    uint16 count; per current party/raid member: uint8 unitIndex +
+--              uint8 flags + uint8 subgroup + same class/spec/score/RIO/role
+--              tail as applicant rows, then nameLen + utf8 name.
+--   Trailer:   uint32 CRC32 (IEEE 802.3) over [magic..last roster byte]
 --
 -- WHY keep the magic + CRC even though QR has its own ECC: the magic gives the
 -- companion a quick "is this really our payload" check that catches
@@ -1613,6 +1616,177 @@ local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey
     return summary
 end
 
+local function _UnitFullNameForTransport(unit)
+    if not UnitFullName then return "" end
+    local ok, name, realm = pcall(UnitFullName, unit)
+    if not ok then return "" end
+    name = SafeStr(name, "")
+    if name == "" then return "" end
+    realm = SafeStr(realm, "")
+    if realm == "" then
+        local okPlayer, _playerName, playerRealm = pcall(UnitFullName, "player")
+        if okPlayer then realm = SafeStr(playerRealm, "") end
+    end
+    if realm ~= "" then return name .. "-" .. realm end
+    return name
+end
+
+local function _UnitClassIDForRoster(unit)
+    if not UnitClass then return 0 end
+    local ok, _localized, classToken, classID = pcall(UnitClass, unit)
+    if not ok then return 0 end
+    classID = math.floor(SafeNumber(classID, 0))
+    if classID > 0 then return classID end
+    classToken = SafeEnumKey(classToken, "")
+    return CLASS_NAME_TO_ID[classToken] or 0
+end
+
+local function _UnitSpecIDForRoster(unit)
+    if UnitIsUnit and UnitIsUnit(unit, "player") then
+        if GetSpecialization and GetSpecializationInfo then
+            local okSpec, specIndex = pcall(GetSpecialization)
+            specIndex = okSpec and math.floor(SafeNumber(specIndex, 0)) or 0
+            if specIndex > 0 then
+                local okInfo, specID = pcall(GetSpecializationInfo, specIndex)
+                if okInfo then return _ClampUInt16(SafeNumber(specID, 0)) end
+            end
+        end
+    end
+    if GetInspectSpecialization then
+        local ok, specID = pcall(GetInspectSpecialization, unit)
+        if ok then return _ClampUInt16(SafeNumber(specID, 0)) end
+    end
+    return 0
+end
+
+local function _UnitItemLevelForRoster(unit)
+    if not (UnitIsUnit and UnitIsUnit(unit, "player") and GetAverageItemLevel) then
+        return 0
+    end
+    local ok, overall, equipped = pcall(GetAverageItemLevel)
+    if not ok then return 0 end
+    local ilvl = SafeNumber(equipped, 0)
+    if ilvl <= 0 then ilvl = SafeNumber(overall, 0) end
+    return _ClampUInt16(SafeRoundedNumber(ilvl, 0))
+end
+
+local function _UnitRoleTokenForRoster(unit, specID)
+    local roleToken = ""
+    if UnitGroupRolesAssigned then
+        local ok, assigned = pcall(UnitGroupRolesAssigned, unit)
+        if ok then roleToken = SafeEnumKey(assigned, "") end
+    end
+    if (roleToken == "" or roleToken == "NONE")
+       and specID > 0 and GetSpecializationRoleByID then
+        local ok, specRole = pcall(GetSpecializationRoleByID, specID)
+        if ok then roleToken = SafeEnumKey(specRole, "") end
+    end
+    if roleToken == "TANK" or roleToken == "HEALER" or roleToken == "DAMAGER" then
+        return roleToken
+    end
+    return "DAMAGER"
+end
+
+local function _UnitIsSelfForRoster(unit)
+    return UnitIsUnit and UnitIsUnit(unit, "player") or false
+end
+
+local function _UnitExistsForRoster(unit)
+    return UnitExists and UnitExists(unit) or false
+end
+
+local function _BuildRosterRow(unit, unitIndex, subgroup, isRaid)
+    if not _UnitExistsForRoster(unit) then return nil end
+    local name = _UnitFullNameForTransport(unit)
+    if name == "" then return nil end
+    local specID = _UnitSpecIDForRoster(unit)
+    local roleToken = _UnitRoleTokenForRoster(unit, specID)
+    local flags = 0
+    if _UnitIsSelfForRoster(unit) then flags = flags + 1 end
+    if isRaid then flags = flags + 2 end
+    return {
+        unitIndex = unitIndex,
+        flags = flags,
+        subgroup = subgroup,
+        classID = _UnitClassIDForRoster(unit),
+        specID = specID,
+        ilvl = _UnitItemLevelForRoster(unit),
+        role = ROLE_NAME_TO_BYTE[roleToken] or 2,
+        name = name,
+    }
+end
+
+local function _RaidSubgroupForRoster(index)
+    if not GetRaidRosterInfo then return 1 end
+    local ok, _name, _rank, subgroup = pcall(GetRaidRosterInfo, index)
+    if not ok then return 1 end
+    return _ClampUInt8(SafeNumber(subgroup, 1))
+end
+
+local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)
+    local rosterOut = {}
+    local emittedCount = 0
+    local rows = {}
+    local groupCount = math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))
+    local inRaid = IsInRaid and IsInRaid() or false
+
+    if inRaid then
+        if groupCount > 40 then groupCount = 40 end
+        for i = 1, groupCount do
+            local row = _BuildRosterRow(
+                "raid" .. i,
+                i,
+                _RaidSubgroupForRoster(i),
+                true
+            )
+            if row then table.insert(rows, row) end
+        end
+    else
+        local playerRow = _BuildRosterRow("player", 1, 1, false)
+        if playerRow then table.insert(rows, playerRow) end
+        local partyCount = groupCount > 0 and (groupCount - 1) or 0
+        if partyCount > 4 then partyCount = 4 end
+        for i = 1, partyCount do
+            local row = _BuildRosterRow("party" .. i, i + 1, 1, false)
+            if row then table.insert(rows, row) end
+        end
+    end
+
+    table.sort(rows, function(a, b)
+        if a.subgroup ~= b.subgroup then return a.subgroup < b.subgroup end
+        return a.unitIndex < b.unitIndex
+    end)
+
+    for _, row in ipairs(rows) do
+        local rioSummary = _GetRaiderIOMPlusSummary(
+            _RaiderIOProfileLookupName(row.name),
+            listingActivityIDForRio,
+            listingKeyLevelForRio
+        )
+        table.insert(rosterOut, string.char(_ClampUInt8(row.unitIndex)))
+        table.insert(rosterOut, string.char(_ClampUInt8(row.flags)))
+        table.insert(rosterOut, string.char(_ClampUInt8(row.subgroup)))
+        table.insert(rosterOut, string.char(_ClampUInt8(row.classID)))
+        table.insert(rosterOut, _Uint16BE(row.specID))
+        table.insert(rosterOut, _Uint16BE(row.ilvl))
+        table.insert(rosterOut, _Uint16BE(rioSummary.mainScore))
+        table.insert(rosterOut, _Uint16BE(rioSummary.mainScore))
+        table.insert(rosterOut, string.char(rioSummary.hasProfile and 1 or 0))
+        table.insert(rosterOut, string.char(rioSummary.bestKey))
+        table.insert(rosterOut, string.char(rioSummary.bestDungeonKey))
+        table.insert(rosterOut, string.char(rioSummary.timedAtOrAbove))
+        table.insert(rosterOut, string.char(rioSummary.timedAtOrAboveMinus1))
+        table.insert(rosterOut, string.char(rioSummary.timedAtOrAboveMinus2))
+        table.insert(rosterOut, string.char(rioSummary.completedAtOrAboveMinus1))
+        table.insert(rosterOut, string.char(rioSummary.dungeonCount))
+        table.insert(rosterOut, string.char(_ClampUInt8(row.role)))
+        _PackLenStr(rosterOut, row.name)
+        emittedCount = emittedCount + 1
+    end
+
+    return rosterOut, emittedCount
+end
+
 -- CRC32 IEEE-802.3, table-based. Built once at file load (~5KB memory).
 local CRC32_TABLE = {}
 do
@@ -1644,7 +1818,7 @@ local function BuildPayload(entry, applicantIDs)
 
     -- Header (length patched after we know body size)
     table.insert(out, "APS1")
-    table.insert(out, string.char(0x05))    -- protocol version (v5: compact RaiderIO summary)
+    table.insert(out, string.char(0x06))    -- protocol version (v6: roster block)
     table.insert(out, "\0\0")                -- length placeholder (uint16 BE)
     table.insert(out, "\0\0")                -- reserved
 
@@ -1820,6 +1994,15 @@ local function BuildPayload(entry, applicantIDs)
 
     table.insert(out, _Uint16BE(emittedCount))
     for _, chunk in ipairs(memberOut) do
+        table.insert(out, chunk)
+    end
+
+    local rosterOut, rosterCount = BuildRosterPayloadRows(
+        listingActivityIDForRio,
+        listingKeyLevelForRio
+    )
+    table.insert(out, _Uint16BE(rosterCount))
+    for _, chunk in ipairs(rosterOut) do
         table.insert(out, chunk)
     end
 
@@ -2404,6 +2587,7 @@ local EVENT_HANDLERS = {
     PARTY_LEADER_CHANGED             = function() MarkDirty("ldrchg") end,
     GROUP_ROSTER_UPDATE              = function() MarkDirty("roster") end,
     GROUP_LEFT                       = function() MarkDirty("groupleft") end,
+    PLAYER_SPECIALIZATION_CHANGED      = function() MarkDirty("spec") end,
 }
 
 -- Bind every interaction event to _OnInteractionEvent. Loop populates the

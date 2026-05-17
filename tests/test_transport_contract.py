@@ -147,10 +147,59 @@ def test_payload_still_includes_raiderio_completion_summary():
         "local function HashSnapshot(payload)",
     )
 
-    assert "string.char(0x05)" in payload_body
+    assert "string.char(0x06)" in payload_body
     assert "_GetRaiderIOMPlusSummary(" in source
     assert "rioSummary.hasProfile" in payload_body
     assert "rioSummary.bestDungeonKey" in payload_body
+
+
+def test_payload_v6_appends_current_group_roster_after_applicants():
+    source = _lua_source()
+    payload_body = _slice_between(
+        source,
+        "local function BuildPayload(entry, applicantIDs)",
+        "local function HashSnapshot(payload)",
+    )
+
+    assert "string.char(0x06)" in payload_body
+    assert "local rosterOut, rosterCount = BuildRosterPayloadRows(" in payload_body
+    applicants_idx = payload_body.index("for _, chunk in ipairs(memberOut) do")
+    roster_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
+    assert applicants_idx < roster_idx
+    assert "for _, chunk in ipairs(rosterOut) do" in payload_body
+
+
+def test_roster_payload_rows_include_key_summary_and_group_metadata():
+    source = _lua_source()
+    roster_body = _slice_between(
+        source,
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "-- CRC32 IEEE-802.3",
+    )
+
+    assert "GetNumGroupMembers()" in roster_body
+    assert 'table.insert(rosterOut, string.char(_ClampUInt8(row.unitIndex)))' in roster_body
+    assert 'table.insert(rosterOut, string.char(_ClampUInt8(row.flags)))' in roster_body
+    assert 'table.insert(rosterOut, string.char(_ClampUInt8(row.subgroup)))' in roster_body
+    assert "_GetRaiderIOMPlusSummary(" in roster_body
+    assert "rioSummary.bestDungeonKey" in roster_body
+    assert "_PackLenStr(rosterOut, row.name)" in roster_body
+    assert "emittedCount = emittedCount + 1" in roster_body
+
+
+def test_roster_dirty_events_are_registered():
+    source = _lua_source()
+    events_body = _slice_between(
+        source,
+        "local EVENT_HANDLERS = {",
+        "-- Bind every interaction event",
+    )
+
+    assert 'GROUP_ROSTER_UPDATE              = function() MarkDirty("roster") end' in events_body
+    assert (
+        'PLAYER_SPECIALIZATION_CHANGED      = function() MarkDirty("spec") end'
+        in events_body
+    )
 
 
 def test_listing_key_level_does_not_fall_back_to_owned_keystone_level():
