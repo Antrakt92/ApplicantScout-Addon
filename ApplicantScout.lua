@@ -73,8 +73,8 @@ local DB_DEFAULTS = {
     qrFramePosition = nil,
 }
 
--- Session lifecycle. INVARIANT: isSessionActive == true ⇔ companion overlay
--- visible.
+-- Session lifecycle. INVARIANT: isSessionActive == true ⇔ the addon has a
+-- transport-visible state to publish (active LFG listing OR real group roster).
 local isSessionActive = false
 local sessionGen = 0             -- bumped in StartSession; deferred cleanups verify match
 
@@ -432,6 +432,10 @@ EndSession = function()
     end
 end
 
+local function _HasGroupRosterForTransport()
+    return math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0)) > 0
+end
+
 CheckSessionTransition = function()
     local hasEntry = C_LFGList.HasActiveEntryInfo()
     local entry = nil
@@ -439,10 +443,12 @@ CheckSessionTransition = function()
         entry = SafeTable(C_LFGList.GetActiveEntryInfo())
     end
     local hosting = entry ~= nil
+    local hasRoster = _HasGroupRosterForTransport()
+    local transportActive = hosting or hasRoster
 
-    if hosting and not isSessionActive then
+    if transportActive and not isSessionActive then
         StartSession()
-    elseif not hosting and isSessionActive then
+    elseif not transportActive and isSessionActive then
         EndSession()
     end
     -- Returns the active LFG entry (or nil) so the scan-tick caller can pass
@@ -1708,6 +1714,9 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
     local rows = {}
     local groupCount = math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))
     local inRaid = IsInRaid and IsInRaid() or false
+    if groupCount <= 0 then
+        return rosterOut, emittedCount
+    end
 
     if inRaid then
         if groupCount > 40 then groupCount = 40 end

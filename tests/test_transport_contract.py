@@ -81,6 +81,42 @@ def test_qr_shot_lease_shows_hidden_qr_and_releases_after_capture():
     assert "qrForceVisibleForShot = false" in source
 
 
+def test_party_roster_starts_transport_without_lfg_listing():
+    source = _lua_source()
+    transition_body = _slice_between(
+        source,
+        "CheckSessionTransition = function()",
+        "-- Single transition logger",
+    )
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint)",
+        "-- LFG entry creation",
+    )
+
+    assert "local hasRoster = _HasGroupRosterForTransport()" in transition_body
+    assert "local transportActive = hosting or hasRoster" in transition_body
+    assert "if transportActive and not isSessionActive then" in transition_body
+    assert "elseif not transportActive and isSessionActive then" in transition_body
+    assert "not isSessionActive and not force" in screenshot_body
+
+
+def test_roster_payload_rows_skip_solo_player_when_not_grouped():
+    source = _lua_source()
+    roster_body = _slice_between(
+        source,
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "-- CRC32 IEEE-802.3",
+    )
+
+    group_idx = roster_body.index("local groupCount = math.floor")
+    solo_guard_idx = roster_body.index("if groupCount <= 0 then")
+    player_idx = roster_body.index('_BuildRosterRow("player", 1, 1, false)')
+
+    assert group_idx < solo_guard_idx < player_idx
+    assert "return rosterOut, emittedCount" in roster_body[solo_guard_idx:player_idx]
+
+
 def test_safe_str_strips_player_links_before_bare_pipe_cleanup():
     source = _lua_source()
     body = _slice_between(source, "SafeStr = function(v, secretFallback)", "local function SafeDiag")
