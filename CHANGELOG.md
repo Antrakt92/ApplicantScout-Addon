@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.2 - 17-May-2026 - Companion 0.3.2 screenshot decode speedup
+
+This paired addon release keeps the public addon release train aligned with
+ApplicantScout Companion `0.3.2`.
+
+### Changed
+
+- No addon Lua runtime or wire-format changes.
+- Companion `0.3.2` speeds up screenshot QR decoding by scanning the normal
+  top-left transport region first and adds diagnostics for slow screenshot
+  stable-wait versus QR decode stages.
+
 ## 0.2.1 - 17-May-2026 - Companion 0.3.1 WCL resilience hotfix
 
 This paired addon release keeps the public addon release train aligned with
