@@ -249,7 +249,7 @@ def test_roster_dirty_events_are_registered():
     )
 
 
-def test_listing_key_level_does_not_fall_back_to_owned_keystone_level():
+def test_listing_key_level_uses_owned_keystone_only_after_listing_match_guard():
     source = _lua_source()
     helper_body = _slice_between(
         source,
@@ -271,8 +271,16 @@ def test_listing_key_level_does_not_fall_back_to_owned_keystone_level():
         "local function _GetListingKeystoneLevel(activityID, questID, listingName, listingComment, activityInfo)"
     )
     assert "ownedLevel" not in helper_body
-    assert "shouldUseOwnedKeystone and ownedLevel or 0" not in payload_body
-    assert "statusUseOwned and ownedLevel or 0" not in status_body
+    guard_idx = payload_body.index("local shouldUseOwnedKeystone = ownedLevel > 0")
+    fallback_idx = payload_body.index("if keyLevel == 0 and shouldUseOwnedKeystone then")
+    assert guard_idx < fallback_idx
+    assert "keyLevel = ownedLevel" in payload_body[fallback_idx:]
+    status_guard_idx = status_body.index("local statusUseOwned = ownedLevel > 0")
+    status_fallback_idx = status_body.index(
+        "if statusDerivedKeyLevel == 0 and statusUseOwned then"
+    )
+    assert status_guard_idx < status_fallback_idx
+    assert "statusDerivedKeyLevel = ownedLevel" in status_body[status_fallback_idx:]
 
 
 def test_listing_key_level_prefers_visible_posted_level_over_activity_text():

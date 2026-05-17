@@ -1863,6 +1863,9 @@ local function BuildPayload(entry, applicantIDs)
                 and (ownedActivityID == activityID
                     or dungeonName == "Mythic+"
                     or dungeonName == "?")
+            if keyLevel == 0 and shouldUseOwnedKeystone then
+                keyLevel = ownedLevel
+            end
             if shouldUseOwnedKeystone then
                 activityID = ownedActivityID
                 activityInfo = ownedInfo
@@ -3146,13 +3149,17 @@ SlashCmdList.APSCOUT = function(msg)
             print("  ownedKeystone.usedForListing: " .. tostring(statusUseOwned))
             local listingKeyLevel =
                 _G.ApplicantScout_GetListingKeystoneLevel
+            local statusDerivedKeyLevel = listingKeyLevel and listingKeyLevel(
+                cleanActivityID,
+                cleanQuestID,
+                statusListingName,
+                statusListingComment,
+                statusActivityInfo) or 0
+            if statusDerivedKeyLevel == 0 and statusUseOwned then
+                statusDerivedKeyLevel = ownedLevel
+            end
             print("  derived keyLevel: "
-                  .. tostring(listingKeyLevel and listingKeyLevel(
-                      cleanActivityID,
-                      cleanQuestID,
-                      statusListingName,
-                      statusListingComment,
-                      statusActivityInfo) or 0))
+                  .. tostring(statusDerivedKeyLevel))
         else
             print("  entry: nil")
         end
