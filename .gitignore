@@ -10,6 +10,11 @@ desktop.ini
 *.swo
 *~
 
+# Python test/cache artefacts from local audit helpers
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
 # WoW runtime artefacts (SavedVariables live outside the addon folder, but
 # guard against accidental commits if anyone copies them in for debugging)
 dist/
