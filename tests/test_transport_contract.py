@@ -20,11 +20,11 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
     source = _lua_source()
     body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint)",
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
         "-- LFG entry creation",
     )
 
-    payload_idx = body.index("local payload = BuildPayload(entry, applicantIDs)")
+    payload_idx = body.index("local payload = BuildPayload(entry, applicantIDs, terminalClear)")
     hash_idx = body.index("local h = HashSnapshot(payload)")
     matrix_idx = body.index("local matrix = BuildQRMatrix(payload)")
     paint_idx = body.index("if not PaintQR(matrix) then")
@@ -51,12 +51,12 @@ def test_interaction_suppression_defers_non_force_payloads_before_dedup():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint)",
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
         "-- LFG entry creation",
     )
 
     suppression_idx = screenshot_body.index("not force and _qrSuppressedByInteraction")
-    payload_idx = screenshot_body.index("local payload = BuildPayload(entry, applicantIDs)")
+    payload_idx = screenshot_body.index("local payload = BuildPayload(entry, applicantIDs, terminalClear)")
     suppression_block = screenshot_body[
         suppression_idx : screenshot_body.index("\n    end", suppression_idx)
     ]
@@ -90,7 +90,7 @@ def test_party_roster_starts_transport_without_lfg_listing():
     )
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint)",
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
         "-- LFG entry creation",
     )
 
@@ -276,7 +276,7 @@ def test_payload_still_includes_raiderio_completion_summary():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs)",
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
         "local function HashSnapshot(payload)",
     )
 
@@ -290,15 +290,56 @@ def test_payload_v6_appends_current_group_roster_after_applicants():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs)",
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
         "local function HashSnapshot(payload)",
     )
 
     assert "string.char(0x06)" in payload_body
-    assert "local rosterOut, rosterCount = BuildRosterPayloadRows(" in payload_body
+    assert "BuildRosterPayloadRows(" in payload_body
     applicants_idx = payload_body.index("for _, chunk in ipairs(memberOut) do")
     roster_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
     assert applicants_idx < roster_idx
+    assert "for _, chunk in ipairs(rosterOut) do" in payload_body
+
+
+def test_terminal_clear_is_only_passed_by_end_session():
+    source = _lua_source()
+    end_body = _slice_between(
+        source,
+        "EndSession = function()",
+        "local function _HasGroupRosterForTransport()",
+    )
+    shotnow_body = _slice_between(
+        source,
+        'elseif msg == "shotnow" then',
+        'elseif msg == "qrvisible" then',
+    )
+
+    assert "MaybeTriggerScreenshot(true, nil, true)" in end_body
+    assert "MaybeTriggerScreenshot(true, entry, true)" not in shotnow_body
+    assert "MaybeTriggerScreenshot(true, entry)" in shotnow_body
+
+
+def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+    payload_body = _slice_between(
+        source,
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        "local function HashSnapshot(payload)",
+    )
+
+    assert "local payload = BuildPayload(entry, applicantIDs, terminalClear)" in screenshot_body
+    assert "local rosterOut, rosterCount = {}, 0" in payload_body
+    assert "if not terminalClear then" in payload_body
+    roster_call_idx = payload_body.index("BuildRosterPayloadRows(")
+    terminal_guard_idx = payload_body.index("if not terminalClear then")
+    count_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
+    assert terminal_guard_idx < roster_call_idx < count_idx
     assert "for _, chunk in ipairs(rosterOut) do" in payload_body
 
 
@@ -363,6 +404,40 @@ def test_inspect_ready_marks_roster_dirty_after_caching_spec():
     assert "_OnRosterInspectReady(guid)" in events_body
 
 
+def test_specialization_changed_invalidates_changed_unit_guid_before_dirty():
+    source = _lua_source()
+    events_body = _slice_between(
+        source,
+        "local EVENT_HANDLERS = {",
+        "-- Bind every interaction event",
+    )
+    handler_body = _slice_between(
+        events_body,
+        "PLAYER_SPECIALIZATION_CHANGED      = function(_, unit)",
+        "INSPECT_READY",
+    )
+
+    invalidate_idx = handler_body.index("_InvalidateRosterSpecCacheForUnit(unit)")
+    dirty_idx = handler_body.index('MarkDirty("spec")')
+
+    assert invalidate_idx < dirty_idx
+
+
+def test_roster_spec_cache_invalidation_clears_pending_inspect_for_changed_guid():
+    source = _lua_source()
+    helper_body = _slice_between(
+        source,
+        "local function _InvalidateRosterSpecCacheForUnit(unit)",
+        "local function _MaybeRequestRosterInspect(unit, guid)",
+    )
+
+    assert "local guid = _UnitGUIDForRoster(unit)" in helper_body
+    assert "rosterInspectSpecByGUID[guid] = nil" in helper_body
+    assert "if rosterInspectPendingGUID == guid then" in helper_body
+    assert "rosterInspectPendingGUID = nil" in helper_body
+    assert "rosterInspectSpecByGUID = {}" in helper_body
+
+
 def test_roster_dirty_events_are_registered():
     source = _lua_source()
     events_body = _slice_between(
@@ -372,10 +447,9 @@ def test_roster_dirty_events_are_registered():
     )
 
     assert 'GROUP_ROSTER_UPDATE              = function() MarkDirty("roster") end' in events_body
-    assert (
-        'PLAYER_SPECIALIZATION_CHANGED      = function() MarkDirty("spec") end'
-        in events_body
-    )
+    assert 'PLAYER_SPECIALIZATION_CHANGED      = function(_, unit)' in events_body
+    assert "_InvalidateRosterSpecCacheForUnit(unit)" in events_body
+    assert 'MarkDirty("spec")' in events_body
 
 
 def test_listing_key_level_uses_owned_keystone_only_after_listing_match_guard():
@@ -387,7 +461,7 @@ def test_listing_key_level_uses_owned_keystone_only_after_listing_match_guard():
     )
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs)",
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
         "local function HashSnapshot(payload)",
     )
     status_body = _slice_between(
@@ -457,7 +531,7 @@ def test_listing_key_level_uses_active_creation_form_cache():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs)",
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
         "local function HashSnapshot(payload)",
     )
     creation_body = source[
@@ -608,7 +682,7 @@ def test_listing_key_level_is_derived_before_owned_keystone_activity_fallback():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs)",
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
         "local function HashSnapshot(payload)",
     )
 
@@ -622,7 +696,7 @@ def test_payload_does_not_pack_raiderio_dungeon_rows_into_qr():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs)",
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
         "local function HashSnapshot(payload)",
     )
 
@@ -641,7 +715,7 @@ def test_raiderio_summary_reuses_one_profile_lookup_per_member():
     )
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs)",
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
         "local function HashSnapshot(payload)",
     )
 
@@ -672,7 +746,7 @@ def test_raiderio_lookup_qualifies_same_realm_bare_applicant_names():
     )
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs)",
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
         "local function HashSnapshot(payload)",
     )
 

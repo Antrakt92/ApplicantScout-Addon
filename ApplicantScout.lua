@@ -408,11 +408,11 @@ EndSession = function()
     -- old gate would have expired starts with a clean render-settle window.
     suppressShotsUntil = 0
 
-    -- Final force-shot: BuildPayload now sees isSessionActive=false → entry=nil
-    -- → emits has_listing=0 + 0 applicants. Companion's apply_snapshot diff:
-    -- removes all applicants, clears listing → overlay hides. Bypasses dedup +
-    -- throttle (force=true) since this is one-shot terminal event.
-    MaybeTriggerScreenshot(true)
+    -- Final force-shot: terminalClear makes BuildPayload emit has_listing=0,
+    -- 0 applicants, and roster_count=0. Companion treats no-listing + roster
+    -- as valid Party state, so teardown must explicitly omit roster rows.
+    -- Bypasses dedup + throttle (force=true) since this is one-shot terminal.
+    MaybeTriggerScreenshot(true, nil, true)
     -- Defensive: force-shot path resets pendingShotDirty on success, but if it
     -- early-returned (qrFrame missing, QR encode failure) the flag could persist
     -- across sessions and trigger empty drains in the scan ticker. Clear here.
@@ -1857,6 +1857,19 @@ local function _FindRosterUnitByGUID(guid)
     return found
 end
 
+local function _InvalidateRosterSpecCacheForUnit(unit)
+    local guid = _UnitGUIDForRoster(unit)
+    if guid ~= "" then
+        rosterInspectSpecByGUID[guid] = nil
+        if rosterInspectPendingGUID == guid then
+            rosterInspectPendingGUID = nil
+        end
+        return
+    end
+    rosterInspectSpecByGUID = {}
+    rosterInspectPendingGUID = nil
+end
+
 local function _MaybeRequestRosterInspect(unit, guid)
     if not (NotifyInspect and CanInspect) then return end
     if UnitIsUnit and UnitIsUnit(unit, "player") then return end
@@ -2094,7 +2107,7 @@ end
 
 -- Builds binary payload from current LFG state. entry may be nil (no listing).
 -- applicantIDs is array from C_LFGList.GetApplicants(). Returns string of bytes.
-local function BuildPayload(entry, applicantIDs)
+local function BuildPayload(entry, applicantIDs, terminalClear)
     local out = {}
 
     -- Header (length patched after we know body size)
@@ -2281,10 +2294,13 @@ local function BuildPayload(entry, applicantIDs)
         table.insert(out, chunk)
     end
 
-    local rosterOut, rosterCount = BuildRosterPayloadRows(
-        listingActivityIDForRio,
-        listingKeyLevelForRio
-    )
+    local rosterOut, rosterCount = {}, 0
+    if not terminalClear then
+        rosterOut, rosterCount = BuildRosterPayloadRows(
+            listingActivityIDForRio,
+            listingKeyLevelForRio
+        )
+    end
     table.insert(out, _Uint16BE(rosterCount))
     for _, chunk in ipairs(rosterOut) do
         table.insert(out, chunk)
@@ -2582,7 +2598,7 @@ end
 -- to fetching here (force-shot from EndSession / /apscout shotnow).
 -- QR paints for a short visibility lease, then Screenshot runs after the render
 -- settle window; manual debug/move modes can keep the frame visible outside it.
-MaybeTriggerScreenshot = function(force, entryHint)
+MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
     -- "Can't fire" early-returns clear pendingShotDirty so the scan-ticker drain
     -- (line further below) doesn't spin endlessly calling us back when conditions
     -- haven't changed. Throttle path (further down) is the ONLY legitimate reason
@@ -2639,7 +2655,7 @@ MaybeTriggerScreenshot = function(force, entryHint)
         applicantIDs = SafeTable(C_LFGList.GetApplicants()) or {}
     end
 
-    local payload = BuildPayload(entry, applicantIDs)
+    local payload = BuildPayload(entry, applicantIDs, terminalClear)
 
     local h = HashSnapshot(payload)
     if not force and h == lastSnapshotHash then
@@ -2920,7 +2936,10 @@ local EVENT_HANDLERS = {
     PARTY_LEADER_CHANGED             = function() MarkDirty("ldrchg") end,
     GROUP_ROSTER_UPDATE              = function() MarkDirty("roster") end,
     GROUP_LEFT                       = function() MarkDirty("groupleft") end,
-    PLAYER_SPECIALIZATION_CHANGED      = function() MarkDirty("spec") end,
+    PLAYER_SPECIALIZATION_CHANGED      = function(_, unit)
+        _InvalidateRosterSpecCacheForUnit(unit)
+        MarkDirty("spec")
+    end,
     INSPECT_READY                    = function(_, guid)
         _OnRosterInspectReady(guid)
     end,
