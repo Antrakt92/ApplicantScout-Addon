@@ -1317,31 +1317,42 @@ local function _PublishPendingEntryCreationKeyLevelCache(listingContext)
     return true
 end
 
-local function _GetCachedEntryCreationKeystoneLevel(activityID, questID)
+entryCreationKeyState.ResolveCachedEntryCreationKeystoneLevel = function(activityID, questID)
     activityID = math.floor(SafeNumber(activityID, 0))
     if activityID <= 0 then
-        entryCreationKeyState.entryCreationKeyLevelCacheDecision = "ignored: active activity unknown"
-        return 0
+        return 0, "ignored: active activity unknown", false
     end
     local cache = entryCreationKeyState.entryCreationKeyLevelCache
-    if not cache then return 0 end
+    if not cache then return 0, nil, false end
     if not _EntryCreationCacheFresh(cache) then
-        entryCreationKeyState.entryCreationKeyLevelCache = nil
-        entryCreationKeyState.entryCreationKeyLevelCacheDecision = "ignored: expired"
-        return 0
+        return 0, "ignored: expired", true
     end
 
     questID = math.floor(SafeNumber(questID, 0))
     if cache.activityID <= 0 or cache.activityID ~= activityID then
-        entryCreationKeyState.entryCreationKeyLevelCacheDecision = "ignored: activity mismatch"
-        return 0
+        return 0, "ignored: activity mismatch", false
     end
     if cache.questID > 0 and questID > 0 and cache.questID ~= questID then
-        entryCreationKeyState.entryCreationKeyLevelCacheDecision = "ignored: quest mismatch"
-        return 0
+        return 0, "ignored: quest mismatch", false
     end
-    entryCreationKeyState.entryCreationKeyLevelCacheDecision = "used"
-    return _NormalizeKeystoneLevel(cache.keyLevel)
+    return _NormalizeKeystoneLevel(cache.keyLevel), "used", false
+end
+
+entryCreationKeyState.PeekCachedEntryCreationKeystoneLevel = function(activityID, questID)
+    local level = entryCreationKeyState.ResolveCachedEntryCreationKeystoneLevel(activityID, questID)
+    return level
+end
+
+local function _GetCachedEntryCreationKeystoneLevel(activityID, questID)
+    local level, decision, clearExpired =
+        entryCreationKeyState.ResolveCachedEntryCreationKeystoneLevel(activityID, questID)
+    if clearExpired then
+        entryCreationKeyState.entryCreationKeyLevelCache = nil
+    end
+    if decision then
+        entryCreationKeyState.entryCreationKeyLevelCacheDecision = decision
+    end
+    return level
 end
 
 local function _ClearEntryCreationKeystoneLevelCache(activityID, questID)
@@ -3478,10 +3489,9 @@ SlashCmdList.APSCOUT = function(msg)
             for _, line in ipairs(visibleDiagnostics) do
                 print(line)
             end
-            local cachedLevel =
-                _G.ApplicantScout_CachedEntryCreationKeystoneLevel
             local cachedKeyLevel =
-                cachedLevel and cachedLevel(cleanActivityID, cleanQuestID) or 0
+                entryCreationKeyState.PeekCachedEntryCreationKeystoneLevel(
+                    cleanActivityID, cleanQuestID)
             print("  entryCreationCache.keyLevel: " .. tostring(cachedKeyLevel))
             local statusListingName = SafeStr(entry.name, "?"):gsub("|K[^|]*|k", "")
             local statusListingComment = SafeStr(entry.comment, "?")

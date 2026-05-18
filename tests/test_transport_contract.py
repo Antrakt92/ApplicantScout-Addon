@@ -433,18 +433,24 @@ def test_listing_key_level_prefers_visible_posted_level_over_activity_text():
 
 def test_cached_entry_creation_key_requires_known_active_activity():
     source = _lua_source()
-    helper_body = _slice_between(
+    resolver_body = _slice_between(
+        source,
+        "entryCreationKeyState.ResolveCachedEntryCreationKeystoneLevel = function(activityID, questID)",
+        "entryCreationKeyState.PeekCachedEntryCreationKeystoneLevel = function(activityID, questID)",
+    )
+    getter_body = _slice_between(
         source,
         "local function _GetCachedEntryCreationKeystoneLevel(activityID, questID)",
         "local function _ClearEntryCreationKeystoneLevelCache",
     )
 
-    normalize_idx = helper_body.index("activityID = math.floor(SafeNumber(activityID, 0))")
-    unknown_idx = helper_body.index("if activityID <= 0 then")
-    cache_idx = helper_body.index("local cache = entryCreationKeyState.entryCreationKeyLevelCache")
+    normalize_idx = resolver_body.index("activityID = math.floor(SafeNumber(activityID, 0))")
+    unknown_idx = resolver_body.index("if activityID <= 0 then")
+    cache_idx = resolver_body.index("local cache = entryCreationKeyState.entryCreationKeyLevelCache")
 
     assert normalize_idx < unknown_idx < cache_idx
-    assert "return 0" in helper_body[unknown_idx:cache_idx]
+    assert "return 0, \"ignored: active activity unknown\", false" in resolver_body[unknown_idx:cache_idx]
+    assert "entryCreationKeyState.ResolveCachedEntryCreationKeystoneLevel(activityID, questID)" in getter_body
 
 
 def test_listing_key_level_uses_active_creation_form_cache():
@@ -529,6 +535,9 @@ def test_status_reports_key_capture_hooks_and_cache_decision_separately():
     assert "pendingEntryCreationCache.keyLevel" in diagnostics_body
     assert "publishedEntryCreationCache.keyLevel" in diagnostics_body
     assert "listing cache decision:" in diagnostics_body
+    assert "entryCreationKeyState.PeekCachedEntryCreationKeystoneLevel(" in status_body
+    assert "cleanActivityID, cleanQuestID" in status_body
+    assert "cachedLevel and cachedLevel(cleanActivityID, cleanQuestID)" not in status_body
 
 
 def test_listing_key_level_accepts_short_visible_key_titles_only():
