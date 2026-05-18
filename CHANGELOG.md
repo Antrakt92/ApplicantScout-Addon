@@ -5,7 +5,8 @@
 This paired addon + companion release keeps the in-game transport aligned with
 ApplicantScout Companion `0.5.0`, which improves Mythic+ applicant ranking,
 group package scoring, and hover explanations. The addon also includes
-post-`0.3.0` transport hardening for key-cache and terminal-clear edge cases.
+post-`0.3.0` transport hardening for key-cache, Party spec-cache, and
+terminal-clear edge cases.
 
 ### Improved
 
@@ -19,6 +20,9 @@ post-`0.3.0` transport hardening for key-cache and terminal-clear edge cases.
 
 - Fixed active Mythic+ key-cache lifecycle boundaries so ended, edited, or
   relisted groups do not reuse stale posted-key evidence.
+- Fixed Party roster spec-cache invalidation so a grouped player's
+  specialization change can refresh the companion Party row instead of reusing
+  stale inspected spec context.
 - Fixed grouped `/apscout off` terminal snapshots so the companion receives a
   true clear instead of a valid no-listing Party roster snapshot.
 
