@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.3.1 - 18-May-2026 - Companion 0.5.0 M+ ranking release train
+
+This paired addon + companion release keeps the in-game transport aligned with
+ApplicantScout Companion `0.5.0`, which improves Mythic+ applicant ranking,
+group package scoring, and hover explanations. The addon also includes
+post-`0.3.0` transport hardening for key-cache and terminal-clear edge cases.
+
+### Improved
+
+- Hosted-key cache diagnostics now preserve the relevant source/status detail,
+  making `/apscout status` more useful when Blizzard listing data is generic,
+  protected, or unavailable.
+- Release packaging contracts were refreshed so the paired addon and companion
+  checks cover the current v6 transport and package-shaping files.
+
+### Fixed
+
+- Fixed active Mythic+ key-cache lifecycle boundaries so ended, edited, or
+  relisted groups do not reuse stale posted-key evidence.
+- Fixed grouped `/apscout off` terminal snapshots so the companion receives a
+  true clear instead of a valid no-listing Party roster snapshot.
+
+### Notes
+
+- No QR wire-format change since `0.3.0`; payloads remain compact v6.
+- This addon release is paired with ApplicantScout Companion `0.5.0`.
+- Companion `0.5.0` improves M+ fit scoring, group ranking, loading/error
+  ordering, RaiderIO fallback explanations, and top-panel geometry.
+
 ## 0.3.0 - 18-May-2026 - Companion 0.4.0 Party roster overlay
 
 This paired addon + companion release adds live party/raid roster snapshots so
