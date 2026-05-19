@@ -84,6 +84,52 @@ def test_release_workflow_pins_external_actions_to_commit_shas():
         assert _SHA_REF_RE.fullmatch(ref), f"{action} must be pinned to a full commit SHA"
 
 
+def test_check_workflow_runs_non_release_preflight_without_publishing():
+    workflow = _read_repo_text(".github/workflows/check.yml")
+
+    assert "push:" in workflow
+    assert "pull_request:" in workflow
+    assert "tags:" not in workflow
+    assert "windows-latest" in workflow
+    assert "contents: read" in workflow
+    assert "contents: write" not in workflow
+    assert "python-version: '3.13'" in workflow
+    assert "python -m pytest -q tests" in workflow
+    assert "choco install lua51 --version=5.1.5" in workflow
+    assert "& $luac -p ApplicantScout.lua libs\\qrencode.lua" in workflow
+    assert ".\\scripts\\package-addon.ps1" in workflow
+    assert "BigWigsMods/packager" not in workflow
+    assert "CF_API_KEY" not in workflow
+    assert "WAGO_API_TOKEN" not in workflow
+    assert "gh release" not in workflow
+
+
+def test_check_workflow_pins_external_actions_to_commit_shas():
+    workflow = _read_repo_text(".github/workflows/check.yml")
+    action_refs = _workflow_action_refs(workflow)
+
+    assert Counter(action for action, _ in action_refs) == Counter(
+        {
+            "actions/checkout": 1,
+            "actions/setup-python": 1,
+        }
+    )
+    for action, ref in action_refs:
+        assert _SHA_REF_RE.fullmatch(ref), f"{action} must be pinned to a full commit SHA"
+
+
+def test_check_workflow_pins_lua_build_tool_version():
+    workflow = _read_repo_text(".github/workflows/check.yml")
+    install_args = _release_tool_install_args(workflow)
+
+    assert set(install_args) == set(_RELEASE_TOOL_PACKAGES)
+    assert len(install_args["lua51"]) == 1
+    assert re.search(
+        r"(?i)(?:^|\s)--version(?:=|\s+)5\.1\.5(?:\s|$)",
+        install_args["lua51"][0],
+    )
+
+
 def test_release_preflight_pins_lua_build_tool_version():
     workflow = _workflow_source()
     install_args = _release_tool_install_args(workflow)

@@ -1,0 +1,53 @@
+name: Check
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        # actions/checkout v6 pinned to the upstream tag commit.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Install Lua 5.1
+        shell: pwsh
+        run: choco install lua51 --version=5.1.5 -y --no-progress
+
+      - name: Set up Python
+        # actions/setup-python v6 pinned to the upstream tag commit.
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.13'
+
+      - name: Transport contract tests
+        shell: pwsh
+        run: |
+          python -m pip install pytest
+          python -m pytest -q tests
+
+      - name: Lua syntax
+        shell: pwsh
+        run: |
+          $luac = Get-Command luac5.1 -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty Source
+          if (-not $luac) {
+            $luac = "C:\ProgramData\chocolatey\lib\lua51\tools\luac5.1.exe"
+          }
+          if (-not (Test-Path -LiteralPath $luac)) {
+            throw "Missing luac 5.1 compiler at $luac"
+          }
+          & $luac -p ApplicantScout.lua libs\qrencode.lua
+
+      - name: Development package smoke
+        shell: pwsh
+        run: .\scripts\package-addon.ps1
