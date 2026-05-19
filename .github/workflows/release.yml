@@ -11,20 +11,22 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # actions/checkout v6 pinned to the upstream tag commit.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
 
       - name: Install Lua 5.1
         shell: pwsh
-        run: choco install lua51 -y --no-progress
+        run: choco install lua51 --version=5.1.5 -y --no-progress
 
       - name: Check release version
         shell: pwsh
         run: .\scripts\check-release-version.ps1 -Tag $env:GITHUB_REF_NAME
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        # actions/setup-python v6 pinned to the upstream tag commit.
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: '3.13'
 
@@ -59,7 +61,8 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # actions/checkout v6 pinned to the upstream tag commit.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
 
@@ -73,7 +76,8 @@ jobs:
           fi
 
       - name: Package and release
-        uses: BigWigsMods/packager@v2
+        # BigWigsMods/packager v2 pinned to the peeled commit from the upstream tag.
+        uses: BigWigsMods/packager@6d50adb6e8517eefef63f4afb16a6518166a6b28
         env:
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
           WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}

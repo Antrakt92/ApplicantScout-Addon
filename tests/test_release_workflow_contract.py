@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from collections import Counter
 import re
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+_ACTION_USES_RE = re.compile(r"(?m)^\s*uses:\s*([^\s#]+)\s*(?:#.*)?$")
+_SHA_REF_RE = re.compile(r"^[0-9a-f]{40}$", re.I)
+_CHOCO_INSTALL_LINE_RE = re.compile(
+    r"(?im)^\s*(?:run:\s*)?choco\s+install\s+([A-Za-z0-9_.-]+)\b([^\r\n]*)"
+)
+_RELEASE_TOOL_PACKAGES = {
+    "lua51": "5.1.5",
+}
 
 
 def _workflow_source() -> str:
@@ -17,17 +26,74 @@ def _read_repo_text(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
+def _workflow_action_refs(workflow: str) -> list[tuple[str, str]]:
+    refs: list[tuple[str, str]] = []
+    for uses_target in _ACTION_USES_RE.findall(workflow):
+        if uses_target.startswith("./"):
+            continue
+        action, separator, ref = uses_target.rpartition("@")
+        assert separator, f"External action is missing an explicit ref: {uses_target}"
+        refs.append((action, ref))
+    return refs
+
+
+def _release_tool_install_args(workflow: str) -> dict[str, list[str]]:
+    install_args: dict[str, list[str]] = {}
+    for package, args in _CHOCO_INSTALL_LINE_RE.findall(workflow):
+        package_name = package.lower()
+        extra_release_tools = [
+            tool
+            for tool in _RELEASE_TOOL_PACKAGES
+            if tool != package_name
+            and re.search(rf"(?<![-\w]){re.escape(tool)}(?![-\w])", args, re.I)
+        ]
+        assert not extra_release_tools, (
+            "Install release-critical Chocolatey packages in separate commands "
+            f"so each package has its own version pin: {package} {args}"
+        )
+        if package_name in _RELEASE_TOOL_PACKAGES:
+            install_args.setdefault(package_name, []).append(args)
+    return install_args
+
+
 def test_release_preflight_runs_transport_contract_tests():
     workflow = _workflow_source()
 
-    setup_idx = workflow.index("actions/setup-python")
+    setup_idx = workflow.index("Set up Python")
     pytest_idx = workflow.index("python -m pytest -q tests")
     package_idx = workflow.index("Development package smoke")
-    packager_idx = workflow.index("BigWigsMods/packager@v2")
+    packager_idx = workflow.index("uses: BigWigsMods/packager@")
 
     assert setup_idx < pytest_idx < package_idx < packager_idx
     assert "python-version: '3.13'" in workflow
     assert "tests/test_transport_contract.py" not in workflow
+
+
+def test_release_workflow_pins_external_actions_to_commit_shas():
+    workflow = _workflow_source()
+    action_refs = _workflow_action_refs(workflow)
+
+    assert Counter(action for action, _ in action_refs) == Counter(
+        {
+            "actions/checkout": 2,
+            "actions/setup-python": 1,
+            "BigWigsMods/packager": 1,
+        }
+    )
+    for action, ref in action_refs:
+        assert _SHA_REF_RE.fullmatch(ref), f"{action} must be pinned to a full commit SHA"
+
+
+def test_release_preflight_pins_lua_build_tool_version():
+    workflow = _workflow_source()
+    install_args = _release_tool_install_args(workflow)
+
+    assert set(install_args) == set(_RELEASE_TOOL_PACKAGES)
+    assert len(install_args["lua51"]) == 1
+    assert re.search(
+        r"(?i)(?:^|\s)--version(?:=|\s+)5\.1\.5(?:\s|$)",
+        install_args["lua51"][0],
+    )
 
 
 def test_local_package_smoke_is_labeled_as_development_zip_only():
