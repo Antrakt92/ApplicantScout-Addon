@@ -320,6 +320,40 @@ def test_terminal_clear_is_only_passed_by_end_session():
     assert "MaybeTriggerScreenshot(true, entry)" in shotnow_body
 
 
+def test_end_session_retries_terminal_clear_in_same_session_generation():
+    source = _lua_source()
+    end_body = _slice_between(
+        source,
+        "EndSession = function()",
+        "local function _HasGroupRosterForTransport()",
+    )
+
+    first_clear_idx = end_body.index("MaybeTriggerScreenshot(true, nil, true)")
+    retry_gen_idx = end_body.index("local clearRetryGen = sessionGen")
+    retry_after_idx = end_body.index("C_Timer.After(QR_RENDER_SETTLE_S * 2, function()")
+    guard_idx = end_body.index("if sessionGen == clearRetryGen and not isSessionActive then")
+    retry_clear_idx = end_body.index(
+        "MaybeTriggerScreenshot(true, nil, true)",
+        first_clear_idx + 1,
+    )
+    hide_idx = end_body.index("local genAtSchedule = sessionGen")
+
+    assert first_clear_idx < retry_gen_idx < retry_after_idx < guard_idx < retry_clear_idx
+    assert retry_clear_idx < hide_idx
+
+
+def test_applicant_payload_skips_secret_placeholder_names():
+    source = _lua_source()
+    payload_body = _slice_between(
+        source,
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        "local function HashSnapshot(payload)",
+    )
+
+    assert 'local memberName = SafeStr(name, "")' in payload_body
+    assert 'if memberName ~= "" and memberName ~= "?" then' in payload_body
+
+
 def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
     source = _lua_source()
     screenshot_body = _slice_between(

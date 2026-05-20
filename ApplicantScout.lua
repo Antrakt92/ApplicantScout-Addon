@@ -411,8 +411,15 @@ EndSession = function()
     -- Final force-shot: terminalClear makes BuildPayload emit has_listing=0,
     -- 0 applicants, and roster_count=0. Companion treats no-listing + roster
     -- as valid Party state, so teardown must explicitly omit roster rows.
-    -- Bypasses dedup + throttle (force=true) since this is one-shot terminal.
+    -- Bypasses dedup + throttle (force=true). Retry once so a transient
+    -- malformed terminal screenshot does not leave the companion overlay stale.
     MaybeTriggerScreenshot(true, nil, true)
+    local clearRetryGen = sessionGen
+    C_Timer.After(QR_RENDER_SETTLE_S * 2, function()
+        if sessionGen == clearRetryGen and not isSessionActive then
+            MaybeTriggerScreenshot(true, nil, true)
+        end
+    end)
     -- Defensive: force-shot path resets pendingShotDirty on success, but if it
     -- early-returned (qrFrame missing, QR encode failure) the flag could persist
     -- across sessions and trigger empty drains in the scan ticker. Clear here.
@@ -2264,8 +2271,8 @@ local function BuildPayload(entry, applicantIDs, terminalClear)
         for m = 1, app.members do
             local name, class, _, _, ilvl, _, _, _, _, role, _, score, _, _, _, specID
                 = C_LFGList.GetApplicantMemberInfo(app.id, m)
-            local memberName = SafeStr(name, "?")
-            if memberName ~= "" then
+            local memberName = SafeStr(name, "")
+            if memberName ~= "" and memberName ~= "?" then
                 local classToken = SafeEnumKey(class, "")
                 local roleToken = SafeEnumKey(role, "DAMAGER")
                 table.insert(memberOut, _Uint32BE(app.id))
