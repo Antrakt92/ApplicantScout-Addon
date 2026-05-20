@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.3.2 - 20-May-2026 - Companion 0.5.1 overlay reliability release train
+
+This paired addon + companion release keeps the in-game transport aligned with
+ApplicantScout Companion `0.5.1`, which stabilizes the collapsed overlay
+launcher, Applicants/Party tab focus, hover refreshes, and update lifecycle.
+The addon also includes small transport and release-preflight hardening.
+
+### Improved
+
+- Added branch check coverage so addon transport contracts, release metadata,
+  Lua syntax, and development packaging are checked before release branches are
+  merged.
+- Release workflow dependencies are pinned more tightly for safer package
+  preflight and marketplace publishing.
+- Public README copy now makes it clearer that feedback and suggestions are
+  welcome while preserving the two-part addon + companion install guidance.
+
+### Fixed
+
+- Fixed the QR missing-library diagnostic so `/apscout status` can still report
+  a useful setup error when the QR encoder is unavailable.
+- Hardened terminal-clear transport edges so grouped `/apscout off` and
+  no-listing cleanup paths do not accidentally send stale Party roster state.
+- Fixed Party RaiderIO current-score preservation in the addon-to-companion
+  payload path.
+
+### Notes
+
+- No QR wire-format change since `0.3.0`; payloads remain compact v6.
+- This addon release is paired with ApplicantScout Companion `0.5.1`.
+- Companion `0.5.1` fixes launcher visibility/drag/click behavior, keeps new
+  listings focused on Applicants, and hardens watcher/updater/cache edges.
+
 ## 0.3.1 - 18-May-2026 - Companion 0.5.0 M+ ranking release train
 
 This paired addon + companion release keeps the in-game transport aligned with

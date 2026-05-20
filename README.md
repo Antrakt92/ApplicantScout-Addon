@@ -16,6 +16,8 @@ from Blizzard's LFG UI, sends them through QR screenshots, and pairs with the
 local Applicant Scout Companion overlay for Warcraft Logs, RaiderIO, role, group,
 and key-fit context.
 
+**Actively maintained. Feedback and suggestions are very welcome.**
+
 ![ApplicantScout companion overlay showing applicant fit, WCL percentiles, RaiderIO score, and grouped applicant context](docs/visual/applicantscout-overlay-alpha.png)
 
 ## What It Does
