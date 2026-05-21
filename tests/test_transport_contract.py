@@ -190,16 +190,14 @@ def test_non_force_screenshot_waits_for_roster_inspect_batch_before_payload():
     )
 
     batch_idx = screenshot_body.index(
-        "entryCreationKeyState.rosterInspectBatchDirtyPending"
+        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()"
     )
-    flush_idx = screenshot_body.index(
-        "entryCreationKeyState.FlushOrContinueRosterInspectBatch()", batch_idx
-    )
-    pending_idx = screenshot_body.index("pendingShotDirty = true", flush_idx)
+    force_guard_idx = screenshot_body.rindex("not force", 0, batch_idx)
+    pending_idx = screenshot_body.index("pendingShotDirty = true", batch_idx)
     entry_idx = screenshot_body.index("local entry = nil")
     payload_idx = screenshot_body.index("local payload = BuildPayload")
 
-    assert batch_idx < flush_idx < pending_idx < entry_idx < payload_idx
+    assert force_guard_idx < batch_idx < pending_idx < entry_idx < payload_idx
 
 
 def test_transport_poll_does_not_force_unchanged_snapshots():
@@ -721,8 +719,226 @@ def test_session_transitions_clear_roster_inspect_pending_state():
     )
 
     for body in (start_body, end_body):
-        assert "entryCreationKeyState.rosterInspectBatchDirtyPending = false" in body
-        assert "rosterInspectPendingGUID = nil" in body
+        assert "entryCreationKeyState.ClearRosterInspectBatchState()" in body
+
+
+def test_roster_inspect_retry_scheduler_coalesces_duplicate_deadlines():
+    source = _lua_source()
+    retry_body = _slice_between(
+        source,
+        "entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)",
+        "entryCreationKeyState.RosterUnitHasResolvedSpec = function(unit, guid)",
+    )
+
+    assert "rosterInspectBatchRetryDeadline" in retry_body
+    assert "rosterInspectBatchRetryToken" in retry_body
+    assert "existingDeadline <= due" in retry_body
+    assert "return true" in retry_body[retry_body.index("existingDeadline <= due") :]
+
+
+def test_roster_inspect_retry_callback_requires_current_token():
+    source = _lua_source()
+    retry_body = _slice_between(
+        source,
+        "entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)",
+        "entryCreationKeyState.RosterUnitHasResolvedSpec = function(unit, guid)",
+    )
+
+    token_idx = retry_body.index("local retryToken = entryCreationKeyState.rosterInspectBatchRetryToken")
+    callback_idx = retry_body.index("C_Timer.After(delay, function()")
+    guard_idx = retry_body.index(
+        "retryToken ~= entryCreationKeyState.rosterInspectBatchRetryToken",
+        callback_idx,
+    )
+    flush_idx = retry_body.index("entryCreationKeyState.FlushOrContinueRosterInspectBatch()", guard_idx)
+
+    assert token_idx < callback_idx < guard_idx < flush_idx
+    assert "retrySessionGen ~= sessionGen" in retry_body[callback_idx:flush_idx]
+    assert "ApplicantScoutDB and ApplicantScoutDB.enabled" in retry_body[callback_idx:flush_idx]
+
+
+def test_start_end_session_invalidate_roster_inspect_retry_token():
+    source = _lua_source()
+    start_body = _slice_between(source, "StartSession = function()", "EndSession = function()")
+    end_body = _slice_between(
+        source,
+        "EndSession = function()",
+        "local function _HasGroupRosterForTransport()",
+    )
+    clear_body = _slice_between(
+        source,
+        "entryCreationKeyState.ClearRosterInspectBatchState = function()",
+        "entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)",
+    )
+
+    assert "entryCreationKeyState.ClearRosterInspectBatchState()" in start_body
+    assert "entryCreationKeyState.ClearRosterInspectBatchState()" in end_body
+    assert "rosterInspectBatchRetryToken" in clear_body
+    assert "rosterInspectBatchRetryDeadline = nil" in clear_body
+    assert "rosterInspectPendingGUID = nil" in clear_body
+
+
+def test_combat_block_keeps_batch_pending_until_player_regen_enabled():
+    source = _lua_source()
+    request_body = _slice_between(
+        source,
+        "local function _MaybeRequestRosterInspect(unit, guid)",
+        "entryCreationKeyState.ClearRosterInspectBatchState = function()",
+    )
+    batch_body = _slice_between(
+        source,
+        "entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()",
+        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot = function()",
+    )
+
+    assert 'return false, "combat"' in request_body
+    assert 'requestReason == "combat"' in batch_body
+    assert "entryCreationKeyState.rosterInspectBatchCombatDeferred = true" in batch_body
+    assert "entryCreationKeyState.rosterInspectBatchDirtyPending = false" not in (
+        batch_body[
+            batch_body.index('requestReason == "combat"') :
+            batch_body.index("if requested then")
+        ]
+    )
+
+
+def test_player_regen_enabled_flushes_roster_inspect_batch():
+    source = _lua_source()
+    events_body = _slice_between(
+        source,
+        "local EVENT_HANDLERS = {",
+        "-- Bind every interaction event",
+    )
+    regen_body = _slice_between(
+        events_body,
+        "PLAYER_REGEN_ENABLED",
+        "INSPECT_READY",
+    )
+
+    assert "entryCreationKeyState.rosterInspectBatchCombatDeferred" in regen_body
+    assert "entryCreationKeyState.FlushOrContinueRosterInspectBatch()" in regen_body
+    assert 'MarkDirty("inspect")' in regen_body
+
+
+def test_initial_unknown_roster_spec_preflight_defers_only_when_inspect_starts():
+    source = _lua_source()
+    ensure_body = _slice_between(
+        source,
+        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot = function()",
+        "local function _OnRosterInspectReady(guid)",
+    )
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    ensure_idx = screenshot_body.index("entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()")
+    payload_idx = screenshot_body.index("local payload = BuildPayload(entry, applicantIDs, terminalClear)")
+
+    assert "_ForEachRosterUnit(function(unit)" in ensure_body
+    assert "entryCreationKeyState.RosterUnitHasResolvedSpec(unit, guid)" in ensure_body
+    assert "_GetRaiderIOMPlusSummary(" not in ensure_body
+    assert "BuildRosterPayloadRows(" not in ensure_body
+    assert ensure_idx < payload_idx
+
+
+def test_initial_roster_spec_preflight_does_not_hold_raid_snapshots():
+    source = _lua_source()
+    ensure_body = _slice_between(
+        source,
+        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot = function()",
+        "local function _OnRosterInspectReady(guid)",
+    )
+
+    group_count_idx = ensure_body.index("local groupCount = math.floor")
+    max_party_idx = ensure_body.index("groupCount > 5")
+    raid_idx = ensure_body.index("IsInRaid and IsInRaid()")
+    seed_idx = ensure_body.index("local seeded = false")
+
+    assert group_count_idx < max_party_idx < raid_idx < seed_idx
+
+
+def test_roster_batch_clears_pending_guid_when_unit_leaves():
+    source = _lua_source()
+    batch_body = _slice_between(
+        source,
+        "entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()",
+        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot = function()",
+    )
+    inspect_body = _slice_between(
+        source,
+        "local function _OnRosterInspectReady(guid)",
+        "local function _UnitSpecIDForRoster(unit)",
+    )
+
+    missing_idx = batch_body.index("not _FindRosterUnitByGUID(rosterInspectPendingGUID)")
+    skip_idx = batch_body.index("rosterInspectBatchSkippedGUIDs[missingGUID] = true", missing_idx)
+    timeout_idx = batch_body.index("local timeoutLeft = ROSTER_INSPECT_TIMEOUT_S", missing_idx)
+
+    assert missing_idx < skip_idx < timeout_idx
+    assert "if rosterInspectPendingGUID == guid then" in inspect_body
+    assert "rosterInspectPendingGUID = nil" in inspect_body
+
+
+def test_reset_invalidates_roster_inspect_batch_retry_without_clearing_known_specs():
+    source = _lua_source()
+    reset_body = _slice_between(
+        source,
+        'elseif msg == "reset" then',
+        'elseif msg == "shotnow" then',
+    )
+
+    clear_idx = reset_body.index("entryCreationKeyState.ClearRosterInspectBatchState()")
+    dirty_idx = reset_body.index("scanDirty = true")
+
+    assert clear_idx < dirty_idx
+    assert "rosterInspectSpecByGUID = {}" not in reset_body
+    assert "rosterInspectBatchRetryToken" not in reset_body
+
+
+def test_status_reports_roster_inspect_batch_diagnostics_without_raw_ids():
+    source = _lua_source()
+    status_body = _slice_between(
+        source,
+        'elseif msg == "status" then',
+        'elseif msg == "taintcheck" then',
+    )
+    diagnostics_body = _slice_between(
+        source,
+        "entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()",
+        "entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)",
+    )
+
+    assert "entryCreationKeyState.PrintRosterInspectBatchDiagnostics()" in status_body
+    assert "roster inspect batch:" in diagnostics_body
+    assert "batch pending:" in diagnostics_body
+    assert "pending inspect:" in diagnostics_body
+    assert "retry scheduled:" in diagnostics_body
+    assert "combat deferred:" in diagnostics_body
+    assert "skipped count:" in diagnostics_body
+    assert "rosterInspectPendingGUID)" not in diagnostics_body
+    assert "lastQuietFullPartySignature)" not in diagnostics_body
+
+
+def test_terminal_clear_force_path_bypasses_roster_inspect_batch_gate():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+    end_body = _slice_between(
+        source,
+        "EndSession = function()",
+        "local function _HasGroupRosterForTransport()",
+    )
+
+    batch_idx = screenshot_body.index("entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()")
+    force_guard_idx = screenshot_body.rindex("not force", 0, batch_idx)
+
+    assert "MaybeTriggerScreenshot(true, nil, true)" in end_body
+    assert force_guard_idx < batch_idx
 
 
 def test_reset_clears_quiet_full_party_signature_before_queuing_resync():

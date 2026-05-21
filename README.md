@@ -83,7 +83,7 @@ enabled, then restores your prior screenshot settings when you turn it off with
 /apscout config         open or close the settings panel
 /apscout status         show current state and QR diagnostics
 /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle
-/apscout reset          clear dedup cache and force a fresh snapshot
+/apscout reset          clear transport cache and queue a fresh snapshot
 /apscout shotnow        force a snapshot now while enabled
 /apscout qrvisible      keep the QR frame visible for debugging
 /apscout qrmove         toggle QR move mode; Alt-drag the QR frame
@@ -123,7 +123,7 @@ Windows user profile.
   points at the active `_retail_\Screenshots` folder.
 - WoW side looks idle: run `/apscout status` while hosting a listing.
 - Need a manual sync: keep ApplicantScout enabled and run `/apscout shotnow`.
-- Applicant state looks stale: run `/apscout reset`.
+- Applicant state looks stale: run `/apscout reset` while transport is active.
 - WCL cells stay empty: open companion Settings and use Test WCL.
 - QR frame is in the way: run `/apscout qrmove`, Alt-drag it, then run
   `/apscout qrmove` again to lock placement.
