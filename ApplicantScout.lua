@@ -2928,12 +2928,6 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
         pendingShotDirty = true
         return
     end
-    if not force
-       and entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot() then
-        pendingShotDirty = true
-        return
-    end
-
     local entry = nil
     if isSessionActive then
         -- Reuse caller's pre-fetched entry when available (scan-tick path);
@@ -2946,6 +2940,12 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
     local applicantIDs = {}
     if entry then
         applicantIDs = SafeTable(C_LFGList.GetApplicants()) or {}
+    end
+    if not force
+       and #applicantIDs == 0
+       and entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot() then
+        pendingShotDirty = true
+        return
     end
 
     local payload = BuildPayload(entry, applicantIDs, terminalClear)

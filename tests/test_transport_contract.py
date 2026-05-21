@@ -192,12 +192,16 @@ def test_non_force_screenshot_waits_for_roster_inspect_batch_before_payload():
     batch_idx = screenshot_body.index(
         "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()"
     )
+    applicant_idx = screenshot_body.index("local applicantIDs = {}")
+    empty_guard_idx = screenshot_body.index("#applicantIDs == 0", applicant_idx)
     force_guard_idx = screenshot_body.rindex("not force", 0, batch_idx)
     pending_idx = screenshot_body.index("pendingShotDirty = true", batch_idx)
     entry_idx = screenshot_body.index("local entry = nil")
     payload_idx = screenshot_body.index("local payload = BuildPayload")
 
-    assert force_guard_idx < batch_idx < pending_idx < entry_idx < payload_idx
+    assert entry_idx < applicant_idx < empty_guard_idx < batch_idx
+    assert force_guard_idx < batch_idx
+    assert batch_idx < pending_idx < payload_idx
 
 
 def test_transport_poll_does_not_force_unchanged_snapshots():
@@ -857,6 +861,26 @@ def test_initial_roster_spec_preflight_does_not_hold_raid_snapshots():
     seed_idx = ensure_body.index("local seeded = false")
 
     assert group_count_idx < max_party_idx < raid_idx < seed_idx
+
+
+def test_initial_roster_spec_preflight_does_not_hold_applicant_snapshots():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    applicant_idx = screenshot_body.index("local applicantIDs = {}")
+    applicant_fetch_idx = screenshot_body.index("C_LFGList.GetApplicants()", applicant_idx)
+    empty_guard_idx = screenshot_body.index("#applicantIDs == 0", applicant_fetch_idx)
+    preflight_idx = screenshot_body.index(
+        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()",
+        empty_guard_idx,
+    )
+    payload_idx = screenshot_body.index("local payload = BuildPayload", preflight_idx)
+
+    assert applicant_idx < applicant_fetch_idx < empty_guard_idx < preflight_idx < payload_idx
 
 
 def test_roster_batch_clears_pending_guid_when_unit_leaves():
