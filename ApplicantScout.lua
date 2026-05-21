@@ -202,6 +202,8 @@ local entryCreationKeyState = {
     activeListingGeneration = 0,
     activeListingMaybeChanged = false,
     entryCreationKeyLevelCacheDecision = "none",
+    lastPayloadApplicantCount = 0,
+    lastEmittedApplicantCount = 0,
     pendingTtl = 10,
 }
 local ENTRY_CREATION_KEY_CACHE_TTL = 3600
@@ -385,6 +387,7 @@ StartSession = function()
     -- BuildPayload emits VERSION on every shot so companion-launched-mid-session
     -- still receives region/realm info from the freshest backlog snapshot.
     lastSnapshotHash = nil
+    entryCreationKeyState.lastEmittedApplicantCount = 0
     pendingShotDirty = false
     lastQREncodeMode = "never"
     lastQREncodeBytes = 0
@@ -430,6 +433,7 @@ EndSession = function()
     -- early-returned (qrFrame missing, QR encode failure) the flag could persist
     -- across sessions and trigger empty drains in the scan ticker. Clear here.
     pendingShotDirty = false
+    entryCreationKeyState.lastEmittedApplicantCount = 0
     entryCreationKeyState.entryCreationKeyLevelCache = nil
 
     -- Schedule deferred Hide AFTER the final clear-shot has had a chance to
@@ -2369,6 +2373,7 @@ end
 local function BuildPayload(entry, applicantIDs, terminalClear)
     local out = {}
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
+    entryCreationKeyState.lastPayloadApplicantCount = 0
 
     -- Header (length patched after we know body size)
     table.insert(out, "APS1")
@@ -2564,6 +2569,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear)
     for _, chunk in ipairs(memberOut) do
         table.insert(out, chunk)
     end
+    entryCreationKeyState.lastPayloadApplicantCount = emittedCount
 
     local rosterOut, rosterCount = {}, 0
     local rosterQuietSignature, rosterQuietHasUnknownSpec, rosterQuietInRaid =
@@ -2943,6 +2949,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
     end
     if not force
        and #applicantIDs == 0
+       and entryCreationKeyState.lastEmittedApplicantCount == 0
        and entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot() then
         pendingShotDirty = true
         return
@@ -2995,6 +3002,8 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
     end
     local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()
 
+    entryCreationKeyState.lastEmittedApplicantCount =
+        entryCreationKeyState.lastPayloadApplicantCount
     lastSnapshotHash = h
     lastShotTime = now
     pendingShotDirty = false

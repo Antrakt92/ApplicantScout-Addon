@@ -19,6 +19,10 @@ cache/config writes.
 
 - Fixed applicant snapshots losing priority behind roster preflight work during
   active applicant updates.
+- Fixed empty applicant-list snapshots losing priority behind party inspect
+  preflight after an applicant had already been shown, which could leave the
+  companion overlay displaying a stale applicant while the in-game list was
+  empty.
 - Fixed transport batching paths that could otherwise delay fresh applicant
   snapshots while party inspection was still catching up.
 

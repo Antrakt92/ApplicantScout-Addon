@@ -883,6 +883,69 @@ def test_initial_roster_spec_preflight_does_not_hold_applicant_snapshots():
     assert applicant_idx < applicant_fetch_idx < empty_guard_idx < preflight_idx < payload_idx
 
 
+def test_empty_applicant_clear_after_emitted_applicants_bypasses_roster_preflight():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    applicant_idx = screenshot_body.index("local applicantIDs = {}")
+    applicant_fetch_idx = screenshot_body.index("C_LFGList.GetApplicants()", applicant_idx)
+    empty_guard_idx = screenshot_body.index("#applicantIDs == 0", applicant_fetch_idx)
+    prior_applicant_guard_idx = screenshot_body.index(
+        "lastEmittedApplicantCount == 0",
+        empty_guard_idx,
+    )
+    preflight_idx = screenshot_body.index(
+        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()",
+        prior_applicant_guard_idx,
+    )
+    payload_idx = screenshot_body.index("local payload = BuildPayload", preflight_idx)
+
+    assert (
+        applicant_idx
+        < applicant_fetch_idx
+        < empty_guard_idx
+        < prior_applicant_guard_idx
+        < preflight_idx
+        < payload_idx
+    )
+
+
+def test_successful_snapshot_commits_emitted_applicant_count_for_clear_priority():
+    source = _lua_source()
+    payload_body = _slice_between(
+        source,
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        "local function HashSnapshot(payload)",
+    )
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    emit_count_idx = payload_body.index("local emittedCount = 0")
+    payload_count_idx = payload_body.index(
+        "entryCreationKeyState.lastPayloadApplicantCount = emittedCount"
+    )
+    paint_idx = screenshot_body.index("if not PaintQR(matrix) then")
+    commit_idx = screenshot_body.index(
+        "entryCreationKeyState.lastEmittedApplicantCount =",
+        paint_idx,
+    )
+    committed_value_idx = screenshot_body.index(
+        "entryCreationKeyState.lastPayloadApplicantCount",
+        commit_idx,
+    )
+    shot_idx = screenshot_body.index("lastShotTime = now", commit_idx)
+
+    assert emit_count_idx < payload_count_idx
+    assert paint_idx < commit_idx < committed_value_idx < shot_idx
+
+
 def test_roster_batch_clears_pending_guid_when_unit_leaves():
     source = _lua_source()
     batch_body = _slice_between(
