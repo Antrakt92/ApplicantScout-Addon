@@ -389,6 +389,11 @@ StartSession = function()
     lastQREncodeMode = "never"
     lastQREncodeBytes = 0
     lastQREncodeError = nil
+    entryCreationKeyState.lastQuietFullPartySignature = nil
+    entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
+    entryCreationKeyState.rosterInspectBatchDirtyPending = false
+    entryCreationKeyState.rosterInspectBatchSkippedGUIDs = nil
+    rosterInspectPendingGUID = nil
 
     -- QR is no longer shown for the entire session. The first changed snapshot
     -- will paint the QR, take a short visibility lease, wait QR_RENDER_SETTLE_S,
@@ -413,7 +418,12 @@ EndSession = function()
     -- as valid Party state, so teardown must explicitly omit roster rows.
     -- Bypasses dedup + throttle (force=true). Retry once so a transient
     -- malformed terminal screenshot does not leave the companion overlay stale.
+    entryCreationKeyState.rosterInspectBatchDirtyPending = false
+    entryCreationKeyState.rosterInspectBatchSkippedGUIDs = nil
+    rosterInspectPendingGUID = nil
     MaybeTriggerScreenshot(true, nil, true)
+    entryCreationKeyState.lastQuietFullPartySignature = nil
+    entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
     local clearRetryGen = sessionGen
     C_Timer.After(QR_RENDER_SETTLE_S * 2, function()
         if sessionGen == clearRetryGen and not isSessionActive then
@@ -1884,32 +1894,116 @@ local function _InvalidateRosterSpecCacheForUnit(unit)
 end
 
 local function _MaybeRequestRosterInspect(unit, guid)
-    if not (NotifyInspect and CanInspect) then return end
-    if UnitIsUnit and UnitIsUnit(unit, "player") then return end
-    if InCombatLockdown and InCombatLockdown() then return end
+    if not (NotifyInspect and CanInspect) then return false end
+    if UnitIsUnit and UnitIsUnit(unit, "player") then return false end
+    if InCombatLockdown and InCombatLockdown() then return false end
     guid = SafeStr(guid, "")
-    if guid == "" then return end
+    if guid == "" then return false end
     if rosterInspectSpecByGUID[guid] and rosterInspectSpecByGUID[guid] > 0 then
-        return
+        return false
     end
 
     local now = GetTime and GetTime() or 0
+    if rosterInspectPendingGUID == guid
+       and (now - rosterInspectLastRequestTime) < ROSTER_INSPECT_TIMEOUT_S then
+        return false
+    end
     if rosterInspectPendingGUID
        and rosterInspectPendingGUID ~= guid
        and (now - rosterInspectLastRequestTime) < ROSTER_INSPECT_TIMEOUT_S then
-        return
+        return false
     end
     if (now - rosterInspectLastRequestTime) < ROSTER_INSPECT_THROTTLE_S then
-        return
+        return false
     end
 
     local okCan, canInspect = pcall(CanInspect, unit)
-    if not (okCan and canInspect) then return end
+    if not (okCan and canInspect) then return false end
     local ok = pcall(NotifyInspect, unit)
     if ok then
         rosterInspectPendingGUID = guid
         rosterInspectLastRequestTime = now
+        return true
     end
+    return false
+end
+
+-- WARNING: keep these as entryCreationKeyState fields instead of new top-level
+-- locals; this large Lua 5.1 file is already at local/upvalue limits.
+entryCreationKeyState.rosterInspectBatchDirtyPending = false
+entryCreationKeyState.rosterInspectBatchSkippedGUIDs = nil
+entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)
+    if not (C_Timer and C_Timer.After) then return false end
+    C_Timer.After(delay, function()
+        if entryCreationKeyState.rosterInspectBatchDirtyPending
+           and not entryCreationKeyState.FlushOrContinueRosterInspectBatch() then
+            MarkDirty("inspect")
+        end
+    end)
+    return true
+end
+
+entryCreationKeyState.RosterUnitHasResolvedSpec = function(unit, guid)
+    if UnitIsUnit and UnitIsUnit(unit, "player") then return true end
+    if guid ~= "" then
+        local cachedSpecID = _ClampUInt16(SafeNumber(rosterInspectSpecByGUID[guid], 0))
+        if cachedSpecID > 0 then return true end
+    end
+    if GetInspectSpecialization then
+        local ok, specID = pcall(GetInspectSpecialization, unit)
+        specID = ok and _ClampUInt16(SafeNumber(specID, 0)) or 0
+        if specID > 0 then
+            if guid ~= "" then rosterInspectSpecByGUID[guid] = specID end
+            return true
+        end
+    end
+    return false
+end
+
+entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()
+    if not entryCreationKeyState.rosterInspectBatchDirtyPending then return true end
+
+    local now = GetTime and GetTime() or 0
+    if rosterInspectPendingGUID then
+        local timeoutLeft = ROSTER_INSPECT_TIMEOUT_S - (now - rosterInspectLastRequestTime)
+        if timeoutLeft > 0 then
+            return entryCreationKeyState.ScheduleRosterInspectBatchRetry(timeoutLeft)
+        end
+        local timedOutGUID = rosterInspectPendingGUID
+        rosterInspectPendingGUID = nil
+        entryCreationKeyState.rosterInspectBatchSkippedGUIDs =
+            entryCreationKeyState.rosterInspectBatchSkippedGUIDs or {}
+        entryCreationKeyState.rosterInspectBatchSkippedGUIDs[timedOutGUID] = true
+    end
+
+    local throttleLeft = ROSTER_INSPECT_THROTTLE_S - (now - rosterInspectLastRequestTime)
+    if throttleLeft > 0 and rosterInspectLastRequestTime > 0 then
+        if entryCreationKeyState.ScheduleRosterInspectBatchRetry(throttleLeft) then
+            return true
+        end
+    end
+
+    local requested = false
+    _ForEachRosterUnit(function(unit)
+        if not _UnitExistsForRoster(unit) then return false end
+        local guid = _UnitGUIDForRoster(unit)
+        if guid == ""
+           or (entryCreationKeyState.rosterInspectBatchSkippedGUIDs
+               and entryCreationKeyState.rosterInspectBatchSkippedGUIDs[guid])
+           or entryCreationKeyState.RosterUnitHasResolvedSpec(unit, guid) then
+            return false
+        end
+        requested = _MaybeRequestRosterInspect(unit, guid)
+        return requested
+    end)
+    if requested then
+        entryCreationKeyState.ScheduleRosterInspectBatchRetry(ROSTER_INSPECT_TIMEOUT_S)
+        return true
+    end
+
+    entryCreationKeyState.rosterInspectBatchDirtyPending = false
+    entryCreationKeyState.rosterInspectBatchSkippedGUIDs = nil
+    return false
 end
 
 local function _OnRosterInspectReady(guid)
@@ -1930,6 +2024,14 @@ local function _OnRosterInspectReady(guid)
             rosterInspectPendingGUID = nil
         end
         if ClearInspectPlayer then pcall(ClearInspectPlayer) end
+        -- WHY: a freshly assembled group can resolve one inspected spec per
+        -- callback. Batch follow-up inspect requests so the user sees one final
+        -- QR refresh instead of a visible flash for every party member.
+        entryCreationKeyState.rosterInspectBatchDirtyPending = true
+        entryCreationKeyState.rosterInspectBatchSkippedGUIDs = nil
+        if entryCreationKeyState.FlushOrContinueRosterInspectBatch() then
+            return
+        end
         MarkDirty("inspect")
     end
 end
@@ -2031,10 +2133,12 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
     local rosterOut = {}
     local emittedCount = 0
     local rows = {}
+    local rosterQuietOut = {}
+    local rosterQuietHasUnknownSpec = false
     local groupCount = math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))
     local inRaid = IsInRaid and IsInRaid() or false
     if groupCount <= 0 then
-        return rosterOut, emittedCount
+        return rosterOut, emittedCount, "", false, inRaid
     end
 
     if inRaid then
@@ -2070,14 +2174,16 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
             listingActivityIDForRio,
             listingKeyLevelForRio
         )
+        local currentScoreBytes = _Uint16BE(rioSummary.currentScore)
+        local mainScoreBytes = _Uint16BE(rioSummary.mainScore)
         table.insert(rosterOut, string.char(_ClampUInt8(row.unitIndex)))
         table.insert(rosterOut, string.char(_ClampUInt8(row.flags)))
         table.insert(rosterOut, string.char(_ClampUInt8(row.subgroup)))
         table.insert(rosterOut, string.char(_ClampUInt8(row.classID)))
         table.insert(rosterOut, _Uint16BE(row.specID))
         table.insert(rosterOut, _Uint16BE(row.ilvl))
-        table.insert(rosterOut, _Uint16BE(rioSummary.currentScore))
-        table.insert(rosterOut, _Uint16BE(rioSummary.mainScore))
+        table.insert(rosterOut, currentScoreBytes)
+        table.insert(rosterOut, mainScoreBytes)
         table.insert(rosterOut, string.char(rioSummary.hasProfile and 1 or 0))
         table.insert(rosterOut, string.char(rioSummary.bestKey))
         table.insert(rosterOut, string.char(rioSummary.bestDungeonKey))
@@ -2089,9 +2195,29 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
         table.insert(rosterOut, string.char(_ClampUInt8(row.role)))
         _PackLenStr(rosterOut, row.name)
         emittedCount = emittedCount + 1
+        if row.specID <= 0 then rosterQuietHasUnknownSpec = true end
+        table.insert(rosterQuietOut, string.char(_ClampUInt8(row.unitIndex)))
+        table.insert(rosterQuietOut, string.char(_ClampUInt8(row.flags)))
+        table.insert(rosterQuietOut, string.char(_ClampUInt8(row.subgroup)))
+        table.insert(rosterQuietOut, string.char(_ClampUInt8(row.classID)))
+        table.insert(rosterQuietOut, _Uint16BE(row.specID))
+        table.insert(rosterQuietOut, _Uint16BE(row.ilvl))
+        table.insert(rosterQuietOut, currentScoreBytes)
+        table.insert(rosterQuietOut, mainScoreBytes)
+        table.insert(rosterQuietOut, string.char(rioSummary.hasProfile and 1 or 0))
+        table.insert(rosterQuietOut, string.char(rioSummary.bestKey))
+        table.insert(rosterQuietOut, string.char(rioSummary.bestDungeonKey))
+        table.insert(rosterQuietOut, string.char(rioSummary.timedAtOrAbove))
+        table.insert(rosterQuietOut, string.char(rioSummary.timedAtOrAboveMinus1))
+        table.insert(rosterQuietOut, string.char(rioSummary.timedAtOrAboveMinus2))
+        table.insert(rosterQuietOut, string.char(rioSummary.completedAtOrAboveMinus1))
+        table.insert(rosterQuietOut, string.char(rioSummary.dungeonCount))
+        table.insert(rosterQuietOut, string.char(_ClampUInt8(row.role)))
+        _PackLenStr(rosterQuietOut, row.name)
     end
 
-    return rosterOut, emittedCount
+    return rosterOut, emittedCount, table.concat(rosterQuietOut),
+           rosterQuietHasUnknownSpec, inRaid
 end
 
 -- CRC32 IEEE-802.3, table-based. Built once at file load (~5KB memory).
@@ -2122,6 +2248,7 @@ end
 -- applicantIDs is array from C_LFGList.GetApplicants(). Returns string of bytes.
 local function BuildPayload(entry, applicantIDs, terminalClear)
     local out = {}
+    entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
 
     -- Header (length patched after we know body size)
     table.insert(out, "APS1")
@@ -2133,6 +2260,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear)
     local cleanEntry = SafeTable(entry)
     local listingActivityIDForRio = 0
     local listingKeyLevelForRio = 0
+    local listingQuietSignature = nil
     if cleanEntry then
         -- Midnight 12.0 returns activityIDs (table) on the primary listing —
         -- legacy entry.activityID is nil. Fall back to legacy field for
@@ -2195,6 +2323,16 @@ local function BuildPayload(entry, applicantIDs, terminalClear)
         end
         listingActivityIDForRio = activityID
         listingKeyLevelForRio = keyLevel
+        local listingQuietOut = {}
+        table.insert(listingQuietOut, _Uint32BE(activityID))
+        table.insert(listingQuietOut, _Uint32BE(questID))
+        table.insert(listingQuietOut, _Uint16BE(categoryID))
+        table.insert(listingQuietOut, _Uint16BE(difficultyID))
+        table.insert(listingQuietOut, string.char(math.min(keyLevel, 255)))
+        _PackLenStr(listingQuietOut, dungeonName)
+        _PackLenStr(listingQuietOut, listingName)
+        _PackLenStr(listingQuietOut, listingComment)
+        listingQuietSignature = table.concat(listingQuietOut)
 
         table.insert(out, string.char(1))
         table.insert(out, _Uint32BE(activityID))
@@ -2308,11 +2446,28 @@ local function BuildPayload(entry, applicantIDs, terminalClear)
     end
 
     local rosterOut, rosterCount = {}, 0
+    local rosterQuietSignature, rosterQuietHasUnknownSpec, rosterQuietInRaid =
+        nil, false, false
     if not terminalClear then
-        rosterOut, rosterCount = BuildRosterPayloadRows(
-            listingActivityIDForRio,
-            listingKeyLevelForRio
-        )
+        rosterOut, rosterCount, rosterQuietSignature,
+        rosterQuietHasUnknownSpec, rosterQuietInRaid =
+            BuildRosterPayloadRows(
+                listingActivityIDForRio,
+                listingKeyLevelForRio
+            )
+    end
+    if cleanEntry and #validApps == 0
+       and rosterCount == 5
+       and rosterQuietSignature
+       and not rosterQuietInRaid
+       and not rosterQuietHasUnknownSpec then
+        local quietOut = {}
+        local listingSig = listingQuietSignature or ""
+        table.insert(quietOut, _Uint16BE(#listingSig))
+        table.insert(quietOut, listingSig)
+        table.insert(quietOut, _Uint16BE(#rosterQuietSignature))
+        table.insert(quietOut, rosterQuietSignature)
+        entryCreationKeyState.lastPayloadQuietFullPartySignature = table.concat(quietOut)
     end
     table.insert(out, _Uint16BE(rosterCount))
     for _, chunk in ipairs(rosterOut) do
@@ -2653,6 +2808,12 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
         pendingShotDirty = true
         return
     end
+    if not force
+       and entryCreationKeyState.rosterInspectBatchDirtyPending
+       and entryCreationKeyState.FlushOrContinueRosterInspectBatch() then
+        pendingShotDirty = true
+        return
+    end
 
     local entry = nil
     if isSessionActive then
@@ -2681,6 +2842,16 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
         pendingShotDirty = true
         return
     end
+    local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature
+    if not force and quietSignature then
+        if entryCreationKeyState.lastQuietFullPartySignature == quietSignature then
+            lastSnapshotHash = h
+            pendingShotDirty = false
+            return
+        end
+    else
+        entryCreationKeyState.lastQuietFullPartySignature = nil
+    end
 
     -- Encode payload as QR matrix, render via row-RLE.
     local matrix = BuildQRMatrix(payload)
@@ -2700,6 +2871,9 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
         return
     end
 
+    if not force and quietSignature then
+        entryCreationKeyState.lastQuietFullPartySignature = quietSignature
+    end
     local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()
 
     lastSnapshotHash = h
@@ -3644,6 +3818,8 @@ SlashCmdList.APSCOUT = function(msg)
         -- re-syncs region for WCL.
         lastSnapshotHash = nil
         pendingShotDirty = false
+        entryCreationKeyState.lastQuietFullPartySignature = nil
+        entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
         scanDirty = true
         APSPrint("resync queued — next scan-tick (≤0.25s) emits fresh full snapshot")
     elseif msg == "shotnow" then

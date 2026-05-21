@@ -181,6 +181,27 @@ def test_scan_ticker_polls_transport_state_when_events_are_missed():
     assert "not IsChatMessagingLockdown()" in ticker_body[poll_idx:dirty_idx]
 
 
+def test_non_force_screenshot_waits_for_roster_inspect_batch_before_payload():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    batch_idx = screenshot_body.index(
+        "entryCreationKeyState.rosterInspectBatchDirtyPending"
+    )
+    flush_idx = screenshot_body.index(
+        "entryCreationKeyState.FlushOrContinueRosterInspectBatch()", batch_idx
+    )
+    pending_idx = screenshot_body.index("pendingShotDirty = true", flush_idx)
+    entry_idx = screenshot_body.index("local entry = nil")
+    payload_idx = screenshot_body.index("local payload = BuildPayload")
+
+    assert batch_idx < flush_idx < pending_idx < entry_idx < payload_idx
+
+
 def test_transport_poll_does_not_force_unchanged_snapshots():
     source = _lua_source()
     ticker_body = _slice_between(
@@ -311,6 +332,149 @@ def test_payload_v6_appends_current_group_roster_after_applicants():
     roster_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
     assert applicants_idx < roster_idx
     assert "for _, chunk in ipairs(rosterOut) do" in payload_body
+
+
+def test_full_party_quiet_signature_requires_empty_resolved_non_raid_roster():
+    source = _lua_source()
+    payload_body = _slice_between(
+        source,
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        "local function HashSnapshot(payload)",
+    )
+    roster_body = _slice_between(
+        source,
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "-- CRC32 IEEE-802.3",
+    )
+
+    assert "entryCreationKeyState.lastPayloadQuietFullPartySignature = nil" in payload_body
+    assert "rosterQuietSignature, rosterQuietHasUnknownSpec, rosterQuietInRaid" in payload_body
+    assert "cleanEntry and #validApps == 0" in payload_body
+    assert "rosterCount == 5" in payload_body
+    assert "not rosterQuietInRaid" in payload_body
+    assert "not rosterQuietHasUnknownSpec" in payload_body
+    assert "entryCreationKeyState.lastPayloadQuietFullPartySignature =" in payload_body
+    assert "local rosterQuietOut = {}" in roster_body
+    assert "rosterQuietHasUnknownSpec = true" in roster_body
+    assert "row.name" in roster_body
+    assert "row.classID" in roster_body
+    assert "row.specID" in roster_body
+    assert "row.role" in roster_body
+    assert "table.concat(rosterQuietOut)" in roster_body
+
+
+def test_repeat_full_party_quiet_snapshot_is_suppressed_before_qr_paint():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    hash_idx = screenshot_body.index("local h = HashSnapshot(payload)")
+    quiet_idx = screenshot_body.index(
+        "local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature"
+    )
+    throttle_idx = screenshot_body.index("if not force and now - lastShotTime < SHOT_THROTTLE_S")
+    matrix_idx = screenshot_body.index("local matrix = BuildQRMatrix(payload)")
+    quiet_block = screenshot_body[
+        quiet_idx : screenshot_body.index("\n    -- Encode payload", quiet_idx)
+    ]
+
+    assert hash_idx < throttle_idx < quiet_idx < matrix_idx
+    assert "entryCreationKeyState.lastQuietFullPartySignature == quietSignature" in quiet_block
+    assert "lastSnapshotHash = h" in quiet_block
+    assert "pendingShotDirty = false" in quiet_block
+    assert "return" in quiet_block
+    assert "entryCreationKeyState.lastQuietFullPartySignature = nil" in quiet_block
+
+
+def test_quiet_signature_is_committed_only_after_successful_qr_paint():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    quiet_idx = screenshot_body.index(
+        "local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature"
+    )
+    matrix_idx = screenshot_body.index("local matrix = BuildQRMatrix(payload)")
+    paint_failure_idx = screenshot_body.index("if not PaintQR(matrix) then")
+    lease_idx = screenshot_body.index(
+        "local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()"
+    )
+    commit_idx = screenshot_body.index(
+        "entryCreationKeyState.lastQuietFullPartySignature = quietSignature",
+        paint_failure_idx,
+    )
+    pre_paint_quiet_block = screenshot_body[quiet_idx:matrix_idx]
+
+    assert quiet_idx < matrix_idx < paint_failure_idx < commit_idx < lease_idx
+    assert "entryCreationKeyState.lastQuietFullPartySignature == quietSignature" in (
+        pre_paint_quiet_block
+    )
+    assert (
+        "entryCreationKeyState.lastQuietFullPartySignature = quietSignature"
+        not in pre_paint_quiet_block
+    )
+
+
+def test_quiet_full_party_signature_uses_collision_safe_encoding():
+    source = _lua_source()
+    payload_body = _slice_between(
+        source,
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        "local function HashSnapshot(payload)",
+    )
+    roster_body = _slice_between(
+        source,
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "-- CRC32 IEEE-802.3",
+    )
+
+    assert 'table.concat({' not in payload_body
+    assert 'string.format(\n            "%d:%d:%s' not in roster_body
+    assert "listingQuietOut" in payload_body
+    assert "_PackLenStr(listingQuietOut, dungeonName)" in payload_body
+    assert "rosterQuietOut" in roster_body
+    assert "_PackLenStr(rosterQuietOut, row.name)" in roster_body
+
+
+def test_quiet_full_party_signature_covers_companion_visible_roster_fields():
+    source = _lua_source()
+    roster_body = _slice_between(
+        source,
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "-- CRC32 IEEE-802.3",
+    )
+    quiet_idx = roster_body.index("local rosterQuietOut = {}")
+
+    expected_fields = [
+        "row.unitIndex",
+        "row.flags",
+        "row.subgroup",
+        "row.classID",
+        "row.specID",
+        "row.ilvl",
+        "rioSummary.currentScore",
+        "rioSummary.mainScore",
+        "rioSummary.hasProfile",
+        "rioSummary.bestKey",
+        "rioSummary.bestDungeonKey",
+        "rioSummary.timedAtOrAbove",
+        "rioSummary.timedAtOrAboveMinus1",
+        "rioSummary.timedAtOrAboveMinus2",
+        "rioSummary.completedAtOrAboveMinus1",
+        "rioSummary.dungeonCount",
+        "row.role",
+        "row.name",
+    ]
+
+    for field in expected_fields:
+        assert field in roster_body[quiet_idx:]
+    assert roster_body.count("_GetRaiderIOMPlusSummary(") == 1
 
 
 def test_terminal_clear_is_only_passed_by_end_session():
@@ -470,6 +634,113 @@ def test_inspect_ready_marks_roster_dirty_after_caching_spec():
     assert "local function MarkDirty(reason)" not in source
     assert 'INSPECT_READY                    = function(_, guid)' in events_body
     assert "_OnRosterInspectReady(guid)" in events_body
+
+
+def test_inspect_ready_batches_followup_roster_inspects_before_dirty():
+    source = _lua_source()
+    request_body = _slice_between(
+        source,
+        "local function _MaybeRequestRosterInspect(unit, guid)",
+        "entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)",
+    )
+    batch_body = _slice_between(
+        source,
+        "entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)",
+        "local function _OnRosterInspectReady(guid)",
+    )
+    inspect_body = _slice_between(
+        source,
+        "local function _OnRosterInspectReady(guid)",
+        "local function _UnitSpecIDForRoster(unit)",
+    )
+
+    assert "return true" in request_body
+    assert "return false" in request_body
+    assert "entryCreationKeyState.FlushOrContinueRosterInspectBatch" in batch_body
+    assert "ROSTER_INSPECT_TIMEOUT_S - (now - rosterInspectLastRequestTime)" in batch_body
+    assert "rosterInspectPendingGUID = nil" in batch_body
+    assert "entryCreationKeyState.rosterInspectBatchDirtyPending = true" in inspect_body
+    continue_idx = inspect_body.index(
+        "entryCreationKeyState.FlushOrContinueRosterInspectBatch()"
+    )
+    dirty_idx = inspect_body.index('MarkDirty("inspect")')
+    assert continue_idx < dirty_idx
+
+
+def test_roster_inspect_batch_skips_timed_out_guid_before_requesting_next():
+    source = _lua_source()
+    batch_body = _slice_between(
+        source,
+        "entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()",
+        "local function _OnRosterInspectReady(guid)",
+    )
+
+    timeout_idx = batch_body.index("local timedOutGUID = rosterInspectPendingGUID")
+    skipped_set_idx = batch_body.index(
+        "entryCreationKeyState.rosterInspectBatchSkippedGUIDs[timedOutGUID] = true"
+    )
+    loop_idx = batch_body.index("_ForEachRosterUnit(function(unit)")
+    skipped_guard_idx = batch_body.index(
+        "entryCreationKeyState.rosterInspectBatchSkippedGUIDs[guid]",
+        loop_idx,
+    )
+    request_idx = batch_body.index("_MaybeRequestRosterInspect(unit, guid)", loop_idx)
+    clear_idx = batch_body.index(
+        "entryCreationKeyState.rosterInspectBatchSkippedGUIDs = nil",
+        request_idx,
+    )
+
+    assert timeout_idx < skipped_set_idx < loop_idx < skipped_guard_idx < request_idx
+    assert request_idx < clear_idx
+
+
+def test_pending_roster_inspect_does_not_reissue_same_guid_before_timeout():
+    source = _lua_source()
+    request_body = _slice_between(
+        source,
+        "local function _MaybeRequestRosterInspect(unit, guid)",
+        "entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)",
+    )
+
+    now_idx = request_body.index("local now = GetTime and GetTime() or 0")
+    same_guid_idx = request_body.index("rosterInspectPendingGUID == guid")
+    timeout_idx = request_body.index("ROSTER_INSPECT_TIMEOUT_S", same_guid_idx)
+    throttle_idx = request_body.index("ROSTER_INSPECT_THROTTLE_S")
+    notify_idx = request_body.index("pcall(NotifyInspect, unit)")
+
+    assert now_idx < same_guid_idx < timeout_idx < throttle_idx < notify_idx
+
+
+def test_session_transitions_clear_roster_inspect_pending_state():
+    source = _lua_source()
+    start_body = _slice_between(source, "StartSession = function()", "EndSession = function()")
+    end_body = _slice_between(
+        source,
+        "EndSession = function()",
+        "local function _HasGroupRosterForTransport()",
+    )
+
+    for body in (start_body, end_body):
+        assert "entryCreationKeyState.rosterInspectBatchDirtyPending = false" in body
+        assert "rosterInspectPendingGUID = nil" in body
+
+
+def test_reset_clears_quiet_full_party_signature_before_queuing_resync():
+    source = _lua_source()
+    reset_body = _slice_between(
+        source,
+        'elseif msg == "reset" then',
+        'elseif msg == "shotnow" then',
+    )
+
+    quiet_idx = reset_body.index("entryCreationKeyState.lastQuietFullPartySignature = nil")
+    payload_quiet_idx = reset_body.index(
+        "entryCreationKeyState.lastPayloadQuietFullPartySignature = nil"
+    )
+    dirty_idx = reset_body.index("scanDirty = true")
+
+    assert quiet_idx < dirty_idx
+    assert payload_quiet_idx < dirty_idx
 
 
 def test_specialization_changed_invalidates_changed_unit_guid_before_dirty():
