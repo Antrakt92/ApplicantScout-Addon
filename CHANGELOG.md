@@ -4,7 +4,8 @@
 
 This paired addon + companion release keeps the in-game transport aligned with
 ApplicantScout Companion `0.5.2`, which hardens lifecycle watcher detection,
-Warcraft Logs fetch scope, updater downloads, and cache/config writes.
+Warcraft Logs fetch scope, Mythic+ fit scoring, updater downloads, and
+cache/config writes.
 
 ### Improved
 
@@ -26,7 +27,8 @@ Warcraft Logs fetch scope, updater downloads, and cache/config writes.
 - No QR wire-format change since `0.3.0`; payloads remain compact v6.
 - This addon release is paired with ApplicantScout Companion `0.5.2`.
 - Companion `0.5.2` fixes lifecycle watcher false positives, avoids useless
-  unknown-spec M+ WCL fetches, and hardens updater/cache persistence edges.
+  unknown-spec M+ WCL fetches, improves broad Mythic+ fit scoring around mixed
+  RaiderIO/WCL evidence, and hardens updater/cache persistence edges.
 
 ## 0.3.2 - 20-May-2026 - Companion 0.5.1 overlay reliability release train
 
