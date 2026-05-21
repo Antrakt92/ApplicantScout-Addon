@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.3.3 - 21-May-2026 - Companion 0.5.2 lifecycle hardening release train
+
+This paired addon + companion release keeps the in-game transport aligned with
+ApplicantScout Companion `0.5.2`, which hardens lifecycle watcher detection,
+Warcraft Logs fetch scope, updater downloads, and cache/config writes.
+
+### Improved
+
+- Reduced QR refresh churn while party and applicant roster snapshots are still
+  settling, so the addon sends fewer redundant captures during busy group
+  changes.
+- Hardened roster-inspect batching around preflight, combat deferral, and quiet
+  full-party snapshots.
+
+### Fixed
+
+- Fixed applicant snapshots losing priority behind roster preflight work during
+  active applicant updates.
+- Fixed transport batching paths that could otherwise delay fresh applicant
+  snapshots while party inspection was still catching up.
+
+### Notes
+
+- No QR wire-format change since `0.3.0`; payloads remain compact v6.
+- This addon release is paired with ApplicantScout Companion `0.5.2`.
+- Companion `0.5.2` fixes lifecycle watcher false positives, avoids useless
+  unknown-spec M+ WCL fetches, and hardens updater/cache persistence edges.
+
 ## 0.3.2 - 20-May-2026 - Companion 0.5.1 overlay reliability release train
 
 This paired addon + companion release keeps the in-game transport aligned with
