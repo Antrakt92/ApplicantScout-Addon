@@ -1,14 +1,23 @@
 # Changelog
 
-## 0.3.4 - 22-May-2026 - Companion 0.5.4 release-train copy refresh
+## 0.3.4 - 22-May-2026 - Companion 0.5.4 release train and party roster fixes
 
 This paired addon release refreshes public addon copy for ApplicantScout
-Companion `0.5.4`, keeping marketplace and GitHub release notes aligned with
-the latest companion installer release.
+Companion `0.5.4` and hardens live Party roster snapshots while groups are
+being assembled.
+
+### Fixed
+
+- Fixed Party snapshots getting stuck on a partial roster when a newly invited
+  member was already in the WoW group but their unit row or specialization had
+  not fully settled yet.
+- Fixed combat-deferred party inspection blocking applicant-free Party snapshots
+  from reaching the companion during active gameplay.
+- Added `/apscout status` diagnostics for roster preflight block reasons and
+  incomplete roster retry state.
 
 ### Changed
 
-- No addon Lua runtime changes.
 - No QR wire-format changes; payloads remain compact v6.
 - This addon release is paired with ApplicantScout Companion `0.5.4`.
 - Companion `0.5.4` improves launcher responsiveness, Mythic+ fit scoring,

@@ -203,6 +203,7 @@ local entryCreationKeyState = {
     activeListingMaybeChanged = false,
     entryCreationKeyLevelCacheDecision = "none",
     lastPayloadApplicantCount = 0,
+    lastPayloadRosterIncomplete = false,
     lastEmittedApplicantCount = 0,
     pendingTtl = 10,
 }
@@ -395,6 +396,7 @@ StartSession = function()
     entryCreationKeyState.lastQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
     entryCreationKeyState.ClearRosterInspectBatchState()
+    entryCreationKeyState.ClearRosterLoadRetryState()
 
     -- QR is no longer shown for the entire session. The first changed snapshot
     -- will paint the QR, take a short visibility lease, wait QR_RENDER_SETTLE_S,
@@ -420,6 +422,7 @@ EndSession = function()
     -- Bypasses dedup + throttle (force=true). Retry once so a transient
     -- malformed terminal screenshot does not leave the companion overlay stale.
     entryCreationKeyState.ClearRosterInspectBatchState()
+    entryCreationKeyState.ClearRosterLoadRetryState()
     MaybeTriggerScreenshot(true, nil, true)
     entryCreationKeyState.lastQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
@@ -1808,13 +1811,22 @@ local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey
 end
 
 local function _UnitFullNameForTransport(unit)
-    if not UnitFullName then return "" end
-    local ok, name, realm = pcall(UnitFullName, unit)
-    if not ok then return "" end
+    local name, realm = "", ""
+    if UnitFullName then
+        local ok, unitName, unitRealm = pcall(UnitFullName, unit)
+        if ok then
+            name = SafeStr(unitName, "")
+            realm = SafeStr(unitRealm, "")
+        end
+    end
+    if name == "" and GetUnitName then
+        local ok, unitName = pcall(GetUnitName, unit, true)
+        if ok then name = SafeStr(unitName, "") end
+    end
     name = SafeStr(name, "")
     if name == "" then return "" end
-    realm = SafeStr(realm, "")
-    if realm == "" then
+    if name:find("-", 1, true) then return name end
+    if realm == "" and UnitFullName then
         local okPlayer, _playerName, playerRealm = pcall(UnitFullName, "player")
         if okPlayer then realm = SafeStr(playerRealm, "") end
     end
@@ -1948,6 +1960,12 @@ entryCreationKeyState.ClearRosterInspectBatchState = function()
         (entryCreationKeyState.rosterInspectBatchRetryToken or 0) + 1
     rosterInspectPendingGUID = nil
 end
+entryCreationKeyState.ClearRosterLoadRetryState = function()
+    entryCreationKeyState.rosterLoadRetryDeadline = nil
+    entryCreationKeyState.rosterLoadRetrySessionGen = nil
+    entryCreationKeyState.rosterLoadRetryToken =
+        (entryCreationKeyState.rosterLoadRetryToken or 0) + 1
+end
 entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()
     local skippedInspectCount = 0
     if entryCreationKeyState.rosterInspectBatchSkippedGUIDs then
@@ -1966,6 +1984,13 @@ entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()
             math.max(0, entryCreationKeyState.rosterInspectBatchRetryDeadline - GetTime())
         )
     end
+    local loadRetryText = "no"
+    if entryCreationKeyState.rosterLoadRetryDeadline then
+        loadRetryText = string.format(
+            "yes (%.2fs)",
+            math.max(0, entryCreationKeyState.rosterLoadRetryDeadline - GetTime())
+        )
+    end
     print("  roster inspect batch:")
     print("    batch pending: "
           .. tostring(entryCreationKeyState.rosterInspectBatchDirtyPending))
@@ -1974,11 +1999,16 @@ entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()
     print("    retry scheduled: " .. retryText)
     print("    combat deferred: "
           .. tostring(entryCreationKeyState.rosterInspectBatchCombatDeferred))
+    print("    last block reason: "
+          .. tostring(entryCreationKeyState.rosterInspectBatchLastBlockReason or "none"))
     print("    skipped count: " .. tostring(skippedInspectCount))
     print("    quiet full-party suppression: cached="
           .. tostring(entryCreationKeyState.lastQuietFullPartySignature ~= nil)
           .. ", payload="
           .. tostring(entryCreationKeyState.lastPayloadQuietFullPartySignature ~= nil))
+    print("  roster load retry: " .. loadRetryText
+          .. ", incomplete payload: "
+          .. tostring(entryCreationKeyState.lastPayloadRosterIncomplete))
 end
 entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)
     if not (C_Timer and C_Timer.After) then return false end
@@ -2011,6 +2041,38 @@ entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)
            and not entryCreationKeyState.FlushOrContinueRosterInspectBatch() then
             MarkDirty("inspect")
         end
+    end)
+    return true
+end
+entryCreationKeyState.ScheduleRosterLoadRetry = function(delay)
+    if not (C_Timer and C_Timer.After) then return false end
+    local now = GetTime and GetTime() or 0
+    delay = SafeNumber(delay, 0)
+    if delay < 0 then delay = 0 end
+    local due = now + delay
+    local existingDeadline = entryCreationKeyState.rosterLoadRetryDeadline
+    if existingDeadline
+       and entryCreationKeyState.rosterLoadRetrySessionGen == sessionGen
+       and existingDeadline <= due then
+        return true
+    end
+    entryCreationKeyState.rosterLoadRetryToken =
+        (entryCreationKeyState.rosterLoadRetryToken or 0) + 1
+    local retryToken = entryCreationKeyState.rosterLoadRetryToken
+    local retrySessionGen = sessionGen
+    entryCreationKeyState.rosterLoadRetryDeadline = due
+    entryCreationKeyState.rosterLoadRetrySessionGen = retrySessionGen
+    C_Timer.After(delay, function()
+        if retryToken ~= entryCreationKeyState.rosterLoadRetryToken then
+            return
+        end
+        if retrySessionGen ~= sessionGen then return end
+        entryCreationKeyState.rosterLoadRetryDeadline = nil
+        entryCreationKeyState.rosterLoadRetrySessionGen = nil
+        if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
+        if not isSessionActive then return end
+        pendingShotDirty = true
+        MarkDirty("rosterload")
     end)
     return true
 end
@@ -2261,12 +2323,14 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
     local rosterQuietHasUnknownSpec = false
     local groupCount = math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))
     local inRaid = IsInRaid and IsInRaid() or false
+    local expectedRosterCount = 0
     if groupCount <= 0 then
-        return rosterOut, emittedCount, "", false, inRaid
+        return rosterOut, emittedCount, "", false, inRaid, false
     end
 
     if inRaid then
         if groupCount > 40 then groupCount = 40 end
+        expectedRosterCount = groupCount
         for i = 1, groupCount do
             local row = _BuildRosterRow(
                 "raid" .. i,
@@ -2277,6 +2341,8 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
             if row then table.insert(rows, row) end
         end
     else
+        expectedRosterCount = groupCount
+        if expectedRosterCount > 5 then expectedRosterCount = 5 end
         local playerRow = _BuildRosterRow("player", 1, 1, false)
         if playerRow then table.insert(rows, playerRow) end
         local partyCount = groupCount > 0 and (groupCount - 1) or 0
@@ -2340,8 +2406,10 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
         _PackLenStr(rosterQuietOut, row.name)
     end
 
+    local rosterIncomplete = emittedCount < expectedRosterCount
+        or (not inRaid and rosterQuietHasUnknownSpec)
     return rosterOut, emittedCount, table.concat(rosterQuietOut),
-           rosterQuietHasUnknownSpec, inRaid
+           rosterQuietHasUnknownSpec, inRaid, rosterIncomplete
 end
 
 -- CRC32 IEEE-802.3, table-based. Built once at file load (~5KB memory).
@@ -2374,6 +2442,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear)
     local out = {}
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadApplicantCount = 0
+    entryCreationKeyState.lastPayloadRosterIncomplete = false
 
     -- Header (length patched after we know body size)
     table.insert(out, "APS1")
@@ -2572,16 +2641,18 @@ local function BuildPayload(entry, applicantIDs, terminalClear)
     entryCreationKeyState.lastPayloadApplicantCount = emittedCount
 
     local rosterOut, rosterCount = {}, 0
+    local rosterIncomplete = false
     local rosterQuietSignature, rosterQuietHasUnknownSpec, rosterQuietInRaid =
         nil, false, false
     if not terminalClear then
         rosterOut, rosterCount, rosterQuietSignature,
-        rosterQuietHasUnknownSpec, rosterQuietInRaid =
+        rosterQuietHasUnknownSpec, rosterQuietInRaid, rosterIncomplete =
             BuildRosterPayloadRows(
                 listingActivityIDForRio,
                 listingKeyLevelForRio
             )
     end
+    entryCreationKeyState.lastPayloadRosterIncomplete = rosterIncomplete
     if cleanEntry and #validApps == 0
        and rosterCount == 5
        and rosterQuietSignature
@@ -2950,7 +3021,8 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
     if not force
        and #applicantIDs == 0
        and entryCreationKeyState.lastEmittedApplicantCount == 0
-       and entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot() then
+       and entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()
+       and not entryCreationKeyState.rosterInspectBatchCombatDeferred then
         pendingShotDirty = true
         return
     end
@@ -2959,7 +3031,16 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
 
     local h = HashSnapshot(payload)
     if not force and h == lastSnapshotHash then
-        pendingShotDirty = false  -- nothing new to render for same hash
+        if entryCreationKeyState.lastPayloadRosterIncomplete then
+            if entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S) then
+                pendingShotDirty = false
+            else
+                pendingShotDirty = true
+            end
+        else
+            pendingShotDirty = false  -- nothing new to render for same hash
+            entryCreationKeyState.ClearRosterLoadRetryState()
+        end
         return
     end
 
@@ -2973,6 +3054,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
         if entryCreationKeyState.lastQuietFullPartySignature == quietSignature then
             lastSnapshotHash = h
             pendingShotDirty = false
+            entryCreationKeyState.ClearRosterLoadRetryState()
             return
         end
     else
@@ -3007,6 +3089,15 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
     lastSnapshotHash = h
     lastShotTime = now
     pendingShotDirty = false
+    if not force and entryCreationKeyState.lastPayloadRosterIncomplete then
+        if entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S) then
+            pendingShotDirty = false
+        else
+            pendingShotDirty = true
+        end
+    else
+        entryCreationKeyState.ClearRosterLoadRetryState()
+    end
 
     -- PaintQR above just updated the textures. If the frame was hidden, the
     -- visibility lease waits QR_RENDER_SETTLE_S so Show()+texture updates reach
@@ -3957,6 +4048,7 @@ SlashCmdList.APSCOUT = function(msg)
         entryCreationKeyState.lastQuietFullPartySignature = nil
         entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
         entryCreationKeyState.ClearRosterInspectBatchState()
+        entryCreationKeyState.ClearRosterLoadRetryState()
         scanDirty = true
         APSPrint("resync queued — emits when transport is active and QR is available")
     elseif msg == "shotnow" then

@@ -237,6 +237,23 @@ def test_roster_payload_rows_skip_solo_player_when_not_grouped():
     assert "return rosterOut, emittedCount" in roster_body[solo_guard_idx:player_idx]
 
 
+def test_roster_name_falls_back_to_visible_unit_name_when_full_name_is_missing():
+    source = _lua_source()
+    name_body = _slice_between(
+        source,
+        "local function _UnitFullNameForTransport(unit)",
+        "local function _UnitClassIDForRoster(unit)",
+    )
+
+    full_name_idx = name_body.index("pcall(UnitFullName, unit)")
+    fallback_idx = name_body.index("pcall(GetUnitName, unit, true)")
+    safe_fallback_idx = name_body.index("SafeStr(unitName, \"\")", fallback_idx)
+
+    assert full_name_idx < fallback_idx < safe_fallback_idx
+    assert "if name == \"\" and GetUnitName then" in name_body
+    assert 'name:find("-", 1, true)' in name_body
+
+
 def test_safe_str_strips_player_links_before_bare_pipe_cleanup():
     source = _lua_source()
     body = _slice_between(source, "SafeStr = function(v, secretFallback)", "local function SafeDiag")
@@ -546,12 +563,140 @@ def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
 
     assert "local payload = BuildPayload(entry, applicantIDs, terminalClear)" in screenshot_body
     assert "local rosterOut, rosterCount = {}, 0" in payload_body
+    assert "local rosterIncomplete = false" in payload_body
     assert "if not terminalClear then" in payload_body
     roster_call_idx = payload_body.index("BuildRosterPayloadRows(")
     terminal_guard_idx = payload_body.index("if not terminalClear then")
     count_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
     assert terminal_guard_idx < roster_call_idx < count_idx
     assert "for _, chunk in ipairs(rosterOut) do" in payload_body
+
+
+def test_roster_payload_marks_group_snapshot_incomplete_when_expected_rows_are_missing():
+    source = _lua_source()
+    payload_body = _slice_between(
+        source,
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        "local function HashSnapshot(payload)",
+    )
+    roster_body = _slice_between(
+        source,
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "-- CRC32 IEEE-802.3",
+    )
+
+    assert "entryCreationKeyState.lastPayloadRosterIncomplete = false" in payload_body
+    assert "local expectedRosterCount = 0" in roster_body
+    assert "expectedRosterCount = groupCount" in roster_body
+    assert "local rosterIncomplete = emittedCount < expectedRosterCount" in roster_body
+    assert "rosterQuietHasUnknownSpec, inRaid, rosterIncomplete" in roster_body
+    assert "entryCreationKeyState.lastPayloadRosterIncomplete = rosterIncomplete" in (
+        payload_body
+    )
+
+
+def test_party_roster_with_unknown_spec_stays_incomplete_until_clear_data():
+    source = _lua_source()
+    roster_body = _slice_between(
+        source,
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "-- CRC32 IEEE-802.3",
+    )
+
+    unknown_spec_idx = roster_body.index("if row.specID <= 0 then")
+    incomplete_idx = roster_body.index("local rosterIncomplete =")
+    return_idx = roster_body.index("return rosterOut, emittedCount", incomplete_idx)
+
+    assert unknown_spec_idx < incomplete_idx < return_idx
+    assert "or (not inRaid and rosterQuietHasUnknownSpec)" in roster_body[
+        incomplete_idx:return_idx
+    ]
+
+
+def test_incomplete_roster_payload_retries_even_when_hash_is_unchanged():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    same_hash_idx = screenshot_body.index("if not force and h == lastSnapshotHash then")
+    incomplete_idx = screenshot_body.index(
+        "entryCreationKeyState.lastPayloadRosterIncomplete",
+        same_hash_idx,
+    )
+    retry_idx = screenshot_body.index(
+        "entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S)",
+        incomplete_idx,
+    )
+    clear_pending_idx = screenshot_body.index("pendingShotDirty = false", retry_idx)
+    fallback_pending_idx = screenshot_body.index("pendingShotDirty = true", retry_idx)
+    return_idx = screenshot_body.index("return", retry_idx)
+    throttle_idx = screenshot_body.index("local now = GetTime()")
+
+    assert same_hash_idx < incomplete_idx < retry_idx < clear_pending_idx < fallback_pending_idx
+    assert fallback_pending_idx < return_idx
+    assert return_idx < throttle_idx
+
+
+def test_incomplete_roster_payload_schedules_retry_after_successful_qr_paint():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    paint_success_idx = screenshot_body.index(
+        "local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()"
+    )
+    clear_pending_idx = screenshot_body.index("pendingShotDirty = false", paint_success_idx)
+    incomplete_idx = screenshot_body.index(
+        "entryCreationKeyState.lastPayloadRosterIncomplete",
+        clear_pending_idx,
+    )
+    retry_idx = screenshot_body.index(
+        "entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S)",
+        incomplete_idx,
+    )
+    retry_clear_pending_idx = screenshot_body.index("pendingShotDirty = false", retry_idx)
+    fallback_pending_idx = screenshot_body.index("pendingShotDirty = true", retry_idx)
+    screenshot_schedule_idx = screenshot_body.index(
+        "C_Timer.After(forceVisibleShotDelay, function()",
+        retry_idx,
+    )
+
+    assert paint_success_idx < clear_pending_idx < incomplete_idx < retry_idx
+    assert retry_idx < retry_clear_pending_idx < fallback_pending_idx
+    assert fallback_pending_idx < screenshot_schedule_idx
+
+
+def test_roster_load_retry_callback_requires_current_token_and_session():
+    source = _lua_source()
+    retry_body = _slice_between(
+        source,
+        "entryCreationKeyState.ScheduleRosterLoadRetry = function(delay)",
+        "entryCreationKeyState.RosterUnitHasResolvedSpec = function(unit, guid)",
+    )
+
+    token_idx = retry_body.index("local retryToken = entryCreationKeyState.rosterLoadRetryToken")
+    callback_idx = retry_body.index("C_Timer.After(delay, function()")
+    token_guard_idx = retry_body.index(
+        "retryToken ~= entryCreationKeyState.rosterLoadRetryToken",
+        callback_idx,
+    )
+    session_guard_idx = retry_body.index("retrySessionGen ~= sessionGen", token_guard_idx)
+    enabled_guard_idx = retry_body.index(
+        "ApplicantScoutDB and ApplicantScoutDB.enabled",
+        session_guard_idx,
+    )
+    active_guard_idx = retry_body.index("if not isSessionActive then return end")
+    pending_idx = retry_body.index("pendingShotDirty = true", active_guard_idx)
+    dirty_idx = retry_body.index('MarkDirty("rosterload")', pending_idx)
+
+    assert token_idx < callback_idx < token_guard_idx < session_guard_idx
+    assert session_guard_idx < enabled_guard_idx < active_guard_idx < pending_idx < dirty_idx
 
 
 def test_roster_payload_rows_include_key_summary_and_group_metadata():
@@ -806,6 +951,31 @@ def test_combat_block_keeps_batch_pending_until_player_regen_enabled():
     )
 
 
+def test_combat_deferred_roster_preflight_allows_partial_snapshot():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    preflight_idx = screenshot_body.index(
+        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()"
+    )
+    combat_deferred_idx = screenshot_body.index(
+        "entryCreationKeyState.rosterInspectBatchCombatDeferred",
+        preflight_idx,
+    )
+    pending_idx = screenshot_body.index("pendingShotDirty = true", combat_deferred_idx)
+    return_idx = screenshot_body.index("return", pending_idx)
+    payload_idx = screenshot_body.index("local payload = BuildPayload", return_idx)
+
+    assert preflight_idx < combat_deferred_idx < pending_idx < return_idx < payload_idx
+    assert "not entryCreationKeyState.rosterInspectBatchCombatDeferred" in (
+        screenshot_body[preflight_idx:pending_idx]
+    )
+
+
 def test_player_regen_enabled_flushes_roster_inspect_batch():
     source = _lua_source()
     events_body = _slice_between(
@@ -1003,6 +1173,7 @@ def test_status_reports_roster_inspect_batch_diagnostics_without_raw_ids():
     assert "pending inspect:" in diagnostics_body
     assert "retry scheduled:" in diagnostics_body
     assert "combat deferred:" in diagnostics_body
+    assert "last block reason:" in diagnostics_body
     assert "skipped count:" in diagnostics_body
     assert "rosterInspectPendingGUID)" not in diagnostics_body
     assert "lastQuietFullPartySignature)" not in diagnostics_body
