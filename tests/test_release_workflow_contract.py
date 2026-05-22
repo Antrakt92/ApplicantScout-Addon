@@ -89,6 +89,7 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     assert re.search(r"(?m)^    runs-on: windows-2022\s*$", preflight)
     assert re.search(r"(?m)^    permissions:\n      contents: read\s*$", preflight)
     assert re.search(r"(?m)^    needs: preflight\s*$", release)
+    assert re.search(r"(?m)^    runs-on: ubuntu-latest\s*$", release)
     assert re.search(r"(?m)^    permissions:\n      contents: write\s*$", release)
 
     version_step = _step_block(preflight, "Check release version")
