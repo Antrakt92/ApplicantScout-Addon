@@ -1,11 +1,12 @@
 param(
     [string]$Tag = $env:GITHUB_REF_NAME,
-    [string]$PairedCompanionRefOutputPath
+    [string]$PairedCompanionRefOutputPath,
+    [string]$PairedCompanionRoot
 )
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $RepoRoot
 
 function Get-SingleRegexMatch {
@@ -15,7 +16,11 @@ function Get-SingleRegexMatch {
         [string]$Description
     )
 
-    $Text = Get-Content -Path $Path -Raw
+    $FullPath = Join-Path $RepoRoot $Path
+    if (-not (Test-Path -LiteralPath $FullPath)) {
+        throw "Missing $Description file: $FullPath"
+    }
+    $Text = Get-Content -LiteralPath $FullPath -Raw -Encoding UTF8
     $Matches = [regex]::Matches($Text, $Pattern, [System.Text.RegularExpressions.RegexOptions]::Multiline)
     if ($Matches.Count -eq 0) {
         throw "Missing $Description in $Path"
@@ -31,7 +36,11 @@ function Get-TopChangelogSection {
         [string]$Path
     )
 
-    $Text = Get-Content -Path $Path -Raw
+    $FullPath = Join-Path $RepoRoot $Path
+    if (-not (Test-Path -LiteralPath $FullPath)) {
+        throw "Missing changelog file: $FullPath"
+    }
+    $Text = Get-Content -LiteralPath $FullPath -Raw -Encoding UTF8
     $Options = [System.Text.RegularExpressions.RegexOptions]::Multiline -bor
         [System.Text.RegularExpressions.RegexOptions]::Singleline
     $Match = [regex]::Match(
@@ -62,6 +71,57 @@ function Write-GitHubOutput {
         "$Name=$Value`n",
         $Utf8NoBom
     )
+}
+
+function Compare-SemVer {
+    param(
+        [string]$Left,
+        [string]$Right
+    )
+
+    $LeftParts = @($Left.Split(".") | ForEach-Object { [int]$_ })
+    $RightParts = @($Right.Split(".") | ForEach-Object { [int]$_ })
+    for ($Index = 0; $Index -lt 3; $Index++) {
+        if ($LeftParts[$Index] -lt $RightParts[$Index]) {
+            return -1
+        }
+        if ($LeftParts[$Index] -gt $RightParts[$Index]) {
+            return 1
+        }
+    }
+    return 0
+}
+
+function Get-CompanionReleaseMetadata {
+    param(
+        [string]$Root
+    )
+
+    $ResolvedRoot = (Resolve-Path -LiteralPath $Root).Path
+    $ReleaseNotesPath = Join-Path $ResolvedRoot "RELEASE_NOTES.md"
+    if (-not (Test-Path -LiteralPath $ReleaseNotesPath)) {
+        throw "Missing paired companion release notes: $ReleaseNotesPath"
+    }
+    $Text = Get-Content -LiteralPath $ReleaseNotesPath -Raw -Encoding UTF8
+    $TopMatch = [regex]::Match(
+        $Text,
+        '(?ms)^##\s+([0-9]+\.[0-9]+\.[0-9]+)\s+-\s+.*?(?=^##\s+\d+\.\d+\.\d+\s+-\s+|\z)'
+    )
+    if (-not $TopMatch.Success) {
+        throw "Missing top paired companion release notes entry in $ReleaseNotesPath"
+    }
+    $TopEntry = $TopMatch.Value
+    $RequiredAddonMatch = [regex]::Match(
+        $TopEntry,
+        '(?m)^-\s+Requires the ApplicantScout WoW addon\s+`([0-9]+\.[0-9]+\.[0-9]+)`\.\s*$'
+    )
+    if (-not $RequiredAddonMatch.Success) {
+        throw "Paired companion release notes do not name the required ApplicantScout addon version."
+    }
+    return @{
+        Version = $TopMatch.Groups[1].Value
+        RequiredAddonVersion = $RequiredAddonMatch.Groups[1].Value
+    }
 }
 
 if ([string]::IsNullOrWhiteSpace($Tag)) {
@@ -123,6 +183,15 @@ if ($Errors.Count -gt 0) {
 }
 
 $PairedCompanionVersion = $PairedCompanionVersions[0]
+if (-not [string]::IsNullOrWhiteSpace($PairedCompanionRoot)) {
+    $CompanionMetadata = Get-CompanionReleaseMetadata -Root $PairedCompanionRoot
+    if ($CompanionMetadata.Version -ne $PairedCompanionVersion) {
+        throw "Paired companion release notes top entry is $($CompanionMetadata.Version), expected $PairedCompanionVersion from addon changelog."
+    }
+    if ((Compare-SemVer -Left $TagVersion -Right $CompanionMetadata.RequiredAddonVersion) -lt 0) {
+        throw "Paired companion $PairedCompanionVersion requires addon $($CompanionMetadata.RequiredAddonVersion), but current addon tag is $TagVersion."
+    }
+}
 if (-not [string]::IsNullOrWhiteSpace($PairedCompanionRefOutputPath)) {
     Write-GitHubOutput `
         -Path $PairedCompanionRefOutputPath `

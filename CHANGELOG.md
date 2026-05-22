@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.4 - 22-May-2026 - Companion 0.5.4 release-train copy refresh
+
+This paired addon release refreshes public addon copy for ApplicantScout
+Companion `0.5.4`, keeping marketplace and GitHub release notes aligned with
+the latest companion installer release.
+
+### Changed
+
+- No addon Lua runtime changes.
+- No QR wire-format changes; payloads remain compact v6.
+- This addon release is paired with ApplicantScout Companion `0.5.4`.
+- Companion `0.5.4` improves launcher responsiveness, Mythic+ fit scoring,
+  update/cache I/O, watcher detection, unknown-spec WCL fetch handling, stale
+  WCL completion ordering, debug cache-TTL persistence, and empty applicant-list
+  clears.
+
 ## 0.3.3 - 21-May-2026 - Companion 0.5.2 lifecycle hardening release train
 
 This paired addon + companion release keeps the in-game transport aligned with

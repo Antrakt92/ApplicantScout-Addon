@@ -92,6 +92,7 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
 
     version_step = _step_block(preflight, "Check release version")
     companion_checkout = _step_block(preflight, "Checkout paired companion")
+    paired_metadata_step = _step_block(preflight, "Validate paired companion metadata")
     dependency_step = _step_block(preflight, "Install Python dependencies")
     contract_step = _step_block(preflight, "Check paired companion and addon contracts")
     package_step = _step_block(preflight, "Development package smoke")
@@ -101,6 +102,8 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     assert "repository: Antrakt92/ApplicantScout-Companion" in companion_checkout
     assert "ref: ${{ steps.version.outputs.companion_ref }}" in companion_checkout
     assert "path: ApplicantScout-Companion" in companion_checkout
+    assert "working-directory: ApplicantScout-Addon" in paired_metadata_step
+    assert "-PairedCompanionRoot ..\\ApplicantScout-Companion" in paired_metadata_step
     assert "working-directory: ApplicantScout-Companion" in dependency_step
     assert ".\\.venv\\Scripts\\python -m pip install -r constraints-release.txt" in dependency_step
     assert ".\\.venv\\Scripts\\python -m pip install -e '.[dev]' -c constraints-release.txt" in dependency_step
@@ -114,6 +117,7 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
         preflight,
         "Check release version",
         "Checkout paired companion",
+        "Validate paired companion metadata",
         "Install Python dependencies",
         "Check paired companion and addon contracts",
         "Development package smoke",
@@ -146,7 +150,7 @@ def test_release_version_script_outputs_paired_companion_ref(tmp_path: Path):
             "-File",
             str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
             "-Tag",
-            "v0.3.3",
+            "v0.3.4",
             "-PairedCompanionRefOutputPath",
             str(output_path),
         ],
@@ -157,7 +161,103 @@ def test_release_version_script_outputs_paired_companion_ref(tmp_path: Path):
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert output_path.read_text(encoding="utf-8") == "companion_ref=v0.5.2\n"
+    assert output_path.read_text(encoding="utf-8") == "companion_ref=v0.5.4\n"
+
+
+def test_release_version_script_validates_paired_companion_minimum_addon(
+    tmp_path: Path,
+):
+    companion = tmp_path / "ApplicantScout-Companion"
+    companion.mkdir()
+    (companion / "RELEASE_NOTES.md").write_text(
+        "\n".join(
+            [
+                "# ApplicantScout Companion Release Notes",
+                "",
+                "## 0.5.4 - 21-May-2026",
+                "",
+                "### Release Assets",
+                "",
+                "- Requires the ApplicantScout WoW addon `0.3.3`.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
+            "-Tag",
+            "v0.3.4",
+            "-PairedCompanionRoot",
+            str(companion),
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_release_version_script_rejects_companion_requiring_newer_addon(
+    tmp_path: Path,
+):
+    companion = tmp_path / "ApplicantScout-Companion"
+    companion.mkdir()
+    (companion / "RELEASE_NOTES.md").write_text(
+        "\n".join(
+            [
+                "# ApplicantScout Companion Release Notes",
+                "",
+                "## 0.5.4 - 21-May-2026",
+                "",
+                "### Release Assets",
+                "",
+                "- Requires the ApplicantScout WoW addon `0.3.5`.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
+            "-Tag",
+            "v0.3.4",
+            "-PairedCompanionRoot",
+            str(companion),
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "requires addon 0.3.5" in output
+    assert "current addon tag is 0.3.4" in output
+
+
+def test_release_version_script_does_not_invoke_companion_release_script():
+    script = _read_repo_text("scripts/check-release-version.ps1")
+
+    assert "ApplicantScout-Companion\\scripts\\check-release-version.ps1" not in script
+    assert "ApplicantScout-Companion/scripts/check-release-version.ps1" not in script
 
 
 def test_release_preflight_runs_python_through_companion_constraints():
