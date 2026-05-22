@@ -1,5 +1,6 @@
 param(
-    [string]$Tag = $env:GITHUB_REF_NAME
+    [string]$Tag = $env:GITHUB_REF_NAME,
+    [string]$PairedCompanionRefOutputPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,19 +26,42 @@ function Get-SingleRegexMatch {
     return $Matches[0].Groups[1].Value
 }
 
-function Get-FirstRegexMatch {
+function Get-TopChangelogSection {
     param(
-        [string]$Path,
-        [string]$Pattern,
-        [string]$Description
+        [string]$Path
     )
 
     $Text = Get-Content -Path $Path -Raw
-    $Match = [regex]::Match($Text, $Pattern, [System.Text.RegularExpressions.RegexOptions]::Multiline)
+    $Options = [System.Text.RegularExpressions.RegexOptions]::Multiline -bor
+        [System.Text.RegularExpressions.RegexOptions]::Singleline
+    $Match = [regex]::Match(
+        $Text,
+        "^##\s+([0-9]+\.[0-9]+\.[0-9]+)\s+-\s+.+?(?=^##\s+[0-9]+\.[0-9]+\.[0-9]+\s+-\s+|\z)",
+        $Options
+    )
     if (-not $Match.Success) {
-        throw "Missing $Description in $Path"
+        throw "Missing top changelog section in $Path"
     }
-    return $Match.Groups[1].Value
+    return $Match
+}
+
+function Write-GitHubOutput {
+    param(
+        [string]$Path,
+        [string]$Name,
+        [string]$Value
+    )
+
+    $OutputDirectory = Split-Path -Path $Path -Parent
+    if ($OutputDirectory -and -not (Test-Path -LiteralPath $OutputDirectory)) {
+        throw "GitHub output directory does not exist: $OutputDirectory"
+    }
+    $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::AppendAllText(
+        $Path,
+        "$Name=$Value`n",
+        $Utf8NoBom
+    )
 }
 
 if ([string]::IsNullOrWhiteSpace($Tag)) {
@@ -65,10 +89,20 @@ $TocVersion = Get-SingleRegexMatch `
     -Pattern "^##\s+Version:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$" `
     -Description "TOC Version"
 
-$ChangelogVersion = Get-FirstRegexMatch `
-    -Path "CHANGELOG.md" `
-    -Pattern "^##\s+([0-9]+\.[0-9]+\.[0-9]+)\s+-\s+.+$" `
-    -Description "top changelog version"
+$TopChangelogMatch = Get-TopChangelogSection -Path "CHANGELOG.md"
+$ChangelogVersion = $TopChangelogMatch.Groups[1].Value
+$TopChangelogSection = $TopChangelogMatch.Value
+
+$PairedCompanionMatches = [regex]::Matches(
+    $TopChangelogSection,
+    '(?i)(?:ApplicantScout\s+)?Companion\s+`?([0-9]+\.[0-9]+\.[0-9]+)`?',
+    [System.Text.RegularExpressions.RegexOptions]::Multiline
+)
+$PairedCompanionVersions = @(
+    $PairedCompanionMatches |
+        ForEach-Object { $_.Groups[1].Value } |
+        Sort-Object -Unique
+)
 
 $Errors = @()
 if ($TocVersion -ne $TagVersion) {
@@ -77,9 +111,24 @@ if ($TocVersion -ne $TagVersion) {
 if ($ChangelogVersion -ne $TagVersion) {
     $Errors += "CHANGELOG.md top entry is $ChangelogVersion, expected $TagVersion from tag $TagName."
 }
+if ($PairedCompanionVersions.Count -eq 0) {
+    $Errors += "CHANGELOG.md top entry must name exactly one paired ApplicantScout Companion version."
+}
+if ($PairedCompanionVersions.Count -gt 1) {
+    $Errors += "CHANGELOG.md top entry names multiple paired ApplicantScout Companion versions: $($PairedCompanionVersions -join ', ')."
+}
 
 if ($Errors.Count -gt 0) {
     throw ($Errors -join "`n")
 }
 
+$PairedCompanionVersion = $PairedCompanionVersions[0]
+if (-not [string]::IsNullOrWhiteSpace($PairedCompanionRefOutputPath)) {
+    Write-GitHubOutput `
+        -Path $PairedCompanionRefOutputPath `
+        -Name "companion_ref" `
+        -Value "v$PairedCompanionVersion"
+}
+
 Write-Host "Release version check passed: $TagName -> $TagVersion"
+Write-Host "Expected paired companion ref: v$PairedCompanionVersion"

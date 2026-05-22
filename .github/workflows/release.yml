@@ -9,20 +9,30 @@ jobs:
   preflight:
     if: ${{ github.event.created == true && github.event.forced == false && github.event.deleted == false }}
     runs-on: windows-latest
+    permissions:
+      contents: read
     steps:
-      - name: Checkout
+      - name: Checkout addon
         # actions/checkout v6 pinned to the upstream tag commit.
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
-
-      - name: Install Lua 5.1
-        shell: pwsh
-        run: choco install lua51 --version=5.1.5 -y --no-progress
+          path: ApplicantScout-Addon
 
       - name: Check release version
+        id: version
         shell: pwsh
-        run: .\scripts\check-release-version.ps1 -Tag $env:GITHUB_REF_NAME
+        working-directory: ApplicantScout-Addon
+        run: .\scripts\check-release-version.ps1 -Tag $env:GITHUB_REF_NAME -PairedCompanionRefOutputPath $env:GITHUB_OUTPUT
+
+      - name: Checkout paired companion
+        # actions/checkout v6 pinned to the upstream tag commit.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: Antrakt92/ApplicantScout-Companion
+          ref: ${{ steps.version.outputs.companion_ref }}
+          fetch-depth: 0
+          path: ApplicantScout-Companion
 
       - name: Set up Python
         # actions/setup-python v6 pinned to the upstream tag commit.
@@ -30,28 +40,28 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Transport contract tests
+      - name: Install Python dependencies
         shell: pwsh
+        working-directory: ApplicantScout-Companion
         run: |
-          python -m pip install pytest
-          python -m pytest -q tests
+          python -m venv .venv
+          .\.venv\Scripts\python -m pip install --upgrade pip
+          .\.venv\Scripts\python -m pip install -r constraints-release.txt
+          .\.venv\Scripts\python -m pip install -e '.[dev]' -c constraints-release.txt
 
-      - name: Lua syntax
+      - name: Install Lua 5.1
         shell: pwsh
-        run: |
-          $luac = Get-Command luac5.1 -ErrorAction SilentlyContinue |
-            Select-Object -First 1 -ExpandProperty Source
-          if (-not $luac) {
-            $luac = "C:\ProgramData\chocolatey\lib\lua51\tools\luac5.1.exe"
-          }
-          if (-not (Test-Path -LiteralPath $luac)) {
-            throw "Missing luac 5.1 compiler at $luac"
-          }
-          & $luac -p ApplicantScout.lua libs\qrencode.lua
+        run: choco install lua51 --version=5.1.5 -y --no-progress
+
+      - name: Check paired companion and addon contracts
+        shell: pwsh
+        working-directory: ApplicantScout-Companion
+        run: .\scripts\check.ps1 -AddonRoot ..\ApplicantScout-Addon
 
       - name: Development package smoke
         shell: pwsh
-        run: .\scripts\package-addon.ps1
+        working-directory: ApplicantScout-Addon
+        run: .\scripts\package-addon.ps1 -OutputDir (Join-Path $env:RUNNER_TEMP "ApplicantScout-package-smoke")
 
   release:
     needs: preflight

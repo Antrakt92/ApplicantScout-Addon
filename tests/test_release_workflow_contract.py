@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -24,6 +25,29 @@ def _workflow_source() -> str:
 
 def _read_repo_text(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def _job_block(workflow: str, job_name: str) -> str:
+    match = re.search(
+        rf"(?ms)^  {re.escape(job_name)}:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        workflow,
+    )
+    assert match is not None, f"Missing workflow job: {job_name}"
+    return match.group(0)
+
+
+def _step_block(container: str, step_name: str) -> str:
+    match = re.search(
+        rf"(?ms)^      - name: {re.escape(step_name)}\n(?P<body>.*?)(?=^      - name:|\Z)",
+        container,
+    )
+    assert match is not None, f"Missing workflow step: {step_name}"
+    return match.group(0)
+
+
+def _assert_order(container: str, *needles: str) -> None:
+    positions = [container.index(needle) for needle in needles]
+    assert positions == sorted(positions), f"Workflow order is wrong for {needles}"
 
 
 def _workflow_action_refs(workflow: str) -> list[tuple[str, str]]:
@@ -56,17 +80,91 @@ def _release_tool_install_args(workflow: str) -> dict[str, list[str]]:
     return install_args
 
 
-def test_release_preflight_runs_transport_contract_tests():
+def test_release_preflight_checks_paired_companion_ref_before_packaging():
+    workflow = _workflow_source()
+    preflight = _job_block(workflow, "preflight")
+    release = _job_block(workflow, "release")
+
+    assert re.search(r"(?m)^    permissions:\n      contents: read\s*$", preflight)
+    assert re.search(r"(?m)^    needs: preflight\s*$", release)
+    assert re.search(r"(?m)^    permissions:\n      contents: write\s*$", release)
+
+    version_step = _step_block(preflight, "Check release version")
+    companion_checkout = _step_block(preflight, "Checkout paired companion")
+    dependency_step = _step_block(preflight, "Install Python dependencies")
+    contract_step = _step_block(preflight, "Check paired companion and addon contracts")
+    package_step = _step_block(preflight, "Development package smoke")
+
+    assert "id: version" in version_step
+    assert "-PairedCompanionRefOutputPath $env:GITHUB_OUTPUT" in version_step
+    assert "repository: Antrakt92/ApplicantScout-Companion" in companion_checkout
+    assert "ref: ${{ steps.version.outputs.companion_ref }}" in companion_checkout
+    assert "path: ApplicantScout-Companion" in companion_checkout
+    assert "working-directory: ApplicantScout-Companion" in dependency_step
+    assert ".\\.venv\\Scripts\\python -m pip install -r constraints-release.txt" in dependency_step
+    assert ".\\.venv\\Scripts\\python -m pip install -e '.[dev]' -c constraints-release.txt" in dependency_step
+    assert "python -m pip install pytest" not in preflight
+    assert "working-directory: ApplicantScout-Companion" in contract_step
+    assert ".\\scripts\\check.ps1 -AddonRoot ..\\ApplicantScout-Addon" in contract_step
+    assert "working-directory: ApplicantScout-Addon" in package_step
+    assert ".\\scripts\\package-addon.ps1 -OutputDir" in package_step
+
+    _assert_order(
+        preflight,
+        "Check release version",
+        "Checkout paired companion",
+        "Install Python dependencies",
+        "Check paired companion and addon contracts",
+        "Development package smoke",
+    )
+    assert "CF_API_KEY" not in preflight
+    assert "WAGO_API_TOKEN" not in preflight
+    assert "GITHUB_OAUTH" not in preflight
+    assert "uses: BigWigsMods/packager@" not in preflight
+    assert "uses: BigWigsMods/packager@" in release
+
+
+def test_release_job_keeps_marketplace_publish_checkout_at_repo_root():
+    workflow = _workflow_source()
+    release = _job_block(workflow, "release")
+    checkout = _step_block(release, "Checkout")
+
+    assert "path:" not in checkout
+    assert "uses: BigWigsMods/packager@" in release
+
+
+def test_release_version_script_outputs_paired_companion_ref(tmp_path: Path):
+    output_path = tmp_path / "github-output.txt"
+
+    result = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
+            "-Tag",
+            "v0.3.3",
+            "-PairedCompanionRefOutputPath",
+            str(output_path),
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert output_path.read_text(encoding="utf-8") == "companion_ref=v0.5.2\n"
+
+
+def test_release_preflight_runs_python_through_companion_constraints():
     workflow = _workflow_source()
 
-    setup_idx = workflow.index("Set up Python")
-    pytest_idx = workflow.index("python -m pytest -q tests")
-    package_idx = workflow.index("Development package smoke")
-    packager_idx = workflow.index("uses: BigWigsMods/packager@")
-
-    assert setup_idx < pytest_idx < package_idx < packager_idx
     assert "python-version: '3.13'" in workflow
-    assert "tests/test_transport_contract.py" not in workflow
+    assert "constraints-release.txt" in workflow
+    assert "python -m pip install pytest" not in workflow
 
 
 def test_release_workflow_pins_external_actions_to_commit_shas():
@@ -75,7 +173,7 @@ def test_release_workflow_pins_external_actions_to_commit_shas():
 
     assert Counter(action for action, _ in action_refs) == Counter(
         {
-            "actions/checkout": 2,
+            "actions/checkout": 3,
             "actions/setup-python": 1,
             "BigWigsMods/packager": 1,
         }
@@ -86,6 +184,7 @@ def test_release_workflow_pins_external_actions_to_commit_shas():
 
 def test_check_workflow_runs_non_release_preflight_without_publishing():
     workflow = _read_repo_text(".github/workflows/check.yml")
+    job = _job_block(workflow, "check")
 
     assert "push:" in workflow
     assert "pull_request:" in workflow
@@ -94,10 +193,23 @@ def test_check_workflow_runs_non_release_preflight_without_publishing():
     assert "contents: read" in workflow
     assert "contents: write" not in workflow
     assert "python-version: '3.13'" in workflow
-    assert "python -m pytest -q tests" in workflow
+    assert "repository: Antrakt92/ApplicantScout-Companion" in workflow
+    assert "path: ApplicantScout-Addon" in workflow
+    assert "path: ApplicantScout-Companion" in workflow
+    assert "python -m pip install pytest" not in workflow
+    assert ".\\.venv\\Scripts\\python -m pip install -r constraints-release.txt" in workflow
+    assert ".\\.venv\\Scripts\\python -m pip install -e '.[dev]' -c constraints-release.txt" in workflow
     assert "choco install lua51 --version=5.1.5" in workflow
-    assert "& $luac -p ApplicantScout.lua libs\\qrencode.lua" in workflow
-    assert ".\\scripts\\package-addon.ps1" in workflow
+    assert ".\\scripts\\check.ps1 -AddonRoot ..\\ApplicantScout-Addon" in workflow
+    assert ".\\scripts\\package-addon.ps1 -OutputDir" in workflow
+    _assert_order(
+        job,
+        "Checkout addon",
+        "Checkout companion",
+        "Install Python dependencies",
+        "Check companion and addon contracts",
+        "Development package smoke",
+    )
     assert "BigWigsMods/packager" not in workflow
     assert "CF_API_KEY" not in workflow
     assert "WAGO_API_TOKEN" not in workflow
@@ -110,7 +222,7 @@ def test_check_workflow_pins_external_actions_to_commit_shas():
 
     assert Counter(action for action, _ in action_refs) == Counter(
         {
-            "actions/checkout": 1,
+            "actions/checkout": 2,
             "actions/setup-python": 1,
         }
     )
