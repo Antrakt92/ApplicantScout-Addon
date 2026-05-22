@@ -11,7 +11,7 @@ env:
 jobs:
   preflight:
     if: ${{ github.event.created == true && github.event.forced == false && github.event.deleted == false }}
-    runs-on: windows-latest
+    runs-on: windows-2022
     permissions:
       contents: read
     steps:

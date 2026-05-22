@@ -86,6 +86,7 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     release = _job_block(workflow, "release")
 
     assert "APPLICANT_SCOUT_VISUAL_BASELINE: smoke" in workflow
+    assert re.search(r"(?m)^    runs-on: windows-2022\s*$", preflight)
     assert re.search(r"(?m)^    permissions:\n      contents: read\s*$", preflight)
     assert re.search(r"(?m)^    needs: preflight\s*$", release)
     assert re.search(r"(?m)^    permissions:\n      contents: write\s*$", release)
@@ -290,7 +291,7 @@ def test_check_workflow_runs_non_release_preflight_without_publishing():
     assert "push:" in workflow
     assert "pull_request:" in workflow
     assert "tags:" not in workflow
-    assert "windows-latest" in workflow
+    assert re.search(r"(?m)^    runs-on: windows-2022\s*$", job)
     assert "contents: read" in workflow
     assert "contents: write" not in workflow
     assert "APPLICANT_SCOUT_VISUAL_BASELINE: smoke" in workflow

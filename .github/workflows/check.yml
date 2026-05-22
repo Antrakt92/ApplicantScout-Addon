@@ -14,7 +14,7 @@ env:
 
 jobs:
   check:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - name: Checkout addon
         # actions/checkout v6 pinned to the upstream tag commit.
