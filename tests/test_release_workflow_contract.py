@@ -85,6 +85,7 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     preflight = _job_block(workflow, "preflight")
     release = _job_block(workflow, "release")
 
+    assert "APPLICANT_SCOUT_VISUAL_BASELINE: smoke" in workflow
     assert re.search(r"(?m)^    permissions:\n      contents: read\s*$", preflight)
     assert re.search(r"(?m)^    needs: preflight\s*$", release)
     assert re.search(r"(?m)^    permissions:\n      contents: write\s*$", release)
@@ -192,6 +193,7 @@ def test_check_workflow_runs_non_release_preflight_without_publishing():
     assert "windows-latest" in workflow
     assert "contents: read" in workflow
     assert "contents: write" not in workflow
+    assert "APPLICANT_SCOUT_VISUAL_BASELINE: smoke" in workflow
     assert "python-version: '3.13'" in workflow
     assert "repository: Antrakt92/ApplicantScout-Companion" in workflow
     assert "path: ApplicantScout-Addon" in workflow

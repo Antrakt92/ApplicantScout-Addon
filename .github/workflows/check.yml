@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  APPLICANT_SCOUT_VISUAL_BASELINE: smoke
+
 jobs:
   check:
     runs-on: windows-latest
