@@ -213,10 +213,27 @@ local entryCreationKeyState = {
     lastPayloadApplicantCount = 0,
     lastPayloadRosterIncomplete = false,
     lastEmittedApplicantCount = 0,
+    rosterChangedSinceLastPayload = false,
+    ROSTER_CHANGE_PREFLIGHT_DEADLINE_S = 2.0,
+    rosterChangePreflightDeadline = nil,
+    rosterChangePreflightToken = 0,
     pendingTtl = 10,
+    TRANSPORT_HEARTBEAT_S = 15.0,
+    lastTransportHeartbeatAttemptTime = 0,
+    LEADER_KEY_TTL_S = 60,
+    LEADER_KEY_REQUEST_THROTTLE_S = 3,
+    leaderKeystone = nil,
+    leaderKeystoneLastRequestAt = 0,
+    leaderKeystoneCallbackRegistered = false,
+    leaderKeystoneLib = nil,
+    leaderKeystoneCallbackOwner = {},
+    libKeystonePrefixRegistered = false,
+    libKeystoneShim = nil,
+    libKeystoneShimCallbacks = {},
     -- WARNING: keep Auto Hi state on this existing table instead of adding
     -- top-level locals; this file is near Lua 5.1's 200-local chunk limit.
     AUTO_HI_DELAY_S = 5,
+    AUTO_HI_NEW_PARTY_MEMBER_DELAY_S = 10,
     autoHiEditBoxSyncing = false,
     autoHiGroupStateKnown = false,
     autoHiWasInGroup = false,
@@ -423,8 +440,10 @@ StartSession = function()
     lastQREncodeError = nil
     entryCreationKeyState.lastQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
+    entryCreationKeyState.MarkRosterCompositionChanged()
     entryCreationKeyState.ClearRosterInspectBatchState()
     entryCreationKeyState.ClearRosterLoadRetryState()
+    entryCreationKeyState.RequestLeaderKeystone(true)
 
     -- QR is no longer shown for the entire session. The first changed snapshot
     -- will paint the QR, take a short visibility lease, wait QR_RENDER_SETTLE_S,
@@ -451,6 +470,7 @@ EndSession = function()
     -- malformed terminal screenshot does not leave the companion overlay stale.
     entryCreationKeyState.ClearRosterInspectBatchState()
     entryCreationKeyState.ClearRosterLoadRetryState()
+    entryCreationKeyState.ClearRosterCompositionChanged()
     MaybeTriggerScreenshot(true, nil, true)
     entryCreationKeyState.lastQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
@@ -704,7 +724,7 @@ entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()
     if not (C_Timer and C_Timer.After) then return end
 
     local groupGen = entryCreationKeyState.autoHiNewPartyMemberGen
-    C_Timer.After(entryCreationKeyState.AUTO_HI_DELAY_S, function()
+    C_Timer.After(entryCreationKeyState.AUTO_HI_NEW_PARTY_MEMBER_DELAY_S, function()
         if groupGen ~= entryCreationKeyState.autoHiNewPartyMemberGen then return end
         if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
         if not ApplicantScoutDB.autoHiGreetNewPartyMembers then return end
@@ -1343,6 +1363,8 @@ end
 --              len-prefixed dungeonName/listingName/comment (uint8 len + utf8)
 --   Version:   has_version byte; if 1: len-prefixed addonVer/gameVer +
 --              region_id byte + len-prefixed playerName
+--   LeaderKey: has_leader_key byte; if 1: uint8 keyLevel +
+--              uint16 challengeMapID + len-prefixed leaderName
 --   Apps:      uint16 count; per applicant: uint32 id + uint8 member_idx +
 --              uint8 classID + uint16 specID + uint16 ilvl + uint16 score +
 --              uint16 mainScore + uint8 rioProfile + uint8 rioBestKey +
@@ -2120,10 +2142,9 @@ local function _ForEachRosterUnit(callback)
     end
 
     if callback("player") then return end
-    local partyCount = groupCount - 1
-    if partyCount > 4 then partyCount = 4 end
-    for i = 1, partyCount do
-        if callback("party" .. i) then return end
+    for i = 1, 4 do
+        local unit = "party" .. i
+        if UnitExists and UnitExists(unit) and callback(unit) then return end
     end
 end
 
@@ -2214,6 +2235,42 @@ entryCreationKeyState.ClearRosterLoadRetryState = function()
     entryCreationKeyState.rosterLoadRetrySessionGen = nil
     entryCreationKeyState.rosterLoadRetryToken =
         (entryCreationKeyState.rosterLoadRetryToken or 0) + 1
+end
+entryCreationKeyState.ClearRosterCompositionChanged = function()
+    entryCreationKeyState.rosterChangedSinceLastPayload = false
+    entryCreationKeyState.rosterChangePreflightDeadline = nil
+    entryCreationKeyState.rosterChangePreflightToken =
+        (entryCreationKeyState.rosterChangePreflightToken or 0) + 1
+end
+entryCreationKeyState.MarkRosterCompositionChanged = function()
+    entryCreationKeyState.rosterChangedSinceLastPayload = true
+    local now = GetTime and GetTime() or 0
+    local delay = entryCreationKeyState.ROSTER_CHANGE_PREFLIGHT_DEADLINE_S
+    entryCreationKeyState.rosterChangePreflightDeadline = now + delay
+    entryCreationKeyState.rosterChangePreflightToken =
+        (entryCreationKeyState.rosterChangePreflightToken or 0) + 1
+    local retryToken = entryCreationKeyState.rosterChangePreflightToken
+    local retrySessionGen = sessionGen
+    if C_Timer and C_Timer.After then
+        C_Timer.After(delay, function()
+            if retryToken ~= entryCreationKeyState.rosterChangePreflightToken then
+                return
+            end
+            if retrySessionGen ~= sessionGen then return end
+            if not entryCreationKeyState.rosterChangedSinceLastPayload then return end
+            if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
+            if not isSessionActive then return end
+            pendingShotDirty = true
+            MarkDirty("rosterdeadline")
+        end)
+    end
+end
+entryCreationKeyState.ShouldDeferRosterChangeForPreflight = function()
+    if not entryCreationKeyState.rosterChangedSinceLastPayload then return true end
+    local deadline = entryCreationKeyState.rosterChangePreflightDeadline
+    if not deadline then return false end
+    local now = GetTime and GetTime() or 0
+    return now < deadline
 end
 entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()
     local skippedInspectCount = 0
@@ -2557,6 +2614,229 @@ local function _BuildRosterRow(unit, unitIndex, subgroup, isRaid)
     }
 end
 
+entryCreationKeyState.GetLibKeystone = function()
+    local libStub = _G and _G.LibStub
+    if type(libStub) == "function" then
+        local ok, lib = pcall(libStub, "LibKeystone", true)
+        if ok
+           and type(lib) == "table"
+           and type(lib.Register) == "function"
+           and type(lib.Request) == "function" then
+            return lib
+        end
+    end
+    return entryCreationKeyState.GetLibKeystoneShim()
+end
+
+entryCreationKeyState.RegisterLibKeystonePrefix = function()
+    if entryCreationKeyState.libKeystonePrefixRegistered then return true end
+    if not (C_ChatInfo and type(C_ChatInfo.RegisterAddonMessagePrefix) == "function") then
+        return false
+    end
+    local ok, result = pcall(function()
+        return C_ChatInfo.RegisterAddonMessagePrefix("LibKS")
+    end)
+    if not ok then return false end
+    if type(result) == "number" and result > 1 then return false end
+    entryCreationKeyState.libKeystonePrefixRegistered = true
+    return true
+end
+
+entryCreationKeyState.ReadOwnLibKeystoneInfo = function()
+    local keyLevel, challengeMapID, playerRating = 0, 0, 0
+    if C_MythicPlus then
+        if type(C_MythicPlus.GetOwnedKeystoneLevel) == "function" then
+            local ok, value = pcall(C_MythicPlus.GetOwnedKeystoneLevel)
+            if ok then keyLevel = math.floor(SafeNumber(value, 0)) end
+        end
+        if type(C_MythicPlus.GetOwnedKeystoneChallengeMapID) == "function" then
+            local ok, value = pcall(C_MythicPlus.GetOwnedKeystoneChallengeMapID)
+            if ok then challengeMapID = math.floor(SafeNumber(value, 0)) end
+        end
+    end
+    if C_PlayerInfo and type(C_PlayerInfo.GetPlayerMythicPlusRatingSummary) == "function" then
+        local ok, summary = pcall(C_PlayerInfo.GetPlayerMythicPlusRatingSummary, "player")
+        summary = ok and SafeTable(summary) or nil
+        playerRating = math.floor(SafeNumber(summary and summary.currentSeasonScore, 0))
+    end
+    return keyLevel, challengeMapID, playerRating
+end
+
+entryCreationKeyState.NotifyLibKeystoneShimCallbacks = function(keyLevel, challengeMapID, playerRating, playerName, channel)
+    for _, callback in pairs(entryCreationKeyState.libKeystoneShimCallbacks) do
+        if type(callback) == "function" then
+            pcall(callback, keyLevel, challengeMapID, playerRating, playerName, channel)
+        end
+    end
+end
+
+entryCreationKeyState.SendLibKeystoneShimInfo = function(channel)
+    if channel ~= "PARTY" then return false end
+    if not (IsInGroup and IsInGroup()) then return false end
+    if IsChatMessagingLockdown() then return false end
+    if not entryCreationKeyState.RegisterLibKeystonePrefix() then return false end
+    if not (C_ChatInfo and type(C_ChatInfo.SendAddonMessage) == "function") then return false end
+    local keyLevel, challengeMapID, playerRating = entryCreationKeyState.ReadOwnLibKeystoneInfo()
+    local payload = string.format("%d,%d,%d", keyLevel, challengeMapID, playerRating)
+    local ok, result = pcall(function()
+        return C_ChatInfo.SendAddonMessage("LibKS", payload, channel)
+    end)
+    return ok and (result == nil or result == 0)
+end
+
+entryCreationKeyState.GetLibKeystoneShim = function()
+    if entryCreationKeyState.libKeystoneShim then return entryCreationKeyState.libKeystoneShim end
+    if not entryCreationKeyState.RegisterLibKeystonePrefix() then return nil end
+    entryCreationKeyState.libKeystoneShim = {
+        Register = function(owner, callback)
+            if type(owner) ~= "table" or type(callback) ~= "function" then return end
+            entryCreationKeyState.libKeystoneShimCallbacks[owner] = callback
+        end,
+        Request = function(channel)
+            if channel ~= "PARTY" then return end
+            local keyLevel, challengeMapID, playerRating =
+                entryCreationKeyState.ReadOwnLibKeystoneInfo()
+            local playerName = SafeStr(UnitNameUnmodified and UnitNameUnmodified("player"), "")
+            entryCreationKeyState.NotifyLibKeystoneShimCallbacks(
+                keyLevel,
+                challengeMapID,
+                playerRating,
+                playerName,
+                channel
+            )
+            if IsInGroup and IsInGroup() and not IsChatMessagingLockdown() then
+                C_ChatInfo.SendAddonMessage("LibKS", "R", channel)
+            end
+        end,
+    }
+    return entryCreationKeyState.libKeystoneShim
+end
+
+entryCreationKeyState.LibKeystoneShimHandleAddonMessage = function(prefix, msg, channel, sender)
+    if prefix ~= "LibKS" or channel ~= "PARTY" then return end
+    if IsSecretValue(msg) or type(msg) ~= "string" then return end
+    if msg == "R" then
+        entryCreationKeyState.SendLibKeystoneShimInfo(channel)
+        return
+    end
+    local keyLevelStr, challengeMapIDStr, playerRatingStr =
+        msg:match("^(%d+),(%d+),(%d+)$")
+    if not keyLevelStr then return end
+    local playerName = SafeStr(Ambiguate and Ambiguate(sender, "none") or sender, "")
+    entryCreationKeyState.NotifyLibKeystoneShimCallbacks(
+        math.floor(SafeNumber(keyLevelStr, 0)),
+        math.floor(SafeNumber(challengeMapIDStr, 0)),
+        math.floor(SafeNumber(playerRatingStr, 0)),
+        playerName,
+        channel
+    )
+end
+
+entryCreationKeyState.CanonicalPlayerName = function(name)
+    name = SafeStr(name, "")
+    if name == "" then return "", "" end
+    local full = name
+    local short = name:gsub("%-.+$", "")
+    return full, short
+end
+
+entryCreationKeyState.PlayerNamesMatch = function(leftName, rightName)
+    local leftFull, leftShort = entryCreationKeyState.CanonicalPlayerName(leftName)
+    local rightFull, rightShort = entryCreationKeyState.CanonicalPlayerName(rightName)
+    if leftFull == "" or rightFull == "" then return false end
+    if leftFull == rightFull then return true end
+    if not leftFull:find("-", 1, true) or not rightFull:find("-", 1, true) then
+        return leftShort ~= "" and leftShort == rightShort
+    end
+    return false
+end
+
+entryCreationKeyState.CurrentPartyLeaderName = function()
+    if not (UnitIsGroupLeader and _UnitExistsForRoster("player")) then return "" end
+    if UnitIsGroupLeader("player") then return _UnitFullNameForTransport("player") end
+    for i = 1, 4 do
+        local unit = "party" .. i
+        if _UnitExistsForRoster(unit) and UnitIsGroupLeader(unit) then
+            return _UnitFullNameForTransport(unit)
+        end
+    end
+    return ""
+end
+
+entryCreationKeyState.ClearLeaderKeystone = function()
+    entryCreationKeyState.leaderKeystone = nil
+end
+
+entryCreationKeyState.OnLeaderKeystoneData = function(keyLevel, challengeMapID, _rating, playerName, channel)
+    if channel ~= "PARTY" then return end
+    local leaderName = entryCreationKeyState.CurrentPartyLeaderName()
+    if leaderName == "" then return end
+    if not entryCreationKeyState.PlayerNamesMatch(playerName, leaderName) then return end
+    keyLevel = math.floor(SafeNumber(keyLevel, 0))
+    challengeMapID = math.floor(SafeNumber(challengeMapID, 0))
+    if keyLevel <= 0 then
+        entryCreationKeyState.ClearLeaderKeystone()
+        MarkDirty("leaderkey")
+        return
+    end
+    entryCreationKeyState.leaderKeystone = {
+        level = _ClampUInt8(keyLevel),
+        challengeMapID = _ClampUInt16(challengeMapID),
+        playerName = leaderName,
+        at = GetTime and GetTime() or 0,
+    }
+    MarkDirty("leaderkey")
+end
+
+entryCreationKeyState.RegisterLeaderKeystoneCallback = function()
+    if entryCreationKeyState.leaderKeystoneCallbackRegistered then
+        return entryCreationKeyState.leaderKeystoneLib or entryCreationKeyState.GetLibKeystone()
+    end
+    local lib = entryCreationKeyState.GetLibKeystone()
+    if not lib then return nil end
+    local ok = pcall(function()
+        lib.Register(
+            entryCreationKeyState.leaderKeystoneCallbackOwner,
+            entryCreationKeyState.OnLeaderKeystoneData
+        )
+    end)
+    if not ok then return nil end
+    entryCreationKeyState.leaderKeystoneCallbackRegistered = true
+    entryCreationKeyState.leaderKeystoneLib = lib
+    return lib
+end
+
+entryCreationKeyState.RequestLeaderKeystone = function(force)
+    local lib = entryCreationKeyState.RegisterLeaderKeystoneCallback()
+    if not lib or not (IsInGroup and IsInGroup()) then return end
+    local now = GetTime and GetTime() or 0
+    if not force
+       and (now - SafeNumber(entryCreationKeyState.leaderKeystoneLastRequestAt, 0))
+           < entryCreationKeyState.LEADER_KEY_REQUEST_THROTTLE_S then
+        return
+    end
+    entryCreationKeyState.leaderKeystoneLastRequestAt = now
+    pcall(function() lib.Request("PARTY") end)
+end
+
+entryCreationKeyState.ResolveLeaderKeystoneContext = function()
+    local leaderKeystone = entryCreationKeyState.leaderKeystone
+    if type(leaderKeystone) ~= "table" then return nil end
+    local leaderName = entryCreationKeyState.CurrentPartyLeaderName()
+    if leaderName == ""
+       or not entryCreationKeyState.PlayerNamesMatch(leaderKeystone.playerName, leaderName) then
+        entryCreationKeyState.ClearLeaderKeystone()
+        return nil
+    end
+    local now = GetTime and GetTime() or 0
+    if now > 0
+       and (now - SafeNumber(leaderKeystone.at, 0)) > entryCreationKeyState.LEADER_KEY_TTL_S then
+        entryCreationKeyState.ClearLeaderKeystone()
+        return nil
+    end
+    return leaderKeystone
+end
+
 local function _RaidSubgroupForRoster(index)
     if not GetRaidRosterInfo then return 1 end
     local ok, _name, _rank, subgroup = pcall(GetRaidRosterInfo, index)
@@ -2594,10 +2874,9 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
         if expectedRosterCount > 5 then expectedRosterCount = 5 end
         local playerRow = _BuildRosterRow("player", 1, 1, false)
         if playerRow then table.insert(rows, playerRow) end
-        local partyCount = groupCount > 0 and (groupCount - 1) or 0
-        if partyCount > 4 then partyCount = 4 end
-        for i = 1, partyCount do
-            local row = _BuildRosterRow("party" .. i, i + 1, 1, false)
+        for i = 1, 4 do
+            local unit = "party" .. i
+            local row = _BuildRosterRow(unit, i + 1, 1, false)
             if row then table.insert(rows, row) end
         end
     end
@@ -2695,12 +2974,13 @@ local function BuildPayload(entry, applicantIDs, terminalClear)
 
     -- Header (length patched after we know body size)
     table.insert(out, "APS1")
-    table.insert(out, string.char(0x06))    -- protocol version (v6: roster block)
+    table.insert(out, string.char(0x07))    -- protocol version (v7: leader key block)
     table.insert(out, "\0\0")                -- length placeholder (uint16 BE)
     table.insert(out, "\0\0")                -- reserved
 
     -- Listing block
     local cleanEntry = SafeTable(entry)
+    local leaderKeystone = entryCreationKeyState.ResolveLeaderKeystoneContext()
     local listingActivityIDForRio = 0
     local listingKeyLevelForRio = 0
     local listingQuietSignature = nil
@@ -2763,6 +3043,9 @@ local function BuildPayload(entry, applicantIDs, terminalClear)
                 categoryID = math.floor(SafeNumber(activityInfo.categoryID, categoryID))
                 difficultyID = math.floor(SafeNumber(activityInfo.difficultyID, difficultyID))
             end
+            if leaderKeystone and leaderKeystone.level > 0 then
+                keyLevel = leaderKeystone.level
+            end
         end
         listingActivityIDForRio = activityID
         listingKeyLevelForRio = keyLevel
@@ -2809,6 +3092,18 @@ local function BuildPayload(entry, applicantIDs, terminalClear)
     local playerRealm = SafeStr(prealm, "")
     local fullName = playerName .. ((playerRealm ~= "") and ("-" .. playerRealm) or "")
     _PackLenStr(out, fullName)
+
+    if leaderKeystone and leaderKeystone.level > 0 then
+        if listingKeyLevelForRio <= 0 then
+            listingKeyLevelForRio = leaderKeystone.level
+        end
+        table.insert(out, string.char(1))
+        table.insert(out, string.char(_ClampUInt8(leaderKeystone.level)))
+        table.insert(out, _Uint16BE(leaderKeystone.challengeMapID))
+        _PackLenStr(out, leaderKeystone.playerName)
+    else
+        table.insert(out, string.char(0))
+    end
 
     -- Applicants — filter out DEAD_STATUSES + sort by ID for hash stability
     local validApps = {}
@@ -3275,6 +3570,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
     if not force
        and #applicantIDs == 0
        and entryCreationKeyState.lastEmittedApplicantCount == 0
+       and entryCreationKeyState.ShouldDeferRosterChangeForPreflight()
        and entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()
        and not entryCreationKeyState.rosterInspectBatchCombatDeferred then
         pendingShotDirty = true
@@ -3295,6 +3591,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
             pendingShotDirty = false  -- nothing new to render for same hash
             entryCreationKeyState.ClearRosterLoadRetryState()
         end
+        entryCreationKeyState.ClearRosterCompositionChanged()
         return
     end
 
@@ -3309,6 +3606,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
             lastSnapshotHash = h
             pendingShotDirty = false
             entryCreationKeyState.ClearRosterLoadRetryState()
+            entryCreationKeyState.ClearRosterCompositionChanged()
             return
         end
     else
@@ -3340,6 +3638,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
 
     entryCreationKeyState.lastEmittedApplicantCount =
         entryCreationKeyState.lastPayloadApplicantCount
+    entryCreationKeyState.ClearRosterCompositionChanged()
     lastSnapshotHash = h
     lastShotTime = now
     pendingShotDirty = false
@@ -3563,6 +3862,7 @@ local EVENT_HANDLERS = {
     PLAYER_ENTERING_WORLD            = function()
         CreateQRFrame()
         entryCreationKeyState.SyncAutoHiInitialGroupState()
+        entryCreationKeyState.RequestLeaderKeystone(true)
         if ApplicantScoutDB and ApplicantScoutDB.enabled then
             EnsureScreenshotCVars()
         else
@@ -3579,6 +3879,7 @@ local EVENT_HANDLERS = {
         _SetupLFGEntryCreationKeyCapture()
         _SetupLFGDefaultPlaystyle()
         _TryHookInfoPanels()
+        entryCreationKeyState.RequestLeaderKeystone(false)
     end,
     -- WHY persist on logout (Phase 2): PLAYER_LOGOUT fires after UI teardown
     -- begins but BEFORE SavedVariables flush. Drag-stop covers obvious paths;
@@ -3595,16 +3896,27 @@ local EVENT_HANDLERS = {
         entryCreationKeyState.activeListingMaybeChanged = true
         MarkDirty("entryupd")
     end,
-    PARTY_LEADER_CHANGED             = function() MarkDirty("ldrchg") end,
+    PARTY_LEADER_CHANGED             = function()
+        entryCreationKeyState.ClearLeaderKeystone()
+        entryCreationKeyState.RequestLeaderKeystone(true)
+        MarkDirty("ldrchg")
+    end,
     GROUP_ROSTER_UPDATE              = function()
+        entryCreationKeyState.MarkRosterCompositionChanged()
         MarkDirty("roster")
+        entryCreationKeyState.RequestLeaderKeystone(false)
         entryCreationKeyState.ScheduleAutoHiIfGroupJoined()
         entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()
     end,
     GROUP_LEFT                       = function()
+        entryCreationKeyState.ClearLeaderKeystone()
+        entryCreationKeyState.MarkRosterCompositionChanged()
         MarkDirty("groupleft")
         entryCreationKeyState.ScheduleAutoHiIfGroupJoined()
         entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()
+    end,
+    CHAT_MSG_ADDON                  = function(_, prefix, msg, channel, sender)
+        entryCreationKeyState.LibKeystoneShimHandleAddonMessage(prefix, msg, channel, sender)
     end,
     PLAYER_SPECIALIZATION_CHANGED      = function(_, unit)
         _InvalidateRosterSpecCacheForUnit(unit)
@@ -3664,6 +3976,16 @@ C_Timer.NewTicker(0.25, function()
             lastTransportPollTime = now
             local entry = CheckSessionTransition()
             if isSessionActive then
+                -- WHY: QR screenshots can be missed by the companion, and a
+                -- hash-identical active party/listing would otherwise never
+                -- resend until the next roster/applicant event.
+                if (now - entryCreationKeyState.lastTransportHeartbeatAttemptTime)
+                       >= entryCreationKeyState.TRANSPORT_HEARTBEAT_S
+                   and (lastShotTime <= 0
+                        or (now - lastShotTime) >= entryCreationKeyState.TRANSPORT_HEARTBEAT_S) then
+                    lastSnapshotHash = nil
+                    entryCreationKeyState.lastTransportHeartbeatAttemptTime = now
+                end
                 MaybeTriggerScreenshot(false, entry)
             end
         end
@@ -4078,7 +4400,7 @@ _AttachSettingsPanel = function()
     _SetWidgetTooltip(
         autoHiNewPartyMembersCheckbox,
         "Greet new party members",
-        "Also send this greeting when a new player joins your party. Disabled in raids."
+        "Also send this greeting 10 seconds after a new player joins your party. Disabled in raids."
     )
 
     -- Re-sync checkboxes from DB on each show. Handles slash-toggle-while-
@@ -4378,6 +4700,7 @@ SlashCmdList.APSCOUT = function(msg)
         pendingShotDirty = false
         entryCreationKeyState.lastQuietFullPartySignature = nil
         entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
+        entryCreationKeyState.MarkRosterCompositionChanged()
         entryCreationKeyState.ClearRosterInspectBatchState()
         entryCreationKeyState.ClearRosterLoadRetryState()
         scanDirty = true

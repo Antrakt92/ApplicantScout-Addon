@@ -212,6 +212,77 @@ def test_non_force_screenshot_waits_for_roster_inspect_batch_before_payload():
     assert batch_idx < pending_idx < payload_idx
 
 
+def test_roster_composition_change_waits_for_inspect_until_fallback_deadline():
+    source = _lua_source()
+    state_body = _slice_between(
+        source,
+        "local entryCreationKeyState = {",
+        "local ENTRY_CREATION_KEY_CACHE_TTL",
+    )
+    start_body = _slice_between(
+        source,
+        "StartSession = function()",
+        "EndSession = function()",
+    )
+    end_body = _slice_between(
+        source,
+        "EndSession = function()",
+        "local function _HasGroupRosterForTransport()",
+    )
+    roster_change_body = _slice_between(
+        source,
+        "entryCreationKeyState.ClearRosterCompositionChanged = function()",
+        "entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()",
+    )
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+    events_body = _slice_between(
+        source,
+        "local EVENT_HANDLERS = {",
+        "-- Bind every interaction event",
+    )
+
+    assert "rosterChangedSinceLastPayload = false" in state_body
+    assert "ROSTER_CHANGE_PREFLIGHT_DEADLINE_S = 2.0" in state_body
+    assert "rosterChangePreflightDeadline = nil" in state_body
+    assert "entryCreationKeyState.MarkRosterCompositionChanged()" in start_body
+    assert "entryCreationKeyState.ClearRosterCompositionChanged()" in end_body
+    assert "C_Timer.After(delay, function()" in roster_change_body
+    assert 'MarkDirty("rosterdeadline")' in roster_change_body
+    assert "return now < deadline" in roster_change_body
+
+    roster_idx = events_body.index("GROUP_ROSTER_UPDATE              = function()")
+    roster_changed_idx = events_body.index(
+        "entryCreationKeyState.MarkRosterCompositionChanged()",
+        roster_idx,
+    )
+    roster_dirty_idx = events_body.index('MarkDirty("roster")', roster_idx)
+    assert roster_changed_idx < roster_dirty_idx
+
+    empty_guard_idx = screenshot_body.index("#applicantIDs == 0")
+    deadline_guard_idx = screenshot_body.index(
+        "entryCreationKeyState.ShouldDeferRosterChangeForPreflight()",
+        empty_guard_idx,
+    )
+    preflight_idx = screenshot_body.index(
+        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()",
+        deadline_guard_idx,
+    )
+    payload_idx = screenshot_body.index("local payload = BuildPayload", preflight_idx)
+    assert empty_guard_idx < deadline_guard_idx < preflight_idx < payload_idx
+
+    paint_idx = screenshot_body.index("if not PaintQR(matrix) then")
+    clear_idx = screenshot_body.index(
+        "entryCreationKeyState.ClearRosterCompositionChanged()",
+        paint_idx,
+    )
+    commit_idx = screenshot_body.index("lastSnapshotHash = h", clear_idx)
+    assert paint_idx < clear_idx < commit_idx
+
+
 def test_transport_poll_does_not_force_unchanged_snapshots():
     source = _lua_source()
     ticker_body = _slice_between(
@@ -224,9 +295,34 @@ def test_transport_poll_does_not_force_unchanged_snapshots():
     transition_idx = ticker_body.index("local entry = CheckSessionTransition()", poll_idx)
     non_force_idx = ticker_body.index("MaybeTriggerScreenshot(false, entry)", transition_idx)
 
-    assert "TRANSPORT_HEARTBEAT_S" not in ticker_body
     assert "MaybeTriggerScreenshot(true, entry)" not in ticker_body
     assert transition_idx < non_force_idx
+
+
+def test_transport_poll_heartbeats_active_state_without_force():
+    source = _lua_source()
+    ticker_body = _slice_between(
+        source,
+        "C_Timer.NewTicker(0.25, function()",
+        "-- Settings panel:",
+    )
+
+    assert "TRANSPORT_HEARTBEAT_S = 15.0" in source
+    assert "lastTransportHeartbeatAttemptTime = 0" in source
+
+    poll_idx = ticker_body.index("TRANSPORT_POLL_S")
+    transition_idx = ticker_body.index("local entry = CheckSessionTransition()", poll_idx)
+    active_idx = ticker_body.index("if isSessionActive then", transition_idx)
+    heartbeat_idx = ticker_body.index("TRANSPORT_HEARTBEAT_S", active_idx)
+    hash_reset_idx = ticker_body.index("lastSnapshotHash = nil", heartbeat_idx)
+    attempt_idx = ticker_body.index(
+        "entryCreationKeyState.lastTransportHeartbeatAttemptTime = now",
+        heartbeat_idx,
+    )
+    screenshot_idx = ticker_body.index("MaybeTriggerScreenshot(false, entry)", active_idx)
+
+    assert active_idx < heartbeat_idx < hash_reset_idx < screenshot_idx
+    assert active_idx < heartbeat_idx < attempt_idx < screenshot_idx
 
 
 def test_roster_payload_rows_skip_solo_player_when_not_grouped():
@@ -339,7 +435,7 @@ def test_payload_still_includes_raiderio_completion_summary():
         "local function HashSnapshot(payload)",
     )
 
-    assert "string.char(0x06)" in payload_body
+    assert "string.char(0x07)" in payload_body
     assert "_GetRaiderIOMPlusSummary(" in source
     assert "rioSummary.hasProfile" in payload_body
     assert "rioSummary.bestDungeonKey" in payload_body
@@ -353,12 +449,78 @@ def test_payload_v6_appends_current_group_roster_after_applicants():
         "local function HashSnapshot(payload)",
     )
 
-    assert "string.char(0x06)" in payload_body
+    assert "string.char(0x07)" in payload_body
     assert "BuildRosterPayloadRows(" in payload_body
     applicants_idx = payload_body.index("for _, chunk in ipairs(memberOut) do")
     roster_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
     assert applicants_idx < roster_idx
     assert "for _, chunk in ipairs(rosterOut) do" in payload_body
+
+
+def test_payload_v7_appends_leader_keystone_before_applicants():
+    source = _lua_source()
+    payload_body = _slice_between(
+        source,
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        "local function HashSnapshot(payload)",
+    )
+
+    leader_idx = payload_body.index(
+        "local leaderKeystone = entryCreationKeyState.ResolveLeaderKeystoneContext()"
+    )
+    pack_idx = payload_body.index("leaderKeystone.challengeMapID")
+    applicants_idx = payload_body.index("local validApps = {}")
+    assert leader_idx < pack_idx < applicants_idx
+    assert "string.char(_ClampUInt8(leaderKeystone.level))" in payload_body
+    assert "_PackLenStr(out, leaderKeystone.playerName)" in payload_body
+
+
+def test_leader_keystone_soft_dep_uses_libkeystone_party_protocol():
+    source = _lua_source()
+    leader_body = _slice_between(
+        source,
+        "entryCreationKeyState.GetLibKeystone = function()",
+        "local function _RaidSubgroupForRoster(index)",
+    )
+    events_body = _slice_between(source, "local EVENT_HANDLERS = {", "for event in pairs")
+
+    assert 'pcall(libStub, "LibKeystone", true)' in leader_body
+    assert "lib.Register(" in leader_body
+    assert "lib.Request(" in leader_body
+    assert "leaderKeystoneLib = nil" in source
+    assert "entryCreationKeyState.leaderKeystoneLib = lib" in leader_body
+    assert (
+        "return entryCreationKeyState.leaderKeystoneLib or entryCreationKeyState.GetLibKeystone()"
+        in leader_body
+    )
+    assert '"PARTY"' in leader_body
+    assert "string.lower" not in leader_body
+    assert "GROUP_ROSTER_UPDATE" in events_body
+    assert "RequestLeaderKeystone" in events_body
+    assert "PARTY_LEADER_CHANGED" in events_body
+    assert "ClearLeaderKeystone" in events_body
+
+
+def test_leader_keystone_fallback_shim_speaks_libks_party_protocol():
+    source = _lua_source()
+    leader_body = _slice_between(
+        source,
+        "entryCreationKeyState.GetLibKeystone = function()",
+        "local function _RaidSubgroupForRoster(index)",
+    )
+    events_body = _slice_between(source, "local EVENT_HANDLERS = {", "for event in pairs")
+
+    assert 'entryCreationKeyState.GetLibKeystoneShim()' in leader_body
+    assert 'C_ChatInfo.RegisterAddonMessagePrefix("LibKS")' in leader_body
+    assert 'SendAddonMessage("LibKS", "R", channel)' in leader_body
+    assert 'SendAddonMessage("LibKS", payload, channel)' in leader_body
+    assert 'msg == "R"' in leader_body
+    assert 'msg:match("^(%d+),(%d+),(%d+)$")' in leader_body
+    assert "C_MythicPlus.GetOwnedKeystoneLevel" in leader_body
+    assert "C_MythicPlus.GetOwnedKeystoneChallengeMapID" in leader_body
+    assert "GetPlayerMythicPlusRatingSummary" in leader_body
+    assert "LibKeystoneShimHandleAddonMessage(prefix, msg, channel, sender)" in events_body
+    assert 'CHAT_MSG_ADDON                  = function(_, prefix, msg, channel, sender)' in events_body
 
 
 def test_full_party_quiet_signature_requires_empty_resolved_non_raid_roster():
@@ -642,6 +804,26 @@ def test_roster_payload_marks_group_snapshot_incomplete_when_expected_rows_are_m
     )
 
 
+def test_party_roster_walks_all_party_units_without_subtracting_player():
+    source = _lua_source()
+    iterator_body = _slice_between(
+        source,
+        "local function _ForEachRosterUnit(callback)",
+        "local function _FindRosterUnitByGUID(guid)",
+    )
+    roster_body = _slice_between(
+        source,
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "-- CRC32 IEEE-802.3",
+    )
+
+    assert "groupCount - 1" not in iterator_body
+    assert "groupCount - 1" not in roster_body
+    assert "for i = 1, 4 do" in iterator_body
+    assert "for i = 1, 4 do" in roster_body
+    assert "expectedRosterCount = groupCount" in roster_body
+
+
 def test_party_roster_with_unknown_spec_stays_incomplete_until_clear_data():
     source = _lua_source()
     roster_body = _slice_between(
@@ -876,6 +1058,7 @@ def test_auto_hi_settings_panel_persists_user_message_from_edit_box():
     assert 'autoHiNewPartyMembersLabel:SetPoint("LEFT", autoHiNewPartyMembersCheckbox, "RIGHT", 4, 1)' in settings_body
     assert "ApplicantScoutDB.autoHiGreetNewPartyMembers" in settings_body
     assert "Disabled in raids." in settings_body
+    assert "10 seconds after a new player joins your party" in settings_body
 
 
 def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():
@@ -956,6 +1139,11 @@ def test_auto_hi_new_party_members_is_opt_in_party_only_and_guid_tracked():
     assert "entryCreationKeyState.PrimeAutoHiPartyMembers()" in auto_hi_body
     assert "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()" in auto_hi_body
     assert "ApplicantScoutDB.autoHiGreetNewPartyMembers" in auto_hi_body
+    assert "AUTO_HI_NEW_PARTY_MEMBER_DELAY_S = 10" in source
+    assert (
+        "C_Timer.After(entryCreationKeyState.AUTO_HI_NEW_PARTY_MEMBER_DELAY_S, function()"
+        in auto_hi_body
+    )
     assert "entryCreationKeyState.autoHiNewPartyMemberGen + 1" in auto_hi_body
     assert "if groupGen ~= entryCreationKeyState.autoHiNewPartyMemberGen" in auto_hi_body
     assert "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()" in events_body

@@ -112,6 +112,33 @@ local unit_data = {
         specID = 63,
         role = "DAMAGER",
     },
+    party2 = {
+        name = "Healer",
+        realm = "Realm",
+        guid = "Party-2",
+        class = "PRIEST",
+        classID = 5,
+        specID = 256,
+        role = "HEALER",
+    },
+    party3 = {
+        name = "Feral",
+        realm = "Realm",
+        guid = "Party-3",
+        class = "DRUID",
+        classID = 11,
+        specID = 103,
+        role = "DAMAGER",
+    },
+    party4 = {
+        name = "Ret",
+        realm = "Realm",
+        guid = "Party-4",
+        class = "PALADIN",
+        classID = 2,
+        specID = 70,
+        role = "DAMAGER",
+    },
 }
 
 UnitFullName = function(unit)
@@ -145,10 +172,13 @@ UnitGroupRolesAssigned = function(unit)
 end
 GetSpecializationRoleByID = function(specID)
     if specID == 73 then return "TANK" end
+    if specID == 256 then return "HEALER" end
     if specID == 63 then return "DAMAGER" end
+    if specID == 103 then return "DAMAGER" end
+    if specID == 70 then return "DAMAGER" end
     return "DAMAGER"
 end
-GetNumGroupMembers = function() return 2 end
+GetNumGroupMembers = function() return 5 end
 IsInRaid = function() return false end
 NotifyInspect = function() end
 CanInspect = function() return true end
@@ -158,6 +188,9 @@ local profiles = {
     ["Mageone-Realm"] = { current = 2988, main = 3101, levels = { 16, 15, 13 } },
     ["Host-Realm"] = { current = 3333, main = 3500, levels = { 17, 16, 14 } },
     ["Friend-Realm"] = { current = 2777, main = 2999, levels = { 16, 14, 12 } },
+    ["Healer-Realm"] = { current = 2550, main = 2700, levels = { 15, 14, 12 } },
+    ["Feral-Realm"] = { current = 2440, main = 2600, levels = { 14, 13, 12 } },
+    ["Ret-Realm"] = { current = 2320, main = 2500, levels = { 13, 12, 11 } },
 }
 
 local function dungeon_entry(level, timed, activityID)

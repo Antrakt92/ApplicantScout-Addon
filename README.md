@@ -28,6 +28,9 @@ and key-fit context.
 - Feeds Applicant Scout Companion, which shows Warcraft Logs raid/Mythic+
   percentiles, RaiderIO current/main score context, role filters, grouped
   applicant packages, and a numeric fit score for your listed key.
+- Shares and reads party keystone data through a small LibKS-compatible protocol
+  shim, so leader-key calibration works without requiring BigWigs or another
+  key-tracker addon.
 - Keeps grouped applications visible together so you can judge packages, not
   just individual rows.
 - Defaults new Mythic+ listings to the `Competitive` playstyle, with Off,
@@ -41,6 +44,8 @@ and key-fit context.
 - Warcraft Logs API credentials configured in the companion.
 - Optional: RaiderIO addon for current-season main-score and per-dungeon
   completed-key context.
+- Optional: BigWigs/LibKeystone-compatible key-tracker addons. ApplicantScout
+  has its own LibKS-compatible party shim, so these are not required.
 
 ## Installation
 
@@ -115,8 +120,10 @@ Windows user profile.
 - WoW Retail Midnight: Interface `120005, 120007`
 - Latest ApplicantScout addon release
 - Latest Applicant Scout Companion release
-- Wire payload: compact v6, including optional RaiderIO main-score,
-  target-relative completion data, and party/raid roster snapshots. The
+- Wire payload: compact v7, including optional RaiderIO main-score,
+  target-relative completion data, party/raid roster snapshots, and leader
+  keystone context through ApplicantScout's built-in LibKS-compatible party
+  shim or another compatible key-tracker addon. The
   companion enriches highest timed key-per-dungeon context from the installed
   local RaiderIO database.
 - Classic-era clients are not supported

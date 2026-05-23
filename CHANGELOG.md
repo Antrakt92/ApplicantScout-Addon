@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.4.0 - 23-May-2026 - Companion 0.6.0 leader key release train
+
+This paired addon + companion release adds leader-keystone calibration for
+current groups, improves Party roster transport during active searches, and
+ships ApplicantScout Companion `0.6.0` for the matching overlay behavior.
+
+### Added
+
+- Added a built-in LibKS-compatible party key shim. ApplicantScout can now read
+  and answer party keystone requests without requiring BigWigs or another
+  key-tracker addon, while still remaining compatible with addons that speak the
+  same protocol.
+- Added leader-keystone context to compact APS1 v7 QR payloads so the companion
+  can automatically calibrate Mythic+ target key level from the current group
+  leader.
+- Added a transport heartbeat for active snapshots, helping the companion catch
+  up if a QR screenshot was missed.
+- Added Auto Hi support for new party members, delayed to 10 seconds after they
+  join so the greeting is less abrupt. Raid groups are excluded.
+- Added in-game settings controls for Auto Hi and polished the default
+  playstyle configuration surface.
+
+### Fixed
+
+- Fixed the companion being pushed to Party view when an active search/listing
+  was still open but the applicant list temporarily dropped to zero.
+- Fixed full Party snapshots missing the last accepted member by walking the
+  live `player` and `party1..party4` units instead of deriving the roster only
+  from the reported group count.
+- Fixed Party roster changes that could be forgotten when a new member arrived
+  before inspect/spec data was ready. The addon now waits briefly for usable
+  roster details, then sends a fallback snapshot if needed.
+- Fixed the Auto Hi join greeting not firing for solo listings.
+- Fixed screenshot CVar restore ordering around terminal clear retries.
+
+### Improved
+
+- Reduced QR churn on roster changes by waiting for party inspect/spec data for
+  a short preflight window before publishing, while still falling back instead
+  of dropping the update.
+- Hardened release CI and contract coverage around pinned workflow actions,
+  release tooling, paired companion validation, and Lua transport fixtures.
+- Companion `0.6.0` decodes APS1 v7, uses the leader key as the automatic
+  Mythic+ target key when no manual override is set, keeps the Applicants tab
+  focused while an active listing is open, supports Party context from a leader
+  key even when the listing is not visible, and includes cache, updater,
+  setup, seasonal, WCL evidence, and release-gate hardening.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.6.0`.
+- Wire payloads advance to compact v7 for optional leader-keystone context.
+  Keep the addon and companion on their matching current releases.
+
 ## 0.3.4 - 22-May-2026 - Companion 0.5.4 release train and party roster fixes
 
 This paired addon release refreshes public addon copy for ApplicantScout
