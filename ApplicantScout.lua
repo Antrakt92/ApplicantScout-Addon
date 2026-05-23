@@ -187,7 +187,7 @@ local lastSnapshotHash, lastShotTime, pendingShotDirty,
 
 -- Settings panel state. settingsFrame = parent of all widgets; created lazily
 -- in _AttachSettingsPanel. settingsFrameAttached = one-shot init guard.
-local settingsFrame, enabledCheckbox, debugCheckbox,
+local settingsFrame, enabledCheckbox,
       autoMPlusPlaystyleLabel, autoMPlusPlaystyleDropdown,
       autoMPlusPlaystyleFallbackText
 local settingsFrameAttached = false
@@ -3739,14 +3739,11 @@ _SetEnabled = function(flag)
     end
 end
 
--- Apply ApplicantScoutDB.debug + sync GUI checkbox + emit feedback. Mirror of
--- _SetEnabled for the debug-logging toggle, simpler because debug has no
--- teardown chain — only gates whether MarkDirty + MaybeTriggerScreenshot
--- write [APS-debug] lines to chat.
+-- Apply ApplicantScoutDB.debug + emit feedback. Debug is intentionally a
+-- slash-command troubleshooting control, not a normal settings-panel option.
 _SetDebug = function(flag)
     flag = not not flag
     ApplicantScoutDB.debug = flag
-    if debugCheckbox then debugCheckbox:SetChecked(flag) end
     APSPrint("debug " .. (flag and "ON — every scan/emit will print" or "OFF"))
 end
 
@@ -3807,7 +3804,7 @@ end
 
 -- Layout constants for the Blizzard-tooltip-style panel chrome.
 local _SETTINGS_FRAME_WIDTH = 420
-local _SETTINGS_FRAME_HEIGHT = 150
+local _SETTINGS_FRAME_HEIGHT = 112
 local _SETTINGS_ANCHOR_X = 0
 local _SETTINGS_ANCHOR_Y = 6
 local _SETTINGS_TOP_PAD = 10        -- clearance under the rope-border top edge
@@ -3871,11 +3868,8 @@ _AttachSettingsPanel = function()
     settingsFrame:SetBackdropColor(0.05, 0.07, 0.10, 0.95)        -- near-black, slightly translucent
     settingsFrame:SetBackdropBorderColor(1, 1, 1, 1)              -- tooltip-border texture supplies its own gold rope
 
-    -- Title — branded "Applicant" in green, "Scout" in white. Sits in the top
-    -- inset area; GameFontHighlight gives a pure-white reset after |r so
-    -- "Scout" reads cleanly against the dark fill instead of GameFontNormal's
-    -- yellowy default.
-    local title = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    -- Compact brand label: present, but subordinate to the actual controls.
+    local title = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     title:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -_SETTINGS_TOP_PAD)
     title:SetText("|cff00ff7fApplicant|rScout")
 
@@ -3896,7 +3890,7 @@ _AttachSettingsPanel = function()
         settingsFrame,
         "UICheckButtonTemplate"
     )
-    enabledCheckbox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -32)
+    enabledCheckbox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -28)
     _StyleCheckboxLabel(enabledCheckbox, "Enable applicant scouting")
     enabledCheckbox:SetScript("OnClick", function(self)
         _SetEnabled(not not self:GetChecked())
@@ -3908,26 +3902,8 @@ _AttachSettingsPanel = function()
         "When on, ApplicantScout captures listing applicants and emits QR codes for the companion to decode. When off, no scans / no QR / no Screenshot() calls — addon stays loaded but idle."
     )
 
-    debugCheckbox = CreateFrame(
-        "CheckButton",
-        "ApplicantScoutSettingsDebugCheckbox",
-        settingsFrame,
-        "UICheckButtonTemplate"
-    )
-    debugCheckbox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -58)
-    _StyleCheckboxLabel(debugCheckbox, "Debug logging")
-    debugCheckbox:SetScript("OnClick", function(self)
-        _SetDebug(not not self:GetChecked())
-    end)
-    debugCheckbox:SetHitRectInsets(0, -180, 0, 0)
-    _SetWidgetTooltip(
-        debugCheckbox,
-        "Debug logging",
-        "Prints scan / capture / emit diagnostics to chat ([APS-debug] lines). Off by default — enable only for troubleshooting why an LFG listing isn't captured or to verify QR emit timing. No effect on overlay behavior."
-    )
-
     autoMPlusPlaystyleLabel = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    autoMPlusPlaystyleLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_RIGHT_COL_X, -31)
+    autoMPlusPlaystyleLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_RIGHT_COL_X, -14)
     autoMPlusPlaystyleLabel:SetText("M+ default playstyle")
 
     local dropdownOK, dropdown = pcall(
@@ -3944,7 +3920,7 @@ _AttachSettingsPanel = function()
             settingsFrame,
             "TOPLEFT",
             _SETTINGS_RIGHT_COL_X,
-            -50
+            -32
         )
         autoMPlusPlaystyleDropdown:SetWidth(_SETTINGS_DROPDOWN_WIDTH)
         if type(autoMPlusPlaystyleDropdown.SetDefaultText) == "function" then
@@ -3988,7 +3964,7 @@ _AttachSettingsPanel = function()
             settingsFrame,
             "TOPLEFT",
             _SETTINGS_RIGHT_COL_X,
-            -55
+            -37
         )
         autoMPlusPlaystyleFallbackText:SetWidth(_SETTINGS_DROPDOWN_WIDTH)
         autoMPlusPlaystyleFallbackText:SetJustifyH("LEFT")
@@ -3996,13 +3972,13 @@ _AttachSettingsPanel = function()
 
     local autoHiDivider = settingsFrame:CreateTexture(nil, "ARTWORK")
     autoHiDivider:SetColorTexture(1, 1, 1, 0.14)
-    autoHiDivider:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -82)
-    autoHiDivider:SetPoint("TOPRIGHT", settingsFrame, "TOPRIGHT", -_SETTINGS_LEFT_PAD, -82)
+    autoHiDivider:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -63)
+    autoHiDivider:SetPoint("TOPRIGHT", settingsFrame, "TOPRIGHT", -_SETTINGS_LEFT_PAD, -63)
     autoHiDivider:SetHeight(1)
 
     local autoHiLabel = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    autoHiLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -91)
-    autoHiLabel:SetText("Auto Hi on invite")
+    autoHiLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -77)
+    autoHiLabel:SetText("Auto Hi")
 
     local autoHiEditBox = CreateFrame(
         "EditBox",
@@ -4011,8 +3987,8 @@ _AttachSettingsPanel = function()
         "InputBoxTemplate"
     )
     settingsFrame.autoHiEditBox = autoHiEditBox
-    autoHiEditBox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -112)
-    autoHiEditBox:SetSize(392, 22)
+    autoHiEditBox:SetPoint("LEFT", autoHiLabel, "RIGHT", 8, 0)
+    autoHiEditBox:SetSize(190, 22)
     autoHiEditBox:SetAutoFocus(false)
     autoHiEditBox:SetMaxLetters(160)
     autoHiEditBox:SetScript("OnTextChanged", function(self, userInput)
@@ -4045,14 +4021,14 @@ _AttachSettingsPanel = function()
     )
     settingsFrame.autoHiNewPartyMembersCheckbox = autoHiNewPartyMembersCheckbox
     autoHiNewPartyMembersCheckbox:SetScale(0.82)
-    autoHiNewPartyMembersCheckbox:SetPoint("LEFT", autoHiLabel, "RIGHT", 14, 0)
+    autoHiNewPartyMembersCheckbox:SetPoint("LEFT", autoHiEditBox, "RIGHT", 10, 0)
     autoHiNewPartyMembersCheckbox:SetScript("OnClick", function(self)
         ApplicantScoutDB.autoHiGreetNewPartyMembers = not not self:GetChecked()
     end)
     autoHiNewPartyMembersCheckbox:SetHitRectInsets(0, -130, 0, 0)
     local autoHiNewPartyMembersLabel = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     autoHiNewPartyMembersLabel:SetPoint("LEFT", autoHiNewPartyMembersCheckbox, "RIGHT", 4, 1)
-    autoHiNewPartyMembersLabel:SetText("also new party members")
+    autoHiNewPartyMembersLabel:SetText("new party joins")
     _SetWidgetTooltip(
         autoHiNewPartyMembersCheckbox,
         "Greet new party members",
@@ -4063,7 +4039,6 @@ _AttachSettingsPanel = function()
     -- panel-was-hidden case: open via /apscout config → checkboxes reflect DB truth.
     settingsFrame:HookScript("OnShow", function()
         enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
-        debugCheckbox:SetChecked(ApplicantScoutDB.debug)
         settingsFrame.autoHiNewPartyMembersCheckbox:SetChecked(
             ApplicantScoutDB.autoHiGreetNewPartyMembers)
         _SyncAutoMPlusPlaystyleDropdown()
@@ -4071,7 +4046,6 @@ _AttachSettingsPanel = function()
     end)
 
     enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
-    debugCheckbox:SetChecked(ApplicantScoutDB.debug)
     _SyncAutoMPlusPlaystyleDropdown()
     entryCreationKeyState.SyncAutoHiEditBox()
 
