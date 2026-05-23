@@ -819,8 +819,10 @@ def test_auto_hi_settings_panel_persists_user_message_from_edit_box():
     assert "entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)" in settings_body
     assert "entryCreationKeyState.SyncAutoHiEditBox()" in settings_body
     assert "ApplicantScoutSettingsAutoHiNewPartyMembersCheckbox" in settings_body
-    assert 'autoHiNewPartyMembersCheckbox:SetPoint("LEFT", autoHiLabel, "RIGHT", 8, 0)' in settings_body
-    assert '_StyleCheckboxLabel(autoHiNewPartyMembersCheckbox, "Greet new party members")' in settings_body
+    assert 'autoHiNewPartyMembersCheckbox:SetScale(0.82)' in settings_body
+    assert 'autoHiNewPartyMembersCheckbox:SetPoint("LEFT", autoHiLabel, "RIGHT", 14, 0)' in settings_body
+    assert 'autoHiNewPartyMembersLabel:SetText("also new party members")' in settings_body
+    assert 'autoHiNewPartyMembersLabel:SetPoint("LEFT", autoHiNewPartyMembersCheckbox, "RIGHT", 4, 1)' in settings_body
     assert "ApplicantScoutDB.autoHiGreetNewPartyMembers" in settings_body
     assert "Disabled in raids." in settings_body
 

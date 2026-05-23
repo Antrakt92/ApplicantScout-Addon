@@ -4044,12 +4044,15 @@ _AttachSettingsPanel = function()
         "UICheckButtonTemplate"
     )
     settingsFrame.autoHiNewPartyMembersCheckbox = autoHiNewPartyMembersCheckbox
-    autoHiNewPartyMembersCheckbox:SetPoint("LEFT", autoHiLabel, "RIGHT", 8, 0)
-    _StyleCheckboxLabel(autoHiNewPartyMembersCheckbox, "Greet new party members")
+    autoHiNewPartyMembersCheckbox:SetScale(0.82)
+    autoHiNewPartyMembersCheckbox:SetPoint("LEFT", autoHiLabel, "RIGHT", 14, 0)
     autoHiNewPartyMembersCheckbox:SetScript("OnClick", function(self)
         ApplicantScoutDB.autoHiGreetNewPartyMembers = not not self:GetChecked()
     end)
-    autoHiNewPartyMembersCheckbox:SetHitRectInsets(0, -180, 0, 0)
+    autoHiNewPartyMembersCheckbox:SetHitRectInsets(0, -130, 0, 0)
+    local autoHiNewPartyMembersLabel = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    autoHiNewPartyMembersLabel:SetPoint("LEFT", autoHiNewPartyMembersCheckbox, "RIGHT", 4, 1)
+    autoHiNewPartyMembersLabel:SetText("also new party members")
     _SetWidgetTooltip(
         autoHiNewPartyMembersCheckbox,
         "Greet new party members",
