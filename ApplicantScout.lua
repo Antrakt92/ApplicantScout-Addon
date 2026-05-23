@@ -53,6 +53,9 @@ local DB_DEFAULTS = {
     -- Empty string disables auto greeting. User text is normalized on load and
     -- when edited; the addon never sends a default chat message silently.
     autoHiMessage = "",
+    -- Opt-in extra greeting for replacements/new joins in 5-player parties.
+    -- Raids are intentionally excluded to avoid noisy roster churn greetings.
+    autoHiGreetNewPartyMembers = false,
     -- One-shot migration sentinel. Existing installs may have `debug=true`
     -- stuck from a prior `/apscout debug on` (default flipped from "on-stuck"
     -- to "off after explicit toggle" in this version). When the key is
@@ -216,6 +219,9 @@ local entryCreationKeyState = {
     autoHiGroupStateKnown = false,
     autoHiWasInGroup = false,
     autoHiGroupGen = 0,
+    autoHiKnownPartyGUIDs = {},
+    autoHiKnownPartyMembersPrimed = false,
+    autoHiNewPartyMemberGen = 0,
 }
 local ENTRY_CREATION_KEY_CACHE_TTL = 3600
 
@@ -504,14 +510,93 @@ entryCreationKeyState.AutoHiChatChannel = function()
     return "PARTY"
 end
 
+entryCreationKeyState.SendAutoHiChatMessage = function(message)
+    if IsChatMessagingLockdown() then return false end
+    local channel = entryCreationKeyState.AutoHiChatChannel()
+    if C_ChatInfo and type(C_ChatInfo.SendChatMessage) == "function" then
+        C_ChatInfo.SendChatMessage(message, channel)
+        return true
+    end
+    if type(SendChatMessage) == "function" then
+        SendChatMessage(message, channel)
+        return true
+    end
+    return false
+end
+
+entryCreationKeyState.IsPartyForAutoHiNewMembers = function()
+    if not entryCreationKeyState.IsGroupedForAutoHi() then return false end
+    if IsInRaid and IsInRaid() then return false end
+    return true
+end
+
+entryCreationKeyState.CollectAutoHiPartyMemberGUIDs = function()
+    local guids = {}
+    if not entryCreationKeyState.IsPartyForAutoHiNewMembers() then return guids end
+    if not UnitGUID then return guids end
+    for i = 1, 4 do
+        local guid = UnitGUID("party" .. i)
+        if type(guid) == "string" and guid ~= "" then
+            guids[guid] = true
+        end
+    end
+    return guids
+end
+
+entryCreationKeyState.ResetAutoHiPartyMembers = function()
+    entryCreationKeyState.autoHiKnownPartyGUIDs = {}
+    entryCreationKeyState.autoHiKnownPartyMembersPrimed = false
+    entryCreationKeyState.autoHiNewPartyMemberGen =
+        entryCreationKeyState.autoHiNewPartyMemberGen + 1
+end
+
+entryCreationKeyState.PrimeAutoHiPartyMembers = function()
+    if not entryCreationKeyState.IsPartyForAutoHiNewMembers() then
+        entryCreationKeyState.ResetAutoHiPartyMembers()
+        return
+    end
+    entryCreationKeyState.autoHiKnownPartyGUIDs =
+        entryCreationKeyState.CollectAutoHiPartyMemberGUIDs()
+    entryCreationKeyState.autoHiKnownPartyMembersPrimed = true
+    entryCreationKeyState.autoHiNewPartyMemberGen =
+        entryCreationKeyState.autoHiNewPartyMemberGen + 1
+end
+
+entryCreationKeyState.UpdateAutoHiPartyMembers = function(currentGUIDs)
+    local previousGUIDs = entryCreationKeyState.autoHiKnownPartyGUIDs or {}
+    local changed = false
+    local hasNew = false
+    for guid in pairs(currentGUIDs) do
+        if not previousGUIDs[guid] then
+            changed = true
+            hasNew = true
+        end
+    end
+    for guid in pairs(previousGUIDs) do
+        if not currentGUIDs[guid] then
+            changed = true
+        end
+    end
+    entryCreationKeyState.autoHiKnownPartyGUIDs = currentGUIDs
+    if changed then
+        entryCreationKeyState.autoHiNewPartyMemberGen =
+            entryCreationKeyState.autoHiNewPartyMemberGen + 1
+    end
+    return changed, hasNew
+end
+
 entryCreationKeyState.SyncAutoHiInitialGroupState = function()
     local isGrouped = entryCreationKeyState.IsGroupedForAutoHi()
     if entryCreationKeyState.autoHiGroupStateKnown
-       and entryCreationKeyState.autoHiWasInGroup == isGrouped then return end
+       and entryCreationKeyState.autoHiWasInGroup == isGrouped then
+        entryCreationKeyState.PrimeAutoHiPartyMembers()
+        return
+    end
     entryCreationKeyState.autoHiGroupStateKnown = true
     entryCreationKeyState.autoHiWasInGroup = isGrouped
     entryCreationKeyState.autoHiGroupGen =
         entryCreationKeyState.autoHiGroupGen + 1
+    entryCreationKeyState.PrimeAutoHiPartyMembers()
 end
 
 entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
@@ -522,6 +607,7 @@ entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
                 entryCreationKeyState.autoHiGroupGen + 1
         end
         entryCreationKeyState.autoHiWasInGroup = false
+        entryCreationKeyState.ResetAutoHiPartyMembers()
         return
     end
     if not entryCreationKeyState.autoHiGroupStateKnown then
@@ -532,6 +618,7 @@ entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
     entryCreationKeyState.autoHiWasInGroup = true
     entryCreationKeyState.autoHiGroupGen =
         entryCreationKeyState.autoHiGroupGen + 1
+    entryCreationKeyState.PrimeAutoHiPartyMembers()
 
     if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
     if entryCreationKeyState.NormalizeAutoHiMessage(
@@ -549,12 +636,46 @@ entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
             ApplicantScoutDB.autoHiMessage
         )
         if message == "" then return end
-        local channel = entryCreationKeyState.AutoHiChatChannel()
-        if C_ChatInfo and type(C_ChatInfo.SendChatMessage) == "function" then
-            C_ChatInfo.SendChatMessage(message, channel)
-        elseif type(SendChatMessage) == "function" then
-            SendChatMessage(message, channel)
-        end
+        entryCreationKeyState.SendAutoHiChatMessage(message)
+    end)
+end
+
+entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()
+    if not entryCreationKeyState.IsPartyForAutoHiNewMembers() then
+        entryCreationKeyState.ResetAutoHiPartyMembers()
+        return
+    end
+    local currentGUIDs = entryCreationKeyState.CollectAutoHiPartyMemberGUIDs()
+    if not entryCreationKeyState.autoHiKnownPartyMembersPrimed then
+        entryCreationKeyState.autoHiKnownPartyGUIDs = currentGUIDs
+        entryCreationKeyState.autoHiKnownPartyMembersPrimed = true
+        entryCreationKeyState.autoHiNewPartyMemberGen =
+            entryCreationKeyState.autoHiNewPartyMemberGen + 1
+        return
+    end
+    local changed, hasNew =
+        entryCreationKeyState.UpdateAutoHiPartyMembers(currentGUIDs)
+    if not (changed and hasNew) then return end
+
+    if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
+    if not ApplicantScoutDB.autoHiGreetNewPartyMembers then return end
+    if entryCreationKeyState.NormalizeAutoHiMessage(
+        ApplicantScoutDB.autoHiMessage
+    ) == "" then return end
+    if not (C_Timer and C_Timer.After) then return end
+
+    local groupGen = entryCreationKeyState.autoHiNewPartyMemberGen
+    C_Timer.After(entryCreationKeyState.AUTO_HI_DELAY_S, function()
+        if groupGen ~= entryCreationKeyState.autoHiNewPartyMemberGen then return end
+        if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
+        if not ApplicantScoutDB.autoHiGreetNewPartyMembers then return end
+        if not entryCreationKeyState.IsPartyForAutoHiNewMembers() then return end
+
+        local message = entryCreationKeyState.NormalizeAutoHiMessage(
+            ApplicantScoutDB.autoHiMessage
+        )
+        if message == "" then return end
+        entryCreationKeyState.SendAutoHiChatMessage(message)
     end)
 end
 
@@ -3434,10 +3555,12 @@ local EVENT_HANDLERS = {
     GROUP_ROSTER_UPDATE              = function()
         MarkDirty("roster")
         entryCreationKeyState.ScheduleAutoHiIfGroupJoined()
+        entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()
     end,
     GROUP_LEFT                       = function()
         MarkDirty("groupleft")
         entryCreationKeyState.ScheduleAutoHiIfGroupJoined()
+        entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()
     end,
     PLAYER_SPECIALIZATION_CHANGED      = function(_, unit)
         _InvalidateRosterSpecCacheForUnit(unit)
@@ -3684,7 +3807,7 @@ end
 
 -- Layout constants for the Blizzard-tooltip-style panel chrome.
 local _SETTINGS_FRAME_WIDTH = 420
-local _SETTINGS_FRAME_HEIGHT = 150
+local _SETTINGS_FRAME_HEIGHT = 178
 local _SETTINGS_ANCHOR_X = 0
 local _SETTINGS_ANCHOR_Y = 6
 local _SETTINGS_TOP_PAD = 10        -- clearance under the rope-border top edge
@@ -3918,11 +4041,32 @@ _AttachSettingsPanel = function()
         "Optional greeting sent once, 5 seconds after you join a group. Leave blank to disable."
     )
 
+    local autoHiNewPartyMembersCheckbox = CreateFrame(
+        "CheckButton",
+        "ApplicantScoutSettingsAutoHiNewPartyMembersCheckbox",
+        settingsFrame,
+        "UICheckButtonTemplate"
+    )
+    settingsFrame.autoHiNewPartyMembersCheckbox = autoHiNewPartyMembersCheckbox
+    autoHiNewPartyMembersCheckbox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -138)
+    _StyleCheckboxLabel(autoHiNewPartyMembersCheckbox, "Greet new party members")
+    autoHiNewPartyMembersCheckbox:SetScript("OnClick", function(self)
+        ApplicantScoutDB.autoHiGreetNewPartyMembers = not not self:GetChecked()
+    end)
+    autoHiNewPartyMembersCheckbox:SetHitRectInsets(0, -180, 0, 0)
+    _SetWidgetTooltip(
+        autoHiNewPartyMembersCheckbox,
+        "Greet new party members",
+        "Also send this greeting when a new player joins your party. Disabled in raids."
+    )
+
     -- Re-sync checkboxes from DB on each show. Handles slash-toggle-while-
     -- panel-was-hidden case: open via /apscout config → checkboxes reflect DB truth.
     settingsFrame:HookScript("OnShow", function()
         enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
         debugCheckbox:SetChecked(ApplicantScoutDB.debug)
+        settingsFrame.autoHiNewPartyMembersCheckbox:SetChecked(
+            ApplicantScoutDB.autoHiGreetNewPartyMembers)
         _SyncAutoMPlusPlaystyleDropdown()
         entryCreationKeyState.SyncAutoHiEditBox()
     end)

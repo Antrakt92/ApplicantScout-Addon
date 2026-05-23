@@ -797,6 +797,7 @@ def test_auto_hi_defaults_to_empty_and_normalizes_saved_message():
     )
 
     assert 'autoHiMessage = "",' in defaults_body
+    assert "autoHiGreetNewPartyMembers = false," in defaults_body
     assert "ApplicantScoutDB.autoHiMessage =" in init_body
     assert "entryCreationKeyState.NormalizeAutoHiMessage(" in init_body
 
@@ -818,13 +819,17 @@ def test_auto_hi_settings_panel_persists_user_message_from_edit_box():
     assert 'autoHiEditBox:SetScript("OnEditFocusLost"' in settings_body
     assert "entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)" in settings_body
     assert "entryCreationKeyState.SyncAutoHiEditBox()" in settings_body
+    assert "ApplicantScoutSettingsAutoHiNewPartyMembersCheckbox" in settings_body
+    assert '_StyleCheckboxLabel(autoHiNewPartyMembersCheckbox, "Greet new party members")' in settings_body
+    assert "ApplicantScoutDB.autoHiGreetNewPartyMembers" in settings_body
+    assert "Disabled in raids." in settings_body
 
 
 def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():
     source = _lua_source()
     auto_hi_body = _slice_between(
         source,
-        "entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()",
+        "entryCreationKeyState.IsGroupedForAutoHi = function()",
         "CheckSessionTransition = function()",
     )
     events_body = _slice_between(
@@ -838,7 +843,8 @@ def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():
     assert "entryCreationKeyState.autoHiGroupGen + 1" in auto_hi_body
     assert "C_Timer.After(entryCreationKeyState.AUTO_HI_DELAY_S, function()" in auto_hi_body
     assert "if groupGen ~= entryCreationKeyState.autoHiGroupGen" in auto_hi_body
-    assert "C_ChatInfo.SendChatMessage(message, channel)" in auto_hi_body
+    assert "entryCreationKeyState.SendAutoHiChatMessage(message)" in auto_hi_body
+    assert "if IsChatMessagingLockdown() then return false end" in auto_hi_body
     assert "GROUP_ROSTER_UPDATE              = function()" in events_body
     assert "entryCreationKeyState.ScheduleAutoHiIfGroupJoined()" in events_body
     assert "GROUP_LEFT                       = function()" in events_body
@@ -862,6 +868,33 @@ def test_auto_hi_baselines_existing_group_without_greeting_on_reload():
     assert "entryCreationKeyState.autoHiWasInGroup = isGrouped" in auto_hi_body
     assert "entryCreationKeyState.SyncAutoHiInitialGroupState()" in events_body
     assert "PLAYER_ENTERING_WORLD" in events_body
+
+
+def test_auto_hi_new_party_members_is_opt_in_party_only_and_guid_tracked():
+    source = _lua_source()
+    auto_hi_body = _slice_between(
+        source,
+        "entryCreationKeyState.IsGroupedForAutoHi = function()",
+        "CheckSessionTransition = function()",
+    )
+    events_body = _slice_between(
+        source,
+        "local EVENT_HANDLERS = {",
+        "-- Bind every interaction event",
+    )
+
+    assert "entryCreationKeyState.IsPartyForAutoHiNewMembers = function()" in auto_hi_body
+    assert "if IsInRaid and IsInRaid() then return false end" in auto_hi_body
+    assert "entryCreationKeyState.CollectAutoHiPartyMemberGUIDs = function()" in auto_hi_body
+    assert "for i = 1, 4 do" in auto_hi_body
+    assert 'UnitGUID("party" .. i)' in auto_hi_body
+    assert "entryCreationKeyState.autoHiKnownPartyGUIDs" in auto_hi_body
+    assert "entryCreationKeyState.PrimeAutoHiPartyMembers()" in auto_hi_body
+    assert "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()" in auto_hi_body
+    assert "ApplicantScoutDB.autoHiGreetNewPartyMembers" in auto_hi_body
+    assert "entryCreationKeyState.autoHiNewPartyMemberGen + 1" in auto_hi_body
+    assert "if groupGen ~= entryCreationKeyState.autoHiNewPartyMemberGen" in auto_hi_body
+    assert "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()" in events_body
 
 
 def test_inspect_ready_batches_followup_roster_inspects_before_dirty():

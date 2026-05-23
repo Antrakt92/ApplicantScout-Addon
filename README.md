@@ -77,6 +77,7 @@ enabled, then restores your prior screenshot settings when you turn it off with
 
 Open `/apscout config` to set optional in-game conveniences such as the Mythic+
 default playstyle and an Auto Hi greeting that fires once after you join a group.
+Auto Hi can also greet new party members when enabled; raids are excluded.
 
 ## Slash Commands
 
