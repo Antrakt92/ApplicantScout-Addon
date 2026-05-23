@@ -3684,7 +3684,7 @@ end
 
 -- Layout constants for the Blizzard-tooltip-style panel chrome.
 local _SETTINGS_FRAME_WIDTH = 420
-local _SETTINGS_FRAME_HEIGHT = 136
+local _SETTINGS_FRAME_HEIGHT = 150
 local _SETTINGS_ANCHOR_X = 0
 local _SETTINGS_ANCHOR_Y = 6
 local _SETTINGS_TOP_PAD = 10        -- clearance under the rope-border top edge
@@ -3871,9 +3871,19 @@ _AttachSettingsPanel = function()
         autoMPlusPlaystyleFallbackText:SetJustifyH("LEFT")
     end
 
+    local autoHiDivider = settingsFrame:CreateTexture(nil, "ARTWORK")
+    autoHiDivider:SetColorTexture(1, 1, 1, 0.14)
+    autoHiDivider:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -82)
+    autoHiDivider:SetPoint("TOPRIGHT", settingsFrame, "TOPRIGHT", -_SETTINGS_LEFT_PAD, -82)
+    autoHiDivider:SetHeight(1)
+
     local autoHiLabel = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    autoHiLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -84)
+    autoHiLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -91)
     autoHiLabel:SetText("Auto Hi on invite")
+
+    local autoHiHint = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    autoHiHint:SetPoint("LEFT", autoHiLabel, "RIGHT", 8, 0)
+    autoHiHint:SetText("blank = off, sends after 5s")
 
     local autoHiEditBox = CreateFrame(
         "EditBox",
@@ -3882,7 +3892,7 @@ _AttachSettingsPanel = function()
         "InputBoxTemplate"
     )
     settingsFrame.autoHiEditBox = autoHiEditBox
-    autoHiEditBox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -102)
+    autoHiEditBox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -112)
     autoHiEditBox:SetSize(392, 22)
     autoHiEditBox:SetAutoFocus(false)
     autoHiEditBox:SetMaxLetters(160)
