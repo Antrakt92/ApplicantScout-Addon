@@ -75,6 +75,9 @@ ApplicantScout temporarily raises screenshot quality and uses JPG format while
 enabled, then restores your prior screenshot settings when you turn it off with
 `/apscout off`.
 
+Open `/apscout config` to set optional in-game conveniences such as the Mythic+
+default playstyle and an Auto Hi greeting that fires once after you join a group.
+
 ## Slash Commands
 
 ```text

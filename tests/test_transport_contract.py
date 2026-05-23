@@ -783,6 +783,85 @@ def test_inspect_ready_marks_roster_dirty_after_caching_spec():
     assert "_OnRosterInspectReady(guid)" in events_body
 
 
+def test_auto_hi_defaults_to_empty_and_normalizes_saved_message():
+    source = _lua_source()
+    defaults_body = _slice_between(
+        source,
+        "local DB_DEFAULTS = {",
+        "-- Session lifecycle.",
+    )
+    init_body = _slice_between(
+        source,
+        "InitDB = function()",
+        "APSPrint = function(msg)",
+    )
+
+    assert 'autoHiMessage = "",' in defaults_body
+    assert "ApplicantScoutDB.autoHiMessage =" in init_body
+    assert "entryCreationKeyState.NormalizeAutoHiMessage(" in init_body
+
+
+def test_auto_hi_settings_panel_persists_user_message_from_edit_box():
+    source = _lua_source()
+    settings_body = _slice_between(
+        source,
+        "-- Settings panel: pinned above PVEFrame",
+        "-- slash commands",
+    )
+
+    assert "ApplicantScoutSettingsAutoHiEditBox" in settings_body
+    assert '"InputBoxTemplate"' in settings_body
+    assert 'autoHiLabel:SetText("Auto Hi on invite")' in settings_body
+    assert 'autoHiEditBox:SetScript("OnEnterPressed"' in settings_body
+    assert 'autoHiEditBox:SetScript("OnEditFocusLost"' in settings_body
+    assert "entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)" in settings_body
+    assert "entryCreationKeyState.SyncAutoHiEditBox()" in settings_body
+
+
+def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():
+    source = _lua_source()
+    auto_hi_body = _slice_between(
+        source,
+        "entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()",
+        "CheckSessionTransition = function()",
+    )
+    events_body = _slice_between(
+        source,
+        "local EVENT_HANDLERS = {",
+        "-- Bind every interaction event",
+    )
+
+    assert "AUTO_HI_DELAY_S = 5" in source
+    assert "autoHiWasInGroup" in auto_hi_body
+    assert "entryCreationKeyState.autoHiGroupGen + 1" in auto_hi_body
+    assert "C_Timer.After(entryCreationKeyState.AUTO_HI_DELAY_S, function()" in auto_hi_body
+    assert "if groupGen ~= entryCreationKeyState.autoHiGroupGen" in auto_hi_body
+    assert "C_ChatInfo.SendChatMessage(message, channel)" in auto_hi_body
+    assert "GROUP_ROSTER_UPDATE              = function()" in events_body
+    assert "entryCreationKeyState.ScheduleAutoHiIfGroupJoined()" in events_body
+    assert "GROUP_LEFT                       = function()" in events_body
+
+
+def test_auto_hi_baselines_existing_group_without_greeting_on_reload():
+    source = _lua_source()
+    auto_hi_body = _slice_between(
+        source,
+        "entryCreationKeyState.SyncAutoHiInitialGroupState = function()",
+        "entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()",
+    )
+    events_body = _slice_between(
+        source,
+        "local EVENT_HANDLERS = {",
+        "-- Bind every interaction event",
+    )
+
+    assert "autoHiGroupStateKnown" in auto_hi_body
+    assert "local isGrouped = entryCreationKeyState.IsGroupedForAutoHi()" in auto_hi_body
+    assert "entryCreationKeyState.autoHiWasInGroup = isGrouped" in auto_hi_body
+    assert "entryCreationKeyState.SyncAutoHiInitialGroupState()" in events_body
+    assert "PLAYER_ENTERING_WORLD" in events_body
+
+
 def test_inspect_ready_batches_followup_roster_inspects_before_dirty():
     source = _lua_source()
     request_body = _slice_between(
@@ -1259,7 +1338,12 @@ def test_roster_dirty_events_are_registered():
         "-- Bind every interaction event",
     )
 
-    assert 'GROUP_ROSTER_UPDATE              = function() MarkDirty("roster") end' in events_body
+    roster_idx = events_body.index("GROUP_ROSTER_UPDATE              = function()")
+    roster_dirty_idx = events_body.index('MarkDirty("roster")', roster_idx)
+    auto_hi_idx = events_body.index(
+        "entryCreationKeyState.ScheduleAutoHiIfGroupJoined()", roster_idx
+    )
+    assert roster_dirty_idx < auto_hi_idx
     assert 'PLAYER_SPECIALIZATION_CHANGED      = function(_, unit)' in events_body
     assert "_InvalidateRosterSpecCacheForUnit(unit)" in events_body
     assert 'MarkDirty("spec")' in events_body

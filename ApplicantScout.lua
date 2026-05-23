@@ -50,6 +50,9 @@ local DB_DEFAULTS = {
     enabled = true,
     debug = false,
     autoMPlusPlaystyle = AUTO_MPLUS_PLAYSTYLE_DEFAULT,
+    -- Empty string disables auto greeting. User text is normalized on load and
+    -- when edited; the addon never sends a default chat message silently.
+    autoHiMessage = "",
     -- One-shot migration sentinel. Existing installs may have `debug=true`
     -- stuck from a prior `/apscout debug on` (default flipped from "on-stuck"
     -- to "off after explicit toggle" in this version). When the key is
@@ -206,6 +209,13 @@ local entryCreationKeyState = {
     lastPayloadRosterIncomplete = false,
     lastEmittedApplicantCount = 0,
     pendingTtl = 10,
+    -- WARNING: keep Auto Hi state on this existing table instead of adding
+    -- top-level locals; this file is near Lua 5.1's 200-local chunk limit.
+    AUTO_HI_DELAY_S = 5,
+    autoHiEditBoxSyncing = false,
+    autoHiGroupStateKnown = false,
+    autoHiWasInGroup = false,
+    autoHiGroupGen = 0,
 }
 local ENTRY_CREATION_KEY_CACHE_TTL = 3600
 
@@ -344,6 +354,13 @@ local function _GetConfiguredMPlusPlaystyleEnum()
     return value, token
 end
 
+entryCreationKeyState.NormalizeAutoHiMessage = function(value)
+    if type(value) ~= "string" then return "" end
+    local text = value:gsub("[%c]", " ")
+    text = text:gsub("^%s+", ""):gsub("%s+$", "")
+    return text
+end
+
 InitDB = function()
     if type(ApplicantScoutDB) ~= "table" then ApplicantScoutDB = {} end
     if ApplicantScoutDB.autoMPlusPlaystyle == nil
@@ -358,6 +375,8 @@ InitDB = function()
     end
     ApplicantScoutDB.autoMPlusPlaystyle =
         _NormalizeAutoMPlusPlaystyleToken(ApplicantScoutDB.autoMPlusPlaystyle)
+    ApplicantScoutDB.autoHiMessage =
+        entryCreationKeyState.NormalizeAutoHiMessage(ApplicantScoutDB.autoHiMessage)
     ApplicantScoutDB.autoCompetitivePlaystyle = nil
     if not ApplicantScoutDB.debugDefaultMigrated then
         ApplicantScoutDB.debug = false
@@ -467,6 +486,76 @@ end
 
 local function _HasGroupRosterForTransport()
     return math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0)) > 0
+end
+
+entryCreationKeyState.IsGroupedForAutoHi = function()
+    return math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0)) > 0
+end
+
+entryCreationKeyState.AutoHiChatChannel = function()
+    local inInstance, instanceType = false, nil
+    if IsInInstance then
+        inInstance, instanceType = IsInInstance()
+    end
+    if inInstance and (instanceType == "party" or instanceType == "raid") then
+        return "INSTANCE_CHAT"
+    end
+    if IsInRaid and IsInRaid() then return "RAID" end
+    return "PARTY"
+end
+
+entryCreationKeyState.SyncAutoHiInitialGroupState = function()
+    local isGrouped = entryCreationKeyState.IsGroupedForAutoHi()
+    if entryCreationKeyState.autoHiGroupStateKnown
+       and entryCreationKeyState.autoHiWasInGroup == isGrouped then return end
+    entryCreationKeyState.autoHiGroupStateKnown = true
+    entryCreationKeyState.autoHiWasInGroup = isGrouped
+    entryCreationKeyState.autoHiGroupGen =
+        entryCreationKeyState.autoHiGroupGen + 1
+end
+
+entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
+    local isGrouped = entryCreationKeyState.IsGroupedForAutoHi()
+    if not isGrouped then
+        if entryCreationKeyState.autoHiWasInGroup then
+            entryCreationKeyState.autoHiGroupGen =
+                entryCreationKeyState.autoHiGroupGen + 1
+        end
+        entryCreationKeyState.autoHiWasInGroup = false
+        return
+    end
+    if not entryCreationKeyState.autoHiGroupStateKnown then
+        entryCreationKeyState.SyncAutoHiInitialGroupState()
+        return
+    end
+    if entryCreationKeyState.autoHiWasInGroup then return end
+    entryCreationKeyState.autoHiWasInGroup = true
+    entryCreationKeyState.autoHiGroupGen =
+        entryCreationKeyState.autoHiGroupGen + 1
+
+    if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
+    if entryCreationKeyState.NormalizeAutoHiMessage(
+        ApplicantScoutDB.autoHiMessage
+    ) == "" then return end
+    if not (C_Timer and C_Timer.After) then return end
+
+    local groupGen = entryCreationKeyState.autoHiGroupGen
+    C_Timer.After(entryCreationKeyState.AUTO_HI_DELAY_S, function()
+        if groupGen ~= entryCreationKeyState.autoHiGroupGen then return end
+        if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
+        if not entryCreationKeyState.IsGroupedForAutoHi() then return end
+
+        local message = entryCreationKeyState.NormalizeAutoHiMessage(
+            ApplicantScoutDB.autoHiMessage
+        )
+        if message == "" then return end
+        local channel = entryCreationKeyState.AutoHiChatChannel()
+        if C_ChatInfo and type(C_ChatInfo.SendChatMessage) == "function" then
+            C_ChatInfo.SendChatMessage(message, channel)
+        elseif type(SendChatMessage) == "function" then
+            SendChatMessage(message, channel)
+        end
+    end)
 end
 
 CheckSessionTransition = function()
@@ -3298,6 +3387,7 @@ end
 local EVENT_HANDLERS = {
     PLAYER_LOGIN                     = function()
         InitDB()
+        entryCreationKeyState.SyncAutoHiInitialGroupState()
         MarkDirty("login")
         _AttachSettingsPanel()
         _SetupPVEFrameMovement()  -- no-ops if BlizzMove loaded OR PVEFrame missing
@@ -3307,6 +3397,7 @@ local EVENT_HANDLERS = {
     end,
     PLAYER_ENTERING_WORLD            = function()
         CreateQRFrame()
+        entryCreationKeyState.SyncAutoHiInitialGroupState()
         if ApplicantScoutDB and ApplicantScoutDB.enabled then
             EnsureScreenshotCVars()
         else
@@ -3340,8 +3431,14 @@ local EVENT_HANDLERS = {
         MarkDirty("entryupd")
     end,
     PARTY_LEADER_CHANGED             = function() MarkDirty("ldrchg") end,
-    GROUP_ROSTER_UPDATE              = function() MarkDirty("roster") end,
-    GROUP_LEFT                       = function() MarkDirty("groupleft") end,
+    GROUP_ROSTER_UPDATE              = function()
+        MarkDirty("roster")
+        entryCreationKeyState.ScheduleAutoHiIfGroupJoined()
+    end,
+    GROUP_LEFT                       = function()
+        MarkDirty("groupleft")
+        entryCreationKeyState.ScheduleAutoHiIfGroupJoined()
+    end,
     PLAYER_SPECIALIZATION_CHANGED      = function(_, unit)
         _InvalidateRosterSpecCacheForUnit(unit)
         MarkDirty("spec")
@@ -3563,9 +3660,31 @@ _SetAutoMPlusPlaystyle = function(token, quiet)
     end
 end
 
+entryCreationKeyState.SyncAutoHiEditBox = function()
+    local autoHiEditBox = settingsFrame and settingsFrame.autoHiEditBox
+    if not autoHiEditBox then return end
+    entryCreationKeyState.autoHiEditBoxSyncing = true
+    autoHiEditBox:SetText(ApplicantScoutDB and ApplicantScoutDB.autoHiMessage or "")
+    autoHiEditBox:SetCursorPosition(0)
+    entryCreationKeyState.autoHiEditBoxSyncing = false
+end
+
+entryCreationKeyState.SetAutoHiMessage = function(text, quiet)
+    ApplicantScoutDB.autoHiMessage =
+        entryCreationKeyState.NormalizeAutoHiMessage(text)
+    entryCreationKeyState.SyncAutoHiEditBox()
+    if not quiet then
+        if ApplicantScoutDB.autoHiMessage == "" then
+            APSPrint("Auto Hi on invite: off")
+        else
+            APSPrint("Auto Hi on invite: " .. ApplicantScoutDB.autoHiMessage)
+        end
+    end
+end
+
 -- Layout constants for the Blizzard-tooltip-style panel chrome.
 local _SETTINGS_FRAME_WIDTH = 420
-local _SETTINGS_FRAME_HEIGHT = 96
+local _SETTINGS_FRAME_HEIGHT = 136
 local _SETTINGS_ANCHOR_X = 0
 local _SETTINGS_ANCHOR_Y = 6
 local _SETTINGS_TOP_PAD = 10        -- clearance under the rope-border top edge
@@ -3752,17 +3871,56 @@ _AttachSettingsPanel = function()
         autoMPlusPlaystyleFallbackText:SetJustifyH("LEFT")
     end
 
+    local autoHiLabel = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    autoHiLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -84)
+    autoHiLabel:SetText("Auto Hi on invite")
+
+    local autoHiEditBox = CreateFrame(
+        "EditBox",
+        "ApplicantScoutSettingsAutoHiEditBox",
+        settingsFrame,
+        "InputBoxTemplate"
+    )
+    settingsFrame.autoHiEditBox = autoHiEditBox
+    autoHiEditBox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -102)
+    autoHiEditBox:SetSize(392, 22)
+    autoHiEditBox:SetAutoFocus(false)
+    autoHiEditBox:SetMaxLetters(160)
+    autoHiEditBox:SetScript("OnTextChanged", function(self, userInput)
+        if entryCreationKeyState.autoHiEditBoxSyncing or not userInput then return end
+        ApplicantScoutDB.autoHiMessage =
+            entryCreationKeyState.NormalizeAutoHiMessage(self:GetText())
+    end)
+    autoHiEditBox:SetScript("OnEnterPressed", function(self)
+        entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)
+        self:ClearFocus()
+    end)
+    autoHiEditBox:SetScript("OnEscapePressed", function(self)
+        entryCreationKeyState.SyncAutoHiEditBox()
+        self:ClearFocus()
+    end)
+    autoHiEditBox:SetScript("OnEditFocusLost", function(self)
+        entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)
+    end)
+    _SetWidgetTooltip(
+        autoHiEditBox,
+        "Auto Hi on invite",
+        "Optional greeting sent once, 5 seconds after you join a group. Leave blank to disable."
+    )
+
     -- Re-sync checkboxes from DB on each show. Handles slash-toggle-while-
     -- panel-was-hidden case: open via /apscout config → checkboxes reflect DB truth.
     settingsFrame:HookScript("OnShow", function()
         enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
         debugCheckbox:SetChecked(ApplicantScoutDB.debug)
         _SyncAutoMPlusPlaystyleDropdown()
+        entryCreationKeyState.SyncAutoHiEditBox()
     end)
 
     enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
     debugCheckbox:SetChecked(ApplicantScoutDB.debug)
     _SyncAutoMPlusPlaystyleDropdown()
+    entryCreationKeyState.SyncAutoHiEditBox()
 
     settingsFrameAttached = true  -- LAST: any earlier failure leaves false → retry next PLAYER_LOGIN
 end
