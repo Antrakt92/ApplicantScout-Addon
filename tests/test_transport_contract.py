@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+COMPANION_ROOT = REPO_ROOT.parent / "ApplicantScout-Companion"
+GOLDEN_FIXTURE = (
+    COMPANION_ROOT / "tests" / "fixtures" / "aps1_v6_lua_golden.hex"
+)
 
 
 def _lua_source() -> str:
@@ -524,7 +532,9 @@ def test_end_session_retries_terminal_clear_in_same_session_generation():
 
     first_clear_idx = end_body.index("MaybeTriggerScreenshot(true, nil, true)")
     retry_gen_idx = end_body.index("local clearRetryGen = sessionGen")
-    retry_after_idx = end_body.index("C_Timer.After(QR_RENDER_SETTLE_S * 2, function()")
+    retry_after_idx = end_body.index(
+        "C_Timer.After(entryCreationKeyState.END_SESSION_CLEAR_RETRY_DELAY_S, function()"
+    )
     guard_idx = end_body.index("if sessionGen == clearRetryGen and not isSessionActive then")
     retry_clear_idx = end_body.index(
         "MaybeTriggerScreenshot(true, nil, true)",
@@ -534,6 +544,43 @@ def test_end_session_retries_terminal_clear_in_same_session_generation():
 
     assert first_clear_idx < retry_gen_idx < retry_after_idx < guard_idx < retry_clear_idx
     assert retry_clear_idx < hide_idx
+
+
+def test_disable_cleanup_restores_cvars_after_terminal_clear_retry_capture_window():
+    source = _lua_source()
+    state_body = _slice_between(
+        source,
+        "local entryCreationKeyState = {",
+        "StartSession = function()",
+    )
+    end_body = _slice_between(
+        source,
+        "EndSession = function()",
+        "local function _HasGroupRosterForTransport()",
+    )
+    cleanup_body = _slice_between(
+        source,
+        "local function _RunDisabledCleanup()",
+        "-- Single source of truth for the enabled toggle.",
+    )
+
+    assert (
+        "END_SESSION_CLEAR_RETRY_DELAY_S = QR_RENDER_SETTLE_S * 2"
+        in state_body
+    )
+    assert (
+        "DISABLE_CVAR_RESTORE_AFTER_CLEAR_DELAY_S = QR_RENDER_SETTLE_S * 3"
+    ) in state_body
+    assert (
+        "C_Timer.After(entryCreationKeyState.END_SESSION_CLEAR_RETRY_DELAY_S, function()"
+        in end_body
+    )
+    assert (
+        "entryCreationKeyState.DISABLE_CVAR_RESTORE_AFTER_CLEAR_DELAY_S"
+        in cleanup_body
+    )
+    assert "RestoreScreenshotCVarsWhenSafe(" in cleanup_body
+    assert "restoreSessionGen" in cleanup_body
 
 
 def test_applicant_payload_skips_secret_placeholder_names():
@@ -1399,6 +1446,27 @@ def test_roster_dirty_events_are_registered():
     assert 'PLAYER_SPECIALIZATION_CHANGED      = function(_, unit)' in events_body
     assert "_InvalidateRosterSpecCacheForUnit(unit)" in events_body
     assert 'MarkDirty("spec")' in events_body
+
+
+def test_lua_producer_generates_committed_aps1_v6_golden_fixture():
+    if not COMPANION_ROOT.exists():
+        pytest.skip("ApplicantScout-Companion sibling checkout is not available")
+    assert GOLDEN_FIXTURE.exists(), f"missing golden fixture: {GOLDEN_FIXTURE}"
+    lua = shutil.which("lua5.1")
+    if lua is None:
+        pytest.skip("lua5.1 is not available")
+
+    result = subprocess.run(
+        [lua, str(REPO_ROOT / "tests" / "lua" / "generate_aps1_v6_fixture.lua")],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    generated = "".join(result.stdout.split()).lower()
+    expected = "".join(GOLDEN_FIXTURE.read_text(encoding="ascii").split()).lower()
+    assert generated == expected
 
 
 def test_listing_key_level_uses_owned_keystone_only_after_listing_match_guard():

@@ -202,6 +202,8 @@ local lfgEntryCreationKeyCaptureState = {
 }
 local lfgEntryCreationKeyCaptureHooked = setmetatable({}, { __mode = "k" })
 local entryCreationKeyState = {
+    END_SESSION_CLEAR_RETRY_DELAY_S = QR_RENDER_SETTLE_S * 2,
+    DISABLE_CVAR_RESTORE_AFTER_CLEAR_DELAY_S = QR_RENDER_SETTLE_S * 3,
     entryCreationKeyLevelCache = nil,
     pendingEntryCreationKeyLevelCache = nil,
     activeListingCacheContext = nil,
@@ -453,7 +455,7 @@ EndSession = function()
     entryCreationKeyState.lastQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
     local clearRetryGen = sessionGen
-    C_Timer.After(QR_RENDER_SETTLE_S * 2, function()
+    C_Timer.After(entryCreationKeyState.END_SESSION_CLEAR_RETRY_DELAY_S, function()
         if sessionGen == clearRetryGen and not isSessionActive then
             MaybeTriggerScreenshot(true, nil, true)
         end
@@ -2934,6 +2936,11 @@ local function HashSnapshot(payload)
     return h
 end
 
+if type(_G.ApplicantScoutFixtureHarness) == "table" then
+    _G.ApplicantScoutFixtureHarness.BuildPayload = BuildPayload
+    _G.ApplicantScoutFixtureHarness.HashSnapshot = HashSnapshot
+end
+
 -- Resolve QR encoder reference (set by libs/qrencode.lua via addon namespace).
 -- Nil-safe so BuildQRMatrix can show its missing-library diagnostic instead of
 -- crashing at file load if the embedded QR library failed to populate ns.QR.
@@ -3739,7 +3746,9 @@ local function _RunDisabledCleanup()
     if qrFrame and not wasSessionActive then qrFrame:Hide() end
 
     RestoreScreenshotCVarsWhenSafe(
-        wasSessionActive and QR_RENDER_SETTLE_S or 0,
+        wasSessionActive
+            and entryCreationKeyState.DISABLE_CVAR_RESTORE_AFTER_CLEAR_DELAY_S
+            or 0,
         restoreSessionGen
     )
 end
