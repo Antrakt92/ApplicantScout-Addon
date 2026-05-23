@@ -814,12 +814,12 @@ def test_auto_hi_settings_panel_persists_user_message_from_edit_box():
     assert '"InputBoxTemplate"' in settings_body
     assert "autoHiDivider:SetColorTexture(1, 1, 1, 0.14)" in settings_body
     assert 'autoHiLabel:SetText("Auto Hi on invite")' in settings_body
-    assert 'autoHiHint:SetText("blank = off, sends after 5s")' in settings_body
     assert 'autoHiEditBox:SetScript("OnEnterPressed"' in settings_body
     assert 'autoHiEditBox:SetScript("OnEditFocusLost"' in settings_body
     assert "entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)" in settings_body
     assert "entryCreationKeyState.SyncAutoHiEditBox()" in settings_body
     assert "ApplicantScoutSettingsAutoHiNewPartyMembersCheckbox" in settings_body
+    assert 'autoHiNewPartyMembersCheckbox:SetPoint("LEFT", autoHiLabel, "RIGHT", 8, 0)' in settings_body
     assert '_StyleCheckboxLabel(autoHiNewPartyMembersCheckbox, "Greet new party members")' in settings_body
     assert "ApplicantScoutDB.autoHiGreetNewPartyMembers" in settings_body
     assert "Disabled in raids." in settings_body

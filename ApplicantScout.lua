@@ -3807,7 +3807,7 @@ end
 
 -- Layout constants for the Blizzard-tooltip-style panel chrome.
 local _SETTINGS_FRAME_WIDTH = 420
-local _SETTINGS_FRAME_HEIGHT = 178
+local _SETTINGS_FRAME_HEIGHT = 150
 local _SETTINGS_ANCHOR_X = 0
 local _SETTINGS_ANCHOR_Y = 6
 local _SETTINGS_TOP_PAD = 10        -- clearance under the rope-border top edge
@@ -4004,10 +4004,6 @@ _AttachSettingsPanel = function()
     autoHiLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -91)
     autoHiLabel:SetText("Auto Hi on invite")
 
-    local autoHiHint = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    autoHiHint:SetPoint("LEFT", autoHiLabel, "RIGHT", 8, 0)
-    autoHiHint:SetText("blank = off, sends after 5s")
-
     local autoHiEditBox = CreateFrame(
         "EditBox",
         "ApplicantScoutSettingsAutoHiEditBox",
@@ -4048,7 +4044,7 @@ _AttachSettingsPanel = function()
         "UICheckButtonTemplate"
     )
     settingsFrame.autoHiNewPartyMembersCheckbox = autoHiNewPartyMembersCheckbox
-    autoHiNewPartyMembersCheckbox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -138)
+    autoHiNewPartyMembersCheckbox:SetPoint("LEFT", autoHiLabel, "RIGHT", 8, 0)
     _StyleCheckboxLabel(autoHiNewPartyMembersCheckbox, "Greet new party members")
     autoHiNewPartyMembersCheckbox:SetScript("OnClick", function(self)
         ApplicantScoutDB.autoHiGreetNewPartyMembers = not not self:GetChecked()
