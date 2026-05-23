@@ -835,7 +835,7 @@ def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():
     source = _lua_source()
     auto_hi_body = _slice_between(
         source,
-        "entryCreationKeyState.IsGroupedForAutoHi = function()",
+        "entryCreationKeyState.AutoHiGroupMemberCount = function()",
         "CheckSessionTransition = function()",
     )
     events_body = _slice_between(
@@ -845,7 +845,13 @@ def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():
     )
 
     assert "AUTO_HI_DELAY_S = 5" in source
+    assert "autoHiWasInSoloGroup" in auto_hi_body
     assert "autoHiWasInGroup" in auto_hi_body
+    assert "entryCreationKeyState.IsGroupedForAutoHi = function()" in auto_hi_body
+    assert "return entryCreationKeyState.AutoHiGroupMemberCount() > 1" in auto_hi_body
+    assert "if groupMemberCount == 1 then" in auto_hi_body
+    assert "entryCreationKeyState.autoHiWasInSoloGroup = true" in auto_hi_body
+    assert "if entryCreationKeyState.autoHiWasInSoloGroup then" in auto_hi_body
     assert "entryCreationKeyState.autoHiGroupGen + 1" in auto_hi_body
     assert "C_Timer.After(entryCreationKeyState.AUTO_HI_DELAY_S, function()" in auto_hi_body
     assert "if groupGen ~= entryCreationKeyState.autoHiGroupGen" in auto_hi_body
@@ -870,8 +876,11 @@ def test_auto_hi_baselines_existing_group_without_greeting_on_reload():
     )
 
     assert "autoHiGroupStateKnown" in auto_hi_body
-    assert "local isGrouped = entryCreationKeyState.IsGroupedForAutoHi()" in auto_hi_body
+    assert "local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()" in auto_hi_body
+    assert "local isGrouped = groupMemberCount > 1" in auto_hi_body
+    assert "local isSoloGroup = groupMemberCount == 1" in auto_hi_body
     assert "entryCreationKeyState.autoHiWasInGroup = isGrouped" in auto_hi_body
+    assert "entryCreationKeyState.autoHiWasInSoloGroup = isSoloGroup" in auto_hi_body
     assert "entryCreationKeyState.SyncAutoHiInitialGroupState()" in events_body
     assert "PLAYER_ENTERING_WORLD" in events_body
 
@@ -880,7 +889,7 @@ def test_auto_hi_new_party_members_is_opt_in_party_only_and_guid_tracked():
     source = _lua_source()
     auto_hi_body = _slice_between(
         source,
-        "entryCreationKeyState.IsGroupedForAutoHi = function()",
+        "entryCreationKeyState.AutoHiGroupMemberCount = function()",
         "CheckSessionTransition = function()",
     )
     events_body = _slice_between(
@@ -891,7 +900,9 @@ def test_auto_hi_new_party_members_is_opt_in_party_only_and_guid_tracked():
 
     assert "entryCreationKeyState.IsPartyForAutoHiNewMembers = function()" in auto_hi_body
     assert "if IsInRaid and IsInRaid() then return false end" in auto_hi_body
+    assert "return entryCreationKeyState.AutoHiGroupMemberCount() > 1" in auto_hi_body
     assert "entryCreationKeyState.CollectAutoHiPartyMemberGUIDs = function()" in auto_hi_body
+    assert "if entryCreationKeyState.AutoHiGroupMemberCount() <= 0 then return guids end" in auto_hi_body
     assert "for i = 1, 4 do" in auto_hi_body
     assert 'UnitGUID("party" .. i)' in auto_hi_body
     assert "entryCreationKeyState.autoHiKnownPartyGUIDs" in auto_hi_body

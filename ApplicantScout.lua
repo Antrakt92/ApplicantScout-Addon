@@ -218,6 +218,7 @@ local entryCreationKeyState = {
     autoHiEditBoxSyncing = false,
     autoHiGroupStateKnown = false,
     autoHiWasInGroup = false,
+    autoHiWasInSoloGroup = false,
     autoHiGroupGen = 0,
     autoHiKnownPartyGUIDs = {},
     autoHiKnownPartyMembersPrimed = false,
@@ -494,8 +495,12 @@ local function _HasGroupRosterForTransport()
     return math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0)) > 0
 end
 
+entryCreationKeyState.AutoHiGroupMemberCount = function()
+    return math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))
+end
+
 entryCreationKeyState.IsGroupedForAutoHi = function()
-    return math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0)) > 0
+    return entryCreationKeyState.AutoHiGroupMemberCount() > 1
 end
 
 entryCreationKeyState.AutoHiChatChannel = function()
@@ -525,14 +530,20 @@ entryCreationKeyState.SendAutoHiChatMessage = function(message)
 end
 
 entryCreationKeyState.IsPartyForAutoHiNewMembers = function()
-    if not entryCreationKeyState.IsGroupedForAutoHi() then return false end
     if IsInRaid and IsInRaid() then return false end
+    return entryCreationKeyState.AutoHiGroupMemberCount() > 1
+end
+
+entryCreationKeyState.IsPartyContextForAutoHiNewMembers = function()
+    if IsInRaid and IsInRaid() then return false end
+    if entryCreationKeyState.AutoHiGroupMemberCount() <= 0 then return false end
     return true
 end
 
 entryCreationKeyState.CollectAutoHiPartyMemberGUIDs = function()
     local guids = {}
-    if not entryCreationKeyState.IsPartyForAutoHiNewMembers() then return guids end
+    if entryCreationKeyState.AutoHiGroupMemberCount() <= 0 then return guids end
+    if IsInRaid and IsInRaid() then return guids end
     if not UnitGUID then return guids end
     for i = 1, 4 do
         local guid = UnitGUID("party" .. i)
@@ -551,7 +562,7 @@ entryCreationKeyState.ResetAutoHiPartyMembers = function()
 end
 
 entryCreationKeyState.PrimeAutoHiPartyMembers = function()
-    if not entryCreationKeyState.IsPartyForAutoHiNewMembers() then
+    if not entryCreationKeyState.IsPartyContextForAutoHiNewMembers() then
         entryCreationKeyState.ResetAutoHiPartyMembers()
         return
     end
@@ -586,28 +597,46 @@ entryCreationKeyState.UpdateAutoHiPartyMembers = function(currentGUIDs)
 end
 
 entryCreationKeyState.SyncAutoHiInitialGroupState = function()
-    local isGrouped = entryCreationKeyState.IsGroupedForAutoHi()
+    local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()
+    local isGrouped = groupMemberCount > 1
+    local isSoloGroup = groupMemberCount == 1
     if entryCreationKeyState.autoHiGroupStateKnown
-       and entryCreationKeyState.autoHiWasInGroup == isGrouped then
+       and entryCreationKeyState.autoHiWasInGroup == isGrouped
+       and entryCreationKeyState.autoHiWasInSoloGroup == isSoloGroup then
         entryCreationKeyState.PrimeAutoHiPartyMembers()
         return
     end
     entryCreationKeyState.autoHiGroupStateKnown = true
     entryCreationKeyState.autoHiWasInGroup = isGrouped
+    entryCreationKeyState.autoHiWasInSoloGroup = isSoloGroup
     entryCreationKeyState.autoHiGroupGen =
         entryCreationKeyState.autoHiGroupGen + 1
     entryCreationKeyState.PrimeAutoHiPartyMembers()
 end
 
 entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
-    local isGrouped = entryCreationKeyState.IsGroupedForAutoHi()
-    if not isGrouped then
+    local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()
+    if groupMemberCount <= 0 then
+        if entryCreationKeyState.autoHiWasInGroup
+           or entryCreationKeyState.autoHiWasInSoloGroup then
+            entryCreationKeyState.autoHiGroupGen =
+                entryCreationKeyState.autoHiGroupGen + 1
+        end
+        entryCreationKeyState.autoHiGroupStateKnown = true
+        entryCreationKeyState.autoHiWasInGroup = false
+        entryCreationKeyState.autoHiWasInSoloGroup = false
+        entryCreationKeyState.ResetAutoHiPartyMembers()
+        return
+    end
+    if groupMemberCount == 1 then
         if entryCreationKeyState.autoHiWasInGroup then
             entryCreationKeyState.autoHiGroupGen =
                 entryCreationKeyState.autoHiGroupGen + 1
         end
+        entryCreationKeyState.autoHiGroupStateKnown = true
         entryCreationKeyState.autoHiWasInGroup = false
-        entryCreationKeyState.ResetAutoHiPartyMembers()
+        entryCreationKeyState.autoHiWasInSoloGroup = true
+        entryCreationKeyState.PrimeAutoHiPartyMembers()
         return
     end
     if not entryCreationKeyState.autoHiGroupStateKnown then
@@ -615,7 +644,15 @@ entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
         return
     end
     if entryCreationKeyState.autoHiWasInGroup then return end
+    if entryCreationKeyState.autoHiWasInSoloGroup then
+        entryCreationKeyState.autoHiWasInGroup = true
+        entryCreationKeyState.autoHiWasInSoloGroup = false
+        entryCreationKeyState.autoHiGroupGen =
+            entryCreationKeyState.autoHiGroupGen + 1
+        return
+    end
     entryCreationKeyState.autoHiWasInGroup = true
+    entryCreationKeyState.autoHiWasInSoloGroup = false
     entryCreationKeyState.autoHiGroupGen =
         entryCreationKeyState.autoHiGroupGen + 1
     entryCreationKeyState.PrimeAutoHiPartyMembers()
@@ -641,7 +678,7 @@ entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
 end
 
 entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()
-    if not entryCreationKeyState.IsPartyForAutoHiNewMembers() then
+    if not entryCreationKeyState.IsPartyContextForAutoHiNewMembers() then
         entryCreationKeyState.ResetAutoHiPartyMembers()
         return
     end
