@@ -17,6 +17,7 @@ ships ApplicantScout Companion `0.6.0` for the matching overlay behavior.
   leader.
 - Added a transport heartbeat for active snapshots, helping the companion catch
   up if a QR screenshot was missed.
+- Added an Auto Hi greeting that can fire once after you join another group.
 - Added Auto Hi support for new party members, delayed to 10 seconds after they
   join so the greeting is less abrupt. Raid groups are excluded.
 - Added in-game settings controls for Auto Hi and polished the default
