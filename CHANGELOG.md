@@ -27,7 +27,7 @@ evidence as neutral support.
   specialization data, reducing stale party/raid member evidence.
 - Companion `0.7.0` adds raid-target fit cells, boss-level raid details,
   local RaiderIO raid-progress enrichment, neutral raid-context M+ support
-  cells, and a sticky manual Party tab selection.
+  cells, auto-sized raid fit columns, and a sticky manual Party tab selection.
 
 ### Notes
 
