@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.4.1 - 24-May-2026 - Companion 0.7.0 raid fit release train
+
+This paired addon + companion release keeps the QR transport on compact v7 while
+shipping ApplicantScout Companion `0.7.0`, which makes raid listings show their
+primary fit signal in the matching Normal/Heroic/Mythic column and keeps M+
+evidence as neutral support.
+
+### Fixed
+
+- Fixed grouped non-leader sessions that could use the player's own bag key as a
+  fallback for an unknown active listing. Owned-keystone fallback now stays
+  host/leader-only.
+- Fixed current party/raid roster snapshots missing inspected item level for
+  non-self units when Blizzard exposes it through inspect data.
+- Fixed roster inspect readiness treating specialization alone as complete when
+  item-level data was still pending.
+
+### Improved
+
+- Optional key-provider addons are now listed in `OptionalDeps`, allowing DBM,
+  BigWigs, LibKeystone, or RaiderIO to load before ApplicantScout when present.
+- Roster inspect cache invalidation now clears cached item level together with
+  specialization data, reducing stale party/raid member evidence.
+- Companion `0.7.0` adds raid-target fit cells, boss-level raid details,
+  local RaiderIO raid-progress enrichment, neutral raid-context M+ support
+  cells, and a sticky manual Party tab selection.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.7.0`.
+- Wire payloads remain compact v7; keep the addon and companion on their
+  matching current releases.
+
 ## 0.4.0 - 23-May-2026 - Companion 0.6.0 leader key release train
 
 This paired addon + companion release adds leader-keystone calibration for

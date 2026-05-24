@@ -166,6 +166,15 @@ GetInspectSpecialization = function(unit)
     return data and data.specID or 0
 end
 GetAverageItemLevel = function() return 710.4, 709.6 end
+C_PaperDollInfo = {
+    GetInspectItemLevel = function(unit)
+        if unit == "party1" then return 704.4 end
+        if unit == "party2" then return 706.5 end
+        if unit == "party3" then return 702.2 end
+        if unit == "party4" then return 701.8 end
+        return 0
+    end,
+}
 UnitGroupRolesAssigned = function(unit)
     local data = unit_data[unit]
     return data and data.role or "NONE"

@@ -985,6 +985,38 @@ def test_roster_spec_resolution_requests_inspect_when_spec_is_unknown():
     assert inspect_idx < request_idx < fallback_idx
 
 
+def test_roster_item_level_uses_inspect_cache_for_non_self_units():
+    source = _lua_source()
+    item_level_body = _slice_between(
+        source,
+        "local function _UnitItemLevelForRoster(unit)",
+        "local function _UnitRoleTokenForRoster(unit, specID)",
+    )
+    inspect_body = _slice_between(
+        source,
+        "local function _OnRosterInspectReady(guid)",
+        "local function _UnitSpecIDForRoster(unit)",
+    )
+    request_body = _slice_between(
+        source,
+        "local function _MaybeRequestRosterInspect(unit, guid)",
+        "entryCreationKeyState.ClearRosterInspectBatchState = function()",
+    )
+
+    cache_idx = item_level_body.index(
+        "entryCreationKeyState.CachedRosterInspectItemLevel(guid)"
+    )
+    read_idx = item_level_body.index(
+        "entryCreationKeyState.ReadRosterInspectItemLevel(unit)"
+    )
+    request_idx = item_level_body.index("_MaybeRequestRosterInspect(unit, guid)")
+
+    assert "C_PaperDollInfo.GetInspectItemLevel" in source
+    assert "entryCreationKeyState.rosterInspectIlvlByGUID[guid] = ilvl" in inspect_body
+    assert "entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid)" in request_body
+    assert cache_idx < read_idx < request_idx
+
+
 def test_inspect_ready_marks_roster_dirty_after_caching_spec():
     source = _lua_source()
     header_body = _slice_between(
@@ -1178,6 +1210,15 @@ def test_inspect_ready_batches_followup_roster_inspects_before_dirty():
     )
     dirty_idx = inspect_body.index('MarkDirty("inspect")')
     assert continue_idx < dirty_idx
+
+
+def test_roster_inspect_batch_unit_exists_helper_is_in_local_scope():
+    source = _lua_source()
+
+    helper_idx = source.index("local function _UnitExistsForRoster(unit)")
+    first_batch_use_idx = source.index("if not _UnitExistsForRoster(unit) then return false end")
+
+    assert helper_idx < first_batch_use_idx
 
 
 def test_roster_inspect_batch_skips_timed_out_guid_before_requesting_next():
@@ -1377,7 +1418,7 @@ def test_initial_unknown_roster_spec_preflight_defers_only_when_inspect_starts()
     payload_idx = screenshot_body.index("local payload = BuildPayload(entry, applicantIDs, terminalClear)")
 
     assert "_ForEachRosterUnit(function(unit)" in ensure_body
-    assert "entryCreationKeyState.RosterUnitHasResolvedSpec(unit, guid)" in ensure_body
+    assert "entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid)" in ensure_body
     assert "_GetRaiderIOMPlusSummary(" not in ensure_body
     assert "BuildRosterPayloadRows(" not in ensure_body
     assert ensure_idx < payload_idx
@@ -1689,6 +1730,32 @@ def test_listing_key_level_uses_owned_keystone_only_after_listing_match_guard():
     )
     assert status_guard_idx < status_fallback_idx
     assert "statusDerivedKeyLevel = ownedLevel" in status_body[status_fallback_idx:]
+
+
+def test_owned_keystone_fallback_is_disabled_for_non_leader_party_context():
+    source = _lua_source()
+    guard_body = _slice_between(
+        source,
+        "entryCreationKeyState.CanUseOwnedKeystoneForListingFallback = function()",
+        "local function _GetListingKeystoneLevel(",
+    )
+    payload_body = _slice_between(
+        source,
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        "local function HashSnapshot(payload)",
+    )
+    status_body = _slice_between(
+        source,
+        'elseif msg == "status" then',
+        'elseif msg == "taintcheck" then',
+    )
+
+    assert "IsInGroup" in guard_body
+    assert 'UnitIsGroupLeader("player")' in guard_body
+    assert "return true" in guard_body
+    assert "return false" in guard_body
+    assert "entryCreationKeyState.CanUseOwnedKeystoneForListingFallback()" in payload_body
+    assert "entryCreationKeyState.CanUseOwnedKeystoneForListingFallback()" in status_body
 
 
 def test_listing_key_level_prefers_visible_posted_level_over_activity_text():

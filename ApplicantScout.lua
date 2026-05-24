@@ -242,6 +242,7 @@ local entryCreationKeyState = {
     autoHiKnownPartyGUIDs = {},
     autoHiKnownPartyMembersPrimed = false,
     autoHiNewPartyMemberGen = 0,
+    rosterInspectIlvlByGUID = {},
 }
 local ENTRY_CREATION_KEY_CACHE_TTL = 3600
 
@@ -1916,6 +1917,12 @@ local function _GetOwnedKeystoneListingInfo()
     return ownedActivityID, ownedGroupID, ownedLevel, ownedInfo
 end
 
+entryCreationKeyState.CanUseOwnedKeystoneForListingFallback = function()
+    if not (IsInGroup and IsInGroup()) then return true end
+    if UnitIsGroupLeader and UnitIsGroupLeader("player") then return true end
+    return false
+end
+
 local function _GetListingKeystoneLevel(activityID, questID, listingName, listingComment, activityInfo)
     -- WARNING: C_LFGList.GetKeystoneForActivity can report the host's owned
     -- key for this dungeon instead of the active posted listing level.
@@ -2128,6 +2135,10 @@ local function _UnitGUIDForRoster(unit)
     return SafeStr(guid, "")
 end
 
+local function _UnitExistsForRoster(unit)
+    return UnitExists and UnitExists(unit) or false
+end
+
 local function _ForEachRosterUnit(callback)
     if type(callback) ~= "function" then return end
     local groupCount = math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))
@@ -2166,12 +2177,14 @@ local function _InvalidateRosterSpecCacheForUnit(unit)
     local guid = _UnitGUIDForRoster(unit)
     if guid ~= "" then
         rosterInspectSpecByGUID[guid] = nil
+        entryCreationKeyState.rosterInspectIlvlByGUID[guid] = nil
         if rosterInspectPendingGUID == guid then
             rosterInspectPendingGUID = nil
         end
         return
     end
     rosterInspectSpecByGUID = {}
+    entryCreationKeyState.rosterInspectIlvlByGUID = {}
     rosterInspectPendingGUID = nil
 end
 
@@ -2180,7 +2193,7 @@ local function _MaybeRequestRosterInspect(unit, guid)
     if UnitIsUnit and UnitIsUnit(unit, "player") then return false, "self" end
     guid = SafeStr(guid, "")
     if guid == "" then return false, "guid" end
-    if rosterInspectSpecByGUID[guid] and rosterInspectSpecByGUID[guid] > 0 then
+    if entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid) then
         return false, "cached"
     end
 
@@ -2219,6 +2232,51 @@ entryCreationKeyState.rosterInspectBatchRetryDeadline = nil
 entryCreationKeyState.rosterInspectBatchRetrySessionGen = nil
 entryCreationKeyState.rosterInspectBatchCombatDeferred = false
 entryCreationKeyState.rosterInspectBatchLastBlockReason = nil
+entryCreationKeyState.CachedRosterInspectItemLevel = function(guid)
+    guid = SafeStr(guid, "")
+    if guid == "" then return 0 end
+    return _ClampUInt16(SafeRoundedNumber(entryCreationKeyState.rosterInspectIlvlByGUID[guid], 0))
+end
+entryCreationKeyState.ReadRosterInspectItemLevel = function(unit)
+    if not (C_PaperDollInfo and type(C_PaperDollInfo.GetInspectItemLevel) == "function") then
+        return 0
+    end
+    local ok, ilvl = pcall(C_PaperDollInfo.GetInspectItemLevel, unit)
+    if not ok or IsSecretValue(ilvl) then return 0 end
+    return _ClampUInt16(SafeRoundedNumber(ilvl, 0))
+end
+entryCreationKeyState.RosterUnitHasResolvedInspectData = function(unit, guid)
+    if UnitIsUnit and UnitIsUnit(unit, "player") then return true end
+    guid = SafeStr(guid, "")
+    if guid == "" then return false end
+
+    local hasSpec = false
+    local cachedSpecID = _ClampUInt16(SafeNumber(rosterInspectSpecByGUID[guid], 0))
+    if cachedSpecID > 0 then
+        hasSpec = true
+    elseif GetInspectSpecialization then
+        local ok, specID = pcall(GetInspectSpecialization, unit)
+        specID = ok and _ClampUInt16(SafeNumber(specID, 0)) or 0
+        if specID > 0 then
+            rosterInspectSpecByGUID[guid] = specID
+            hasSpec = true
+        end
+    end
+
+    local hasIlvl = true
+    if C_PaperDollInfo and type(C_PaperDollInfo.GetInspectItemLevel) == "function" then
+        hasIlvl = entryCreationKeyState.CachedRosterInspectItemLevel(guid) > 0
+        if not hasIlvl then
+            local ilvl = entryCreationKeyState.ReadRosterInspectItemLevel(unit)
+            if ilvl > 0 then
+                entryCreationKeyState.rosterInspectIlvlByGUID[guid] = ilvl
+                hasIlvl = true
+            end
+        end
+    end
+
+    return hasSpec and hasIlvl
+end
 entryCreationKeyState.ClearRosterInspectBatchState = function()
     entryCreationKeyState.rosterInspectBatchDirtyPending = false
     entryCreationKeyState.rosterInspectBatchSkippedGUIDs = nil
@@ -2440,7 +2498,7 @@ entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()
         if guid == ""
            or (entryCreationKeyState.rosterInspectBatchSkippedGUIDs
                and entryCreationKeyState.rosterInspectBatchSkippedGUIDs[guid])
-           or entryCreationKeyState.RosterUnitHasResolvedSpec(unit, guid) then
+           or entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid) then
             return false
         end
         requested, requestReason = _MaybeRequestRosterInspect(unit, guid)
@@ -2473,7 +2531,7 @@ entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot = function()
             if not _UnitExistsForRoster(unit) then return false end
             local guid = _UnitGUIDForRoster(unit)
             if guid ~= ""
-               and not entryCreationKeyState.RosterUnitHasResolvedSpec(unit, guid) then
+               and not entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid) then
                 entryCreationKeyState.rosterInspectBatchDirtyPending = true
                 entryCreationKeyState.rosterInspectBatchSkippedGUIDs = nil
                 entryCreationKeyState.rosterInspectBatchLastBlockReason = "preflight"
@@ -2510,8 +2568,17 @@ local function _OnRosterInspectReady(guid)
     if not GetInspectSpecialization then return end
     local ok, specID = pcall(GetInspectSpecialization, unit)
     specID = ok and _ClampUInt16(SafeNumber(specID, 0)) or 0
+    local ilvl = entryCreationKeyState.ReadRosterInspectItemLevel(unit)
+    local resolved = false
     if specID > 0 then
         rosterInspectSpecByGUID[guid] = specID
+        resolved = true
+    end
+    if ilvl > 0 then
+        entryCreationKeyState.rosterInspectIlvlByGUID[guid] = ilvl
+        resolved = true
+    end
+    if resolved then
         if rosterInspectPendingGUID == guid then
             rosterInspectPendingGUID = nil
         end
@@ -2558,9 +2625,22 @@ local function _UnitSpecIDForRoster(unit)
 end
 
 local function _UnitItemLevelForRoster(unit)
-    if not (UnitIsUnit and UnitIsUnit(unit, "player") and GetAverageItemLevel) then
+    if not (UnitIsUnit and UnitIsUnit(unit, "player")) then
+        local guid = _UnitGUIDForRoster(unit)
+        if guid ~= "" then
+            local cachedIlvl = entryCreationKeyState.CachedRosterInspectItemLevel(guid)
+            if cachedIlvl > 0 then return cachedIlvl end
+
+            local ilvl = entryCreationKeyState.ReadRosterInspectItemLevel(unit)
+            if ilvl > 0 then
+                entryCreationKeyState.rosterInspectIlvlByGUID[guid] = ilvl
+                return ilvl
+            end
+            _MaybeRequestRosterInspect(unit, guid)
+        end
         return 0
     end
+    if not GetAverageItemLevel then return 0 end
     local ok, overall, equipped = pcall(GetAverageItemLevel)
     if not ok then return 0 end
     local ilvl = SafeNumber(equipped, 0)
@@ -2587,10 +2667,6 @@ end
 
 local function _UnitIsSelfForRoster(unit)
     return UnitIsUnit and UnitIsUnit(unit, "player") or false
-end
-
-local function _UnitExistsForRoster(unit)
-    return UnitExists and UnitExists(unit) or false
 end
 
 local function _BuildRosterRow(unit, unitIndex, subgroup, isRaid)
@@ -3030,6 +3106,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear)
             local shouldUseOwnedKeystone = ownedLevel > 0
                 and ownedActivityID > 0
                 and ownedInfo
+                and entryCreationKeyState.CanUseOwnedKeystoneForListingFallback()
                 and (ownedActivityID == activityID
                     or dungeonName == "Mythic+"
                     or dungeonName == "?")
@@ -4591,6 +4668,7 @@ SlashCmdList.APSCOUT = function(msg)
             local statusUseOwned = ownedLevel > 0
                 and ownedActivityID > 0
                 and ownedInfo
+                and entryCreationKeyState.CanUseOwnedKeystoneForListingFallback()
                 and (ownedActivityID == cleanActivityID
                     or statusDungeonName == "Mythic+"
                     or statusDungeonName == "?")

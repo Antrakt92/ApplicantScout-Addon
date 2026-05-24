@@ -44,8 +44,9 @@ and key-fit context.
 - Warcraft Logs API credentials configured in the companion.
 - Optional: RaiderIO addon for current-season main-score and per-dungeon
   completed-key context.
-- Optional: BigWigs/LibKeystone-compatible key-tracker addons. ApplicantScout
-  has its own LibKS-compatible party shim, so these are not required.
+- Optional: DBM, BigWigs, or another LibKeystone-compatible key-tracker addon.
+  ApplicantScout has its own LibKS-compatible party shim, so these are not
+  required.
 
 ## Installation
 
