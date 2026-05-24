@@ -94,6 +94,7 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
 
     version_step = _step_block(preflight, "Check release version")
     companion_checkout = _step_block(preflight, "Checkout paired companion")
+    tag_wait_step = _step_block(preflight, "Wait for paired companion tag")
     paired_metadata_step = _step_block(preflight, "Validate paired companion metadata")
     dependency_step = _step_block(preflight, "Install Python dependencies")
     contract_step = _step_block(preflight, "Check paired companion and addon contracts")
@@ -101,6 +102,11 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
 
     assert "id: version" in version_step
     assert "-PairedCompanionRefOutputPath $env:GITHUB_OUTPUT" in version_step
+    assert "Antrakt92/ApplicantScout-Companion" in tag_wait_step
+    assert "steps.version.outputs.companion_ref" in tag_wait_step
+    assert 'git/ref/tags/$Ref' in tag_wait_step
+    assert "$Deadline" in tag_wait_step
+    assert "while ($true)" in tag_wait_step
     assert "repository: Antrakt92/ApplicantScout-Companion" in companion_checkout
     assert "ref: ${{ steps.version.outputs.companion_ref }}" in companion_checkout
     assert "path: ApplicantScout-Companion" in companion_checkout
@@ -118,6 +124,7 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     _assert_order(
         preflight,
         "Check release version",
+        "Wait for paired companion tag",
         "Checkout paired companion",
         "Validate paired companion metadata",
         "Install Python dependencies",
@@ -129,6 +136,18 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     assert "GITHUB_OAUTH" not in preflight
     assert "uses: BigWigsMods/packager@" not in preflight
     assert "uses: BigWigsMods/packager@" in release
+
+
+def test_release_workflow_does_not_require_published_companion_assets():
+    workflow = _workflow_source()
+    preflight = _job_block(workflow, "preflight")
+    release = _job_block(workflow, "release")
+
+    assert "RequirePublishedPairedCompanionAssets" not in workflow
+    assert "ApplicantScoutCompanionSetup-" not in preflight
+    assert "gh release view" not in preflight
+    assert "gh release view" in release
+    assert release.index("gh release view") < release.index("BigWigsMods/packager")
 
 
 def test_release_job_keeps_marketplace_publish_checkout_at_repo_root():
