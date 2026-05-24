@@ -16,6 +16,8 @@ evidence as neutral support.
   non-self units when Blizzard exposes it through inspect data.
 - Fixed roster inspect readiness treating specialization alone as complete when
   item-level data was still pending.
+- Fixed roster inspect preflight using a helper before it was in local scope,
+  which could block some inspect-settling roster snapshots.
 
 ### Improved
 
