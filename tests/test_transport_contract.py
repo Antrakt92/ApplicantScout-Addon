@@ -19,8 +19,22 @@ def _lua_source() -> str:
 
 
 def _slice_between(text: str, start: str, end: str) -> str:
-    start_idx = text.index(start)
-    end_idx = text.index(end, start_idx)
+    start_fallbacks = {
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)":
+            "MaybeTriggerScreenshot = function(force, entryHint, terminalClear",
+        "CheckSessionTransition = function()": "CheckSessionTransition = function(",
+    }
+    end_fallbacks = {
+        "CheckSessionTransition = function()": "CheckSessionTransition = function(",
+    }
+    try:
+        start_idx = text.index(start)
+    except ValueError:
+        start_idx = text.index(start_fallbacks[start])
+    try:
+        end_idx = text.index(end, start_idx)
+    except ValueError:
+        end_idx = text.index(end_fallbacks[end], start_idx)
     return text[start_idx:end_idx]
 
 
@@ -104,7 +118,7 @@ def test_party_roster_starts_transport_without_lfg_listing():
     source = _lua_source()
     transition_body = _slice_between(
         source,
-        "CheckSessionTransition = function()",
+        "CheckSessionTransition = function(",
         "-- Single transition logger",
     )
     screenshot_body = _slice_between(
@@ -120,11 +134,50 @@ def test_party_roster_starts_transport_without_lfg_listing():
     assert "not isSessionActive and not force" in screenshot_body
 
 
+def test_party_roster_transport_can_run_during_chat_messaging_lockdown():
+    source = _lua_source()
+    transition_body = _slice_between(
+        source,
+        "CheckSessionTransition = function(",
+        "-- Single transition logger",
+    )
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear",
+        "-- LFG entry creation",
+    )
+    ticker_body = _slice_between(
+        source,
+        "C_Timer.NewTicker(0.25, function()",
+        "-- Settings panel:",
+    )
+
+    assert "lfgReadsAllowed" in transition_body
+    assert "if lfgReadsAllowed then" in transition_body
+    assert "C_LFGList.HasActiveEntryInfo()" in transition_body
+    assert "entryCreationKeyState.ReconcileEntryCreationKeyCache(listingContext)" in transition_body
+
+    lfg_guard_idx = transition_body.index("if lfgReadsAllowed then")
+    lfg_read_idx = transition_body.index("C_LFGList.HasActiveEntryInfo()")
+    roster_idx = transition_body.index("local hasRoster = _HasGroupRosterForTransport()")
+    assert roster_idx < lfg_guard_idx < lfg_read_idx
+
+    assert "if lfgReadsAllowed == nil then lfgReadsAllowed = true end" in screenshot_body
+    fallback_idx = screenshot_body.index("C_LFGList.GetActiveEntryInfo()")
+    screenshot_lfg_guard_idx = screenshot_body.rindex("lfgReadsAllowed", 0, fallback_idx)
+    assert screenshot_lfg_guard_idx < fallback_idx
+
+    assert "local lfgReadsAllowed = not IsChatMessagingLockdown()" in ticker_body
+    assert "CheckSessionTransition(lfgReadsAllowed)" in ticker_body
+    assert "MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)" in ticker_body
+    assert "if IsChatMessagingLockdown() then" not in ticker_body
+
+
 def test_entry_creation_cache_clears_when_grouped_listing_ends_without_ending_transport():
     source = _lua_source()
     transition_body = _slice_between(
         source,
-        "CheckSessionTransition = function()",
+        "CheckSessionTransition = function(",
         "-- Single transition logger",
     )
 
@@ -180,13 +233,16 @@ def test_scan_ticker_polls_transport_state_when_events_are_missed():
 
     idle_idx = ticker_body.index("if not (scanDirty and ApplicantScoutDB and ApplicantScoutDB.enabled) then")
     poll_idx = ticker_body.index("if ApplicantScoutDB and ApplicantScoutDB.enabled")
-    transition_idx = ticker_body.index("local entry = CheckSessionTransition()", poll_idx)
-    screenshot_idx = ticker_body.index("MaybeTriggerScreenshot(false, entry)", transition_idx)
+    transition_idx = ticker_body.index("local entry = CheckSessionTransition(lfgReadsAllowed)", poll_idx)
+    screenshot_idx = ticker_body.index(
+        "MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)",
+        transition_idx,
+    )
     dirty_idx = ticker_body.index("scanDirty = false")
 
     assert idle_idx < poll_idx < transition_idx < screenshot_idx < dirty_idx
     assert "TRANSPORT_POLL_S" in ticker_body
-    assert "not IsChatMessagingLockdown()" in ticker_body[poll_idx:dirty_idx]
+    assert "local lfgReadsAllowed = not IsChatMessagingLockdown()" in ticker_body[:dirty_idx]
 
 
 def test_non_force_screenshot_waits_for_roster_inspect_batch_before_payload():
@@ -292,8 +348,11 @@ def test_transport_poll_does_not_force_unchanged_snapshots():
     )
 
     poll_idx = ticker_body.index("TRANSPORT_POLL_S")
-    transition_idx = ticker_body.index("local entry = CheckSessionTransition()", poll_idx)
-    non_force_idx = ticker_body.index("MaybeTriggerScreenshot(false, entry)", transition_idx)
+    transition_idx = ticker_body.index("local entry = CheckSessionTransition(lfgReadsAllowed)", poll_idx)
+    non_force_idx = ticker_body.index(
+        "MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)",
+        transition_idx,
+    )
 
     assert "MaybeTriggerScreenshot(true, entry)" not in ticker_body
     assert transition_idx < non_force_idx
@@ -311,7 +370,7 @@ def test_transport_poll_heartbeats_active_state_without_force():
     assert "lastTransportHeartbeatAttemptTime = 0" in source
 
     poll_idx = ticker_body.index("TRANSPORT_POLL_S")
-    transition_idx = ticker_body.index("local entry = CheckSessionTransition()", poll_idx)
+    transition_idx = ticker_body.index("local entry = CheckSessionTransition(lfgReadsAllowed)", poll_idx)
     active_idx = ticker_body.index("if isSessionActive then", transition_idx)
     heartbeat_idx = ticker_body.index("TRANSPORT_HEARTBEAT_S", active_idx)
     hash_reset_idx = ticker_body.index("lastSnapshotHash = nil", heartbeat_idx)
@@ -319,7 +378,10 @@ def test_transport_poll_heartbeats_active_state_without_force():
         "entryCreationKeyState.lastTransportHeartbeatAttemptTime = now",
         heartbeat_idx,
     )
-    screenshot_idx = ticker_body.index("MaybeTriggerScreenshot(false, entry)", active_idx)
+    screenshot_idx = ticker_body.index(
+        "MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)",
+        active_idx,
+    )
 
     assert active_idx < heartbeat_idx < hash_reset_idx < screenshot_idx
     assert active_idx < heartbeat_idx < attempt_idx < screenshot_idx
@@ -356,6 +418,24 @@ def test_roster_name_falls_back_to_visible_unit_name_when_full_name_is_missing()
     assert full_name_idx < fallback_idx < safe_fallback_idx
     assert "if name == \"\" and GetUnitName then" in name_body
     assert 'name:find("-", 1, true)' in name_body
+
+
+def test_roster_name_filters_unknown_placeholder_unit_names():
+    source = _lua_source()
+    name_body = _slice_between(
+        source,
+        "local function _IsPlaceholderUnitName(name)",
+        "local function _UnitClassIDForRoster(unit)",
+    )
+
+    helper_idx = name_body.index("local function _IsPlaceholderUnitName(name)")
+    unit_name_idx = name_body.index("local function _UnitFullNameForTransport(unit)")
+    guard_idx = name_body.index('if _IsPlaceholderUnitName(name) then return "" end')
+
+    assert helper_idx < unit_name_idx < guard_idx
+    assert "_G.UNKNOWNOBJECT" in name_body
+    assert "_G.UNKNOWN" in name_body
+    assert 'name == "Unknown"' in name_body
 
 
 def test_safe_str_strips_player_links_before_bare_pipe_cleanup():

@@ -739,22 +739,28 @@ entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()
     end)
 end
 
-CheckSessionTransition = function()
-    local hasEntry = C_LFGList.HasActiveEntryInfo()
-    local entry = nil
-    if hasEntry then
-        entry = SafeTable(C_LFGList.GetActiveEntryInfo())
-    end
-    local hosting = entry ~= nil
+CheckSessionTransition = function(lfgReadsAllowed)
+    if lfgReadsAllowed == nil then lfgReadsAllowed = true end
     local hasRoster = _HasGroupRosterForTransport()
-    local listingContext = entryCreationKeyState.EntryListingCacheContext(entry)
-    entryCreationKeyState.ReconcileEntryCreationKeyCache(listingContext)
+    local entry = nil
+    local hosting = false
+    if lfgReadsAllowed then
+        local hasEntry = C_LFGList.HasActiveEntryInfo()
+        if hasEntry then
+            entry = SafeTable(C_LFGList.GetActiveEntryInfo())
+        end
+        hosting = entry ~= nil
+        local listingContext = entryCreationKeyState.EntryListingCacheContext(entry)
+        entryCreationKeyState.ReconcileEntryCreationKeyCache(listingContext)
+    end
     local transportActive = hosting or hasRoster
 
     if transportActive and not isSessionActive then
         StartSession()
     elseif not transportActive and isSessionActive then
-        EndSession()
+        if lfgReadsAllowed or not entryCreationKeyState.activeListingCacheContext then
+            EndSession()
+        end
     end
     -- Returns the active LFG entry (or nil) so the scan-tick caller can pass
     -- it straight to MaybeTriggerScreenshot — saves a second
@@ -2088,6 +2094,16 @@ local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey
     return summary
 end
 
+local function _IsPlaceholderUnitName(name)
+    name = SafeStr(name, "")
+    if name == "" or name == "?" then return true end
+    local unknownObject = SafeStr(_G.UNKNOWNOBJECT, "")
+    if unknownObject ~= "" and name == unknownObject then return true end
+    local unknown = SafeStr(_G.UNKNOWN, "")
+    if unknown ~= "" and name == unknown then return true end
+    return name == "Unknown"
+end
+
 local function _UnitFullNameForTransport(unit)
     local name, realm = "", ""
     if UnitFullName then
@@ -2102,7 +2118,7 @@ local function _UnitFullNameForTransport(unit)
         if ok then name = SafeStr(unitName, "") end
     end
     name = SafeStr(name, "")
-    if name == "" then return "" end
+    if _IsPlaceholderUnitName(name) then return "" end
     if name:find("-", 1, true) then return name end
     if realm == "" and UnitFullName then
         local okPlayer, _playerName, playerRealm = pcall(UnitFullName, "player")
@@ -3589,7 +3605,8 @@ end
 -- to fetching here (force-shot from EndSession / /apscout shotnow).
 -- QR paints for a short visibility lease, then Screenshot runs after the render
 -- settle window; manual debug/move modes can keep the frame visible outside it.
-MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
+MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllowed)
+    if lfgReadsAllowed == nil then lfgReadsAllowed = true end
     -- "Can't fire" early-returns clear pendingShotDirty so the scan-ticker drain
     -- (line further below) doesn't spin endlessly calling us back when conditions
     -- haven't changed. Throttle path (further down) is the ONLY legitimate reason
@@ -3636,7 +3653,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear)
         -- Reuse caller's pre-fetched entry when available (scan-tick path);
         -- fall back to direct fetch for force-shot paths (EndSession, slash).
         entry = SafeTable(entryHint)
-        if not entry then
+        if not entry and lfgReadsAllowed then
             entry = SafeTable(C_LFGList.GetActiveEntryInfo())
         end
     end
@@ -4034,24 +4051,24 @@ end)
 -- handles StartSession/EndSession lifecycle; MaybeTriggerScreenshot does the
 -- rest (read C_LFGList, build payload, paint QR, trigger Screenshot()).
 -- Lockdown short-circuit: skip scheduler-driven C_LFGList reads during
--- ChatMessagingLockdown. BuildPayload still has field-level guards for force
--- paths and future callers, but scheduled snapshots should wait for clean data.
+-- ChatMessagingLockdown. Roster-only group transport still runs because it
+-- uses Unit* reads plus Screenshot(), not chat sends or active-listing reads.
 C_Timer.NewTicker(0.25, function()
     local now = GetTime()
+    local lfgReadsAllowed = not IsChatMessagingLockdown()
     if not (scanDirty and ApplicantScoutDB and ApplicantScoutDB.enabled) then
         -- Drain pending throttled shot: data was changed during throttle
         -- window (pendingShotDirty=true), but no new events fired since.
         -- Without this drain: shot never goes out for sustained state.
         if pendingShotDirty and (now - lastShotTime) >= SHOT_THROTTLE_S then
-            if not IsChatMessagingLockdown() then
-                MaybeTriggerScreenshot()
+            if lfgReadsAllowed or _HasGroupRosterForTransport() then
+                MaybeTriggerScreenshot(false, nil, nil, lfgReadsAllowed)
             end
         end
         if ApplicantScoutDB and ApplicantScoutDB.enabled
-           and (now - lastTransportPollTime) >= TRANSPORT_POLL_S
-           and not IsChatMessagingLockdown() then
+           and (now - lastTransportPollTime) >= TRANSPORT_POLL_S then
             lastTransportPollTime = now
-            local entry = CheckSessionTransition()
+            local entry = CheckSessionTransition(lfgReadsAllowed)
             if isSessionActive then
                 -- WHY: QR screenshots can be missed by the companion, and a
                 -- hash-identical active party/listing would otherwise never
@@ -4063,23 +4080,22 @@ C_Timer.NewTicker(0.25, function()
                     lastSnapshotHash = nil
                     entryCreationKeyState.lastTransportHeartbeatAttemptTime = now
                 end
-                MaybeTriggerScreenshot(false, entry)
+                if lfgReadsAllowed or _HasGroupRosterForTransport() then
+                    MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)
+                end
             end
         end
         return
-    end
-    -- Defensive lockdown gate: keep scanDirty=true so the whole pass retries
-    -- once Blizzard clears SecretInChatMessagingLockdown.
-    if IsChatMessagingLockdown() then
-        return  -- scanDirty stays true; processed once lockdown clears
     end
     lastTransportPollTime = now
     scanDirty = false
     -- CheckSessionTransition starts/ends session as needed AND returns the
     -- live entry; pass it to MaybeTriggerScreenshot so we don't re-call
     -- C_LFGList.GetActiveEntryInfo a second time in the same tick.
-    local entry = CheckSessionTransition()
-    MaybeTriggerScreenshot(false, entry)
+    local entry = CheckSessionTransition(lfgReadsAllowed)
+    if lfgReadsAllowed or _HasGroupRosterForTransport() then
+        MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)
+    end
 end)
 
 
