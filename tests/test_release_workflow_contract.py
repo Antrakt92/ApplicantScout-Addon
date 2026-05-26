@@ -195,11 +195,11 @@ def test_release_version_script_validates_paired_companion_minimum_addon(
             [
                 "# ApplicantScout Companion Release Notes",
                 "",
-                    "## 0.7.1 - 26-May-2026",
+                "## 0.7.1 - 26-May-2026",
                 "",
                 "### Release Assets",
                 "",
-                    "- Requires the ApplicantScout WoW addon `0.4.2`.",
+                "- Requires the ApplicantScout WoW addon `0.4.2`.",
                 "",
             ]
         ),
@@ -238,11 +238,11 @@ def test_release_version_script_rejects_companion_requiring_newer_addon(
             [
                 "# ApplicantScout Companion Release Notes",
                 "",
-                    "## 0.7.1 - 26-May-2026",
+                "## 0.7.1 - 26-May-2026",
                 "",
                 "### Release Assets",
                 "",
-                    "- Requires the ApplicantScout WoW addon `0.4.3`.",
+                "- Requires the ApplicantScout WoW addon `0.4.3`.",
                 "",
             ]
         ),

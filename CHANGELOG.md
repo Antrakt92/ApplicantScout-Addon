@@ -3,8 +3,8 @@
 ## 0.4.2 - 26-May-2026 - Companion 0.7.1 reliability release train
 
 This paired addon + companion release keeps the QR transport on compact v7 while
-shipping ApplicantScout Companion `0.7.1` for startup/reliability polish and
-refreshed public setup copy.
+shipping ApplicantScout Companion `0.7.1` for startup, updater, screenshot
+watcher, WCL retry, and release-gate reliability polish.
 
 ### Fixed
 
@@ -16,6 +16,10 @@ refreshed public setup copy.
 
 ### Improved
 
+- Companion `0.7.1` reduces startup/applicant-burst stutter, coalesces duplicate
+  Warcraft Logs work, recovers more cleanly from invalid local RaiderIO cache
+  files, hardens private Windows config/cache file ACLs, and improves updater
+  handoff recovery.
 - Refreshed the addon title, summary, README, and marketplace-facing copy to
   position ApplicantScout as an LFG applicant overlay for Mythic+ and raid
   listings.
