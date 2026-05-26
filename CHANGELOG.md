@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.4.2 - 26-May-2026 - Companion 0.7.1 reliability release train
+
+This paired addon + companion release keeps the QR transport on compact v7 while
+shipping ApplicantScout Companion `0.7.1` for startup/reliability polish and
+refreshed public setup copy.
+
+### Fixed
+
+- Fixed roster QR screenshot transport continuing during chat messaging
+  lockdown, so Party/roster snapshots keep reaching the companion when Blizzard
+  gates chat sends.
+- Fixed addon release CI waiting for the paired companion tag before checking
+  paired metadata, reducing release-train race failures.
+
+### Improved
+
+- Refreshed the addon title, summary, README, and marketplace-facing copy to
+  position ApplicantScout as an LFG applicant overlay for Mythic+ and raid
+  listings.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.7.1`.
+- Wire payloads remain compact v7; keep the addon and companion on their
+  matching current releases.
+
 ## 0.4.1 - 24-May-2026 - Companion 0.7.0 raid fit release train
 
 This paired addon + companion release keeps the QR transport on compact v7 while

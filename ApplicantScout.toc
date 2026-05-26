@@ -1,8 +1,8 @@
 ## Interface: 120005, 120007
-## Title: |cff00ff7fApplicantScout|r
-## Notes: M+ key host helper - emits QR screenshot snapshots for the local companion overlay to show fit, WCL, and RaiderIO context.
+## Title: |cff00ff7fApplicantScout|r: LFG Applicant Overlay
+## Notes: Shows WCL, RaiderIO, raid-fit, and M+ fit context for Group Finder applicants through a local companion overlay.
 ## Author: Antrakt
-## Version: 0.4.1
+## Version: 0.4.2
 ## IconTexture: Interface\AddOns\ApplicantScout\media\logo.png
 ## SavedVariables: ApplicantScoutDB
 ## OptionalDeps: RaiderIO, LibKeystone, DBM-Core, BigWigs

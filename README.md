@@ -1,4 +1,4 @@
-# ApplicantScout
+# ApplicantScout: LFG Applicant Overlay
 
 > [!IMPORTANT]
 > ApplicantScout is a **two-part tool**. Installing only the WoW addon will not
@@ -6,28 +6,41 @@
 >
 > 1. **ApplicantScout addon** - installed in WoW through CurseForge or this
 >    release.
-> 2. **Applicant Scout Companion** - the Windows overlay that decodes the
->    screenshots and shows parses:
->    [download the latest companion](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest).
+> 2. **ApplicantScout Companion** - the Windows overlay that decodes screenshots,
+>    queries Warcraft Logs, reads local RaiderIO context, and shows the applicant
+>    table:
+>    [download the latest Windows companion](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest).
 
-ApplicantScout helps Mythic+ key hosts review applicants without turning the
-in-game Group Finder into a spreadsheet. The addon captures applicant snapshots
-from Blizzard's LFG UI, sends them through QR screenshots, and pairs with the
-local Applicant Scout Companion overlay for Warcraft Logs, RaiderIO, role, group,
-and key-fit context.
+ApplicantScout helps Group Finder leaders review Mythic+ and raid applicants
+without alt-tabbing through profiles one by one. The addon captures applicant
+snapshots from Blizzard's LFG UI, sends them through QR screenshots, and pairs
+with the local ApplicantScout Companion overlay for Warcraft Logs, RaiderIO,
+role, group, raid-fit, and key-fit context.
 
 **Actively maintained. Feedback and suggestions are very welcome.**
 
 ![ApplicantScout companion overlay showing applicant fit, WCL percentiles, RaiderIO score, and grouped applicant context](docs/visual/applicantscout-overlay-alpha.png)
 
+## Why People Install It
+
+- See applicant evidence beside the invite decision instead of rebuilding a
+  mini spreadsheet from Warcraft Logs, RaiderIO, and the default LFG list.
+- Review grouped applicants as a package, with group-level fit kept separate
+  from each member's own WCL signal.
+- Keep missing logs as unknown evidence instead of silently treating every
+  low-information applicant as good or bad.
+- Use a local companion because WoW addons cannot query Warcraft Logs directly
+  from inside the game client.
+
 ## What It Does
 
-- Captures Mythic+ applicant snapshots while you host a listing.
+- Captures Mythic+ and raid applicant snapshots while you host a listing.
 - Sends data through QR screenshots instead of chat messages, memory reads, or
   gameplay automation.
-- Feeds Applicant Scout Companion, which shows Warcraft Logs raid/Mythic+
+- Feeds ApplicantScout Companion, which shows Warcraft Logs raid/Mythic+
   percentiles, RaiderIO current/main score context, role filters, grouped
-  applicant packages, and a numeric fit score for your listed key.
+  applicant packages, raid-fit cells, and a numeric M+ fit score for your listed
+  key.
 - Shares and reads party keystone data through a small LibKS-compatible protocol
   shim, so leader-key calibration works without requiring BigWigs or another
   key-tracker addon.
@@ -40,7 +53,7 @@ and key-fit context.
 ## Requirements
 
 - World of Warcraft Retail / Midnight 12.x.
-- Applicant Scout Companion for the external overlay.
+- ApplicantScout Companion for the external overlay.
 - Warcraft Logs API credentials configured in the companion.
 - Optional: RaiderIO addon for current-season main-score and per-dungeon
   completed-key context.
@@ -48,13 +61,22 @@ and key-fit context.
   ApplicantScout has its own LibKS-compatible party shim, so these are not
   required.
 
-## Installation
+## Install In 5 Minutes
 
 ### CurseForge
 
-Install ApplicantScout through the CurseForge app once the project is approved.
-The CurseForge file installs only the in-game addon. You still need Applicant
-Scout Companion for the overlay.
+Install ApplicantScout through the CurseForge app. The CurseForge file installs
+only the in-game addon, so you still need ApplicantScout Companion for the
+overlay.
+
+1. Install ApplicantScout through CurseForge.
+2. Install ApplicantScout Companion from
+   [the latest companion release](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest).
+   Use the Windows installer asset named `ApplicantScoutCompanionSetup-*.exe`;
+   the portable ZIP is mainly for manual/dev use.
+3. Launch the companion and enter your Warcraft Logs Client ID/Secret.
+4. Set the active WoW `_retail_\Screenshots` folder in companion Settings.
+5. Reload WoW, host a Mythic+ or raid listing, and keep ApplicantScout enabled.
 
 ### Manual
 
@@ -64,11 +86,11 @@ Scout Companion for the overlay.
    `_retail_\Interface\AddOns\ApplicantScout\ApplicantScout.toc`.
 3. Do not use GitHub's automatic source-code ZIP for normal installs; it extracts
    to the wrong folder name for WoW.
-4. Install and start Applicant Scout Companion from
+4. Install and start ApplicantScout Companion from
    [the paired companion release](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest).
 5. Reload WoW.
-6. Create your Mythic+ listing as usual and keep ApplicantScout enabled while
-   scouting applicants.
+6. Create your Mythic+ or raid listing as usual and keep ApplicantScout enabled
+   while scouting applicants.
 
 ## Using ApplicantScout
 
@@ -116,11 +138,20 @@ WoW screenshots. The companion watches only the configured WoW `Screenshots`
 folder and stores Warcraft Logs credentials/cache files locally under the current
 Windows user profile.
 
+Trust notes for the companion:
+
+- It does not ask for Blizzard credentials or account access.
+- It stores Warcraft Logs API credentials locally under your Windows user
+  profile.
+- It is source-available in the public companion repository.
+- Current Windows builds are unsigned, so SmartScreen can warn on first install;
+  the release also publishes a `.sha256` sidecar for file integrity.
+
 ## Compatibility
 
 - WoW Retail Midnight: Interface `120005, 120007`
 - Latest ApplicantScout addon release
-- Latest Applicant Scout Companion release
+- Latest ApplicantScout Companion release
 - Wire payload: compact v7, including optional RaiderIO main-score,
   target-relative completion data, party/raid roster snapshots, and leader
   keystone context through ApplicantScout's built-in LibKS-compatible party

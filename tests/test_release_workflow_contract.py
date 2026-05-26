@@ -171,7 +171,7 @@ def test_release_version_script_outputs_paired_companion_ref(tmp_path: Path):
             "-File",
             str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
             "-Tag",
-            "v0.4.1",
+            "v0.4.2",
             "-PairedCompanionRefOutputPath",
             str(output_path),
         ],
@@ -182,7 +182,7 @@ def test_release_version_script_outputs_paired_companion_ref(tmp_path: Path):
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert output_path.read_text(encoding="utf-8") == "companion_ref=v0.7.0\n"
+    assert output_path.read_text(encoding="utf-8") == "companion_ref=v0.7.1\n"
 
 
 def test_release_version_script_validates_paired_companion_minimum_addon(
@@ -195,11 +195,11 @@ def test_release_version_script_validates_paired_companion_minimum_addon(
             [
                 "# ApplicantScout Companion Release Notes",
                 "",
-                "## 0.7.0 - 24-May-2026",
+                    "## 0.7.1 - 26-May-2026",
                 "",
                 "### Release Assets",
                 "",
-                "- Requires the ApplicantScout WoW addon `0.4.1`.",
+                    "- Requires the ApplicantScout WoW addon `0.4.2`.",
                 "",
             ]
         ),
@@ -215,7 +215,7 @@ def test_release_version_script_validates_paired_companion_minimum_addon(
             "-File",
             str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
             "-Tag",
-            "v0.4.1",
+            "v0.4.2",
             "-PairedCompanionRoot",
             str(companion),
         ],
@@ -238,11 +238,11 @@ def test_release_version_script_rejects_companion_requiring_newer_addon(
             [
                 "# ApplicantScout Companion Release Notes",
                 "",
-                "## 0.7.0 - 24-May-2026",
+                    "## 0.7.1 - 26-May-2026",
                 "",
                 "### Release Assets",
                 "",
-                "- Requires the ApplicantScout WoW addon `0.4.2`.",
+                    "- Requires the ApplicantScout WoW addon `0.4.3`.",
                 "",
             ]
         ),
@@ -258,7 +258,7 @@ def test_release_version_script_rejects_companion_requiring_newer_addon(
             "-File",
             str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
             "-Tag",
-            "v0.4.1",
+            "v0.4.2",
             "-PairedCompanionRoot",
             str(companion),
         ],
@@ -270,8 +270,8 @@ def test_release_version_script_rejects_companion_requiring_newer_addon(
 
     assert result.returncode != 0
     output = result.stdout + result.stderr
-    assert "requires addon 0.4.2" in output
-    assert "current addon tag is 0.4.1" in output
+    assert "requires addon 0.4.3" in output
+    assert "current addon tag is 0.4.2" in output
 
 
 def test_release_version_script_does_not_invoke_companion_release_script():
