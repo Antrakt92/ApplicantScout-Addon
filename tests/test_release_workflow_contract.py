@@ -213,6 +213,49 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     assert "uses: BigWigsMods/packager@" in release
 
 
+def test_release_preflight_requires_tag_commit_reachable_from_origin_main():
+    workflow = _workflow_source()
+    preflight = _job_block(workflow, "preflight")
+    gate = _step_block(preflight, "Verify release tag is reachable from origin/main")
+
+    assert "working-directory: ApplicantScout-Addon" in gate
+    assert "git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main" in gate
+    assert "git rev-parse HEAD" in gate
+    assert "git rev-parse refs/remotes/origin/main" in gate
+    assert "git merge-base --is-ancestor" in gate
+    assert "$LASTEXITCODE" in gate
+    assert "not reachable from origin/main" in gate
+    assert "Could not verify release tag ancestry" in gate
+    _assert_order(
+        preflight,
+        "Checkout addon",
+        "Verify release tag is reachable from origin/main",
+        "Check release version",
+        "Wait for paired companion tag",
+    )
+
+
+def test_release_job_requires_tag_commit_reachable_from_origin_main():
+    workflow = _workflow_source()
+    release = _job_block(workflow, "release")
+    gate = _step_block(release, "Verify release tag is reachable from origin/main")
+
+    assert "git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main" in gate
+    assert "release_commit=$(git rev-parse HEAD)" in gate
+    assert "main_commit=$(git rev-parse refs/remotes/origin/main)" in gate
+    assert "git merge-base --is-ancestor" in gate
+    assert "$status" in gate
+    assert "not reachable from origin/main" in gate
+    assert "Could not verify release tag ancestry" in gate
+    _assert_order(
+        release,
+        "Checkout",
+        "Verify release tag is reachable from origin/main",
+        "Refuse existing release",
+        "Package and release",
+    )
+
+
 def test_release_workflow_requires_published_companion_assets_before_packaging():
     workflow = _workflow_source()
     preflight = _job_block(workflow, "preflight")

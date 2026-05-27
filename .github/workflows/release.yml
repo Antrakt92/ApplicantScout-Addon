@@ -22,6 +22,32 @@ jobs:
           fetch-depth: 0
           path: ApplicantScout-Addon
 
+      - name: Verify release tag is reachable from origin/main
+        shell: pwsh
+        working-directory: ApplicantScout-Addon
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not verify release tag ancestry: failed to fetch origin/main."
+          }
+          $ReleaseCommit = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $ReleaseCommit) {
+            throw "Could not verify release tag ancestry: failed to resolve release commit."
+          }
+          $MainCommit = (git rev-parse refs/remotes/origin/main).Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $MainCommit) {
+            throw "Could not verify release tag ancestry: failed to resolve origin/main."
+          }
+          git merge-base --is-ancestor $ReleaseCommit $MainCommit
+          $ExitCode = $LASTEXITCODE
+          if ($ExitCode -eq 1) {
+            throw "Release tag commit $ReleaseCommit is not reachable from origin/main ($MainCommit)."
+          }
+          if ($ExitCode -ne 0) {
+            throw "Could not verify release tag ancestry: git merge-base exited $ExitCode."
+          }
+          Write-Host "Release tag commit $ReleaseCommit is reachable from origin/main ($MainCommit)."
+
       - name: Check release version
         id: version
         shell: pwsh
@@ -110,6 +136,25 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+
+      - name: Verify release tag is reachable from origin/main
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          release_commit=$(git rev-parse HEAD)
+          main_commit=$(git rev-parse refs/remotes/origin/main)
+          set +e
+          git merge-base --is-ancestor "$release_commit" "$main_commit"
+          status=$?
+          set -e
+          if [ "$status" -eq 1 ]; then
+            echo "::error::Release tag commit $release_commit is not reachable from origin/main ($main_commit)."
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "::error::Could not verify release tag ancestry: git merge-base exited $status."
+            exit "$status"
+          fi
+          echo "Release tag commit $release_commit is reachable from origin/main ($main_commit)."
 
       - name: Refuse existing release
         env:
