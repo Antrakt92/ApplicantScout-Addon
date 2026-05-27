@@ -2,11 +2,20 @@
 
 ## Unreleased
 
-### Fixed
+### Changed
 
 - Advanced APS1 QR transport to v8 flags so temporary LFG-read lockdown
   snapshots preserve the active listing/applicants while explicit terminal
-  clears still clear companion state.
+  clears still clear companion state. Keep this addon paired with a companion
+  release that supports APS1 v8.
+
+### Fixed
+
+- Fixed addon check and release workflows to request the companion's explicit
+  smoke visual-fixture mode, so intentional overlay UI baseline drift does not
+  block addon-side transport and packaging checks.
+- Fixed addon release preflight to require the paired companion GitHub Release
+  and installer/portable assets before marketplace packaging starts.
 - Fixed the Auto Hi new-party checkbox so the settings panel reflects the saved
   setting immediately when first attached.
 - Fixed Auto Hi greetings retrying through temporary chat messaging lockdown

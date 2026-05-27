@@ -1,165 +1,145 @@
-# ApplicantScout: LFG Applicant Overlay
+# ApplicantScout: LFG & Party Overlay
+
+<p>
+  <a href="https://github.com/Antrakt92/ApplicantScout-Addon/releases/latest"><img alt="Latest addon release" src="https://img.shields.io/github/v/release/Antrakt92/ApplicantScout-Addon?style=for-the-badge"></a>
+  <a href="https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest"><img alt="Companion required" src="https://img.shields.io/badge/Companion-required-ff5e7a?style=for-the-badge"></a>
+  <img alt="Retail Midnight 12.x" src="https://img.shields.io/badge/Retail-Midnight%2012.x-7c5cff?style=for-the-badge">
+  <img alt="Warcraft Logs plus RaiderIO" src="https://img.shields.io/badge/WCL%20%2B%20RaiderIO-overlay-00b8ff?style=for-the-badge">
+</p>
+
+> Pick applicants faster. Know the group you just joined.
+
+ApplicantScout is the in-game half of a Warcraft Logs + RaiderIO overlay for
+WoW Group Finder. It captures applicant and current party/raid roster snapshots
+from Blizzard's UI, sends them through normal WoW screenshots, and pairs with
+the Windows companion overlay for the actual WCL/RaiderIO table.
+
+It is built for two moments that usually cost time: choosing who to invite while
+your listing fills, and understanding a group you just joined before the key
+starts or the first raid pull happens.
+
+<p align="center">
+  <img src="docs/visual/applicantscout-curseforge-raid-party-overlay.jpg" alt="ApplicantScout Party view with Warcraft Logs, RaiderIO, raid progress, and role context" width="49%">
+  <img src="docs/visual/applicantscout-curseforge-mplus-overlay.jpg" alt="ApplicantScout Mythic Plus overlay with key fit, WCL percentiles, and RaiderIO score context" width="40%">
+</p>
 
 > [!IMPORTANT]
-> ApplicantScout is a **two-part tool**. Installing only the WoW addon will not
-> show Warcraft Logs / RaiderIO parses by itself. You need both pieces:
->
-> 1. **ApplicantScout addon** - installed in WoW through CurseForge or this
->    release.
-> 2. **ApplicantScout Companion** - the Windows overlay that decodes screenshots,
->    queries Warcraft Logs, reads local RaiderIO context, and shows the applicant
->    table:
->    [download the latest Windows companion](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest).
-
-ApplicantScout helps Group Finder leaders review Mythic+ and raid applicants
-without alt-tabbing through profiles one by one. The addon captures applicant
-snapshots from Blizzard's LFG UI, sends them through QR screenshots, and pairs
-with the local ApplicantScout Companion overlay for Warcraft Logs, RaiderIO,
-role, group, raid-fit, and key-fit context.
-
-**Actively maintained. Feedback and suggestions are very welcome.**
-
-![ApplicantScout companion overlay showing applicant fit, WCL percentiles, RaiderIO score, and grouped applicant context](docs/visual/applicantscout-overlay-alpha.png)
+> ApplicantScout is a two-part tool. Installing only the WoW addon will not show
+> Warcraft Logs or RaiderIO context. You need the addon plus
+> [ApplicantScout Companion](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest).
 
 ## Why People Install It
 
+### When you host
+
 - See applicant evidence beside the invite decision instead of rebuilding a
   mini spreadsheet from Warcraft Logs, RaiderIO, and the default LFG list.
-- Review grouped applicants as a package, with group-level fit kept separate
-  from each member's own WCL signal.
-- Keep missing logs as unknown evidence instead of silently treating every
-  low-information applicant as good or bad.
-- Use a local companion because WoW addons cannot query Warcraft Logs directly
-  from inside the game client.
+- Keep grouped applicants visible as a package while still seeing each member's
+  own WCL/RaiderIO signal.
+- Keep raid evidence primary for raid listings and M+ evidence primary for
+  Mythic+ listings.
+- Treat missing logs as missing evidence, not as secretly good or secretly bad.
+- Use familiar Warcraft Logs-style colors for faster scanning.
 
-## What It Does
+### When you join
 
-- Captures Mythic+ and raid applicant snapshots while you host a listing.
-- Sends data through QR screenshots instead of chat messages, memory reads, or
-  gameplay automation.
-- Feeds ApplicantScout Companion, which shows Warcraft Logs raid/Mythic+
-  percentiles, RaiderIO current/main score context, role filters, grouped
-  applicant packages, raid-fit cells, and a numeric M+ fit score for your listed
-  key.
-- Shares and reads party keystone data through a small LibKS-compatible protocol
-  shim, so leader-key calibration works without requiring BigWigs or another
-  key-tracker addon.
-- Keeps grouped applications visible together so you can judge packages, not
-  just individual rows.
-- Defaults new Mythic+ listings to the `Competitive` playstyle, with Off,
-  Learning, Relaxed, Competitive, and Carry Offered choices available from the
-  settings panel or slash commands.
+- Open Party view and get roster context a few moments after you join someone
+  else's group.
+- See score spread, raid progress, dungeon context, missing evidence, and role
+  mix before the run really starts.
+- Use leader-key calibration from ApplicantScout's built-in LibKS-compatible
+  shim, without requiring BigWigs or another key-tracker addon.
 
-## Requirements
+ApplicantScout is not an auto-invite bot and does not automate gameplay. It is
+a decision surface for humans.
 
-- World of Warcraft Retail / Midnight 12.x.
-- ApplicantScout Companion for the external overlay.
-- Warcraft Logs API credentials configured in the companion.
-- Optional: RaiderIO addon for current-season main-score and per-dungeon
-  completed-key context.
-- Optional: DBM, BigWigs, or another LibKeystone-compatible key-tracker addon.
-  ApplicantScout has its own LibKS-compatible party shim, so these are not
-  required.
+## Quick Setup
 
-## Install In 5 Minutes
-
-### CurseForge
-
-Install ApplicantScout through the CurseForge app. The CurseForge file installs
-only the in-game addon, so you still need ApplicantScout Companion for the
-overlay.
-
-1. Install ApplicantScout through CurseForge.
+1. Install ApplicantScout through CurseForge, or download the packaged addon ZIP
+   from [the latest addon release](https://github.com/Antrakt92/ApplicantScout-Addon/releases/latest).
 2. Install ApplicantScout Companion from
    [the latest companion release](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest).
-   Use the Windows installer asset named `ApplicantScoutCompanionSetup-*.exe`;
-   the portable ZIP is mainly for manual/dev use.
+   Use `ApplicantScoutCompanionSetup-*.exe`; the portable ZIP is mainly for
+   manual/dev use.
 3. Launch the companion and enter your Warcraft Logs Client ID/Secret.
 4. Set the active WoW `_retail_\Screenshots` folder in companion Settings.
-5. Reload WoW, host a Mythic+ or raid listing, and keep ApplicantScout enabled.
+5. Reload WoW, then host a Mythic+ or raid listing, or join a group and use
+   Party view to review the current roster.
 
-### Manual
+Manual addon installs should extract the packaged ZIP so the TOC is at
+`_retail_\Interface\AddOns\ApplicantScout\ApplicantScout.toc`. Do not use
+GitHub's automatic source-code ZIP for normal installs; it extracts to the wrong
+folder name for WoW.
 
-1. Download the packaged addon ZIP, `ApplicantScout-*.zip`, from the latest
-   GitHub Release.
-2. Extract the ZIP so the TOC is at
-   `_retail_\Interface\AddOns\ApplicantScout\ApplicantScout.toc`.
-3. Do not use GitHub's automatic source-code ZIP for normal installs; it extracts
-   to the wrong folder name for WoW.
-4. Install and start ApplicantScout Companion from
-   [the paired companion release](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest).
-5. Reload WoW.
-6. Create your Mythic+ or raid listing as usual and keep ApplicantScout enabled
-   while scouting applicants.
+## What The Overlay Can Show
 
-## Using ApplicantScout
+- Warcraft Logs raid and Mythic+ percentiles.
+- RaiderIO current score, optional main-score context, and local RaiderIO
+  dungeon/raid evidence when the RaiderIO addon data is available.
+- Role, item level, grouped-applicant packages, and per-player rows.
+- Raid-fit cells for Normal/Heroic/Mythic raid listings.
+- Target-key fit, dungeon history, and low-evidence markers for Mythic+.
+- Current party/raid roster context after invites or after joining a group.
+- Optional playstyle and Auto Hi controls for in-game quality-of-life.
 
-The QR frame defaults to the top-left of the UI and appears only during the
-screenshot capture window so it stays out of the way between snapshots. Use
-`/apscout qrvisible` for debugging, or `/apscout qrmove` and Alt-drag the QR
-frame to move it.
+## How It Works
+
+WoW addons cannot query Warcraft Logs directly from inside the game client.
+ApplicantScout keeps the in-game addon small and uses public UI/screenshot APIs:
+
+1. The addon watches your active Group Finder listing and current party/raid
+   roster.
+2. It renders compact QR snapshots and triggers normal WoW screenshots.
+3. The companion watches the configured Screenshots folder, decodes
+   ApplicantScout `APS1` payloads, fetches WCL data, reads optional local
+   RaiderIO data, and updates the overlay.
+4. The QR frame appears only during the screenshot capture window so it stays
+   out of the way between snapshots.
 
 ApplicantScout temporarily raises screenshot quality and uses JPG format while
 enabled, then restores your prior screenshot settings when you turn it off with
 `/apscout off`.
 
-Open `/apscout config` to set optional in-game conveniences such as the Mythic+
-default playstyle and an Auto Hi greeting that fires once after you join a group.
-Auto Hi can also greet new party members when enabled; raids are excluded.
-
-## Slash Commands
-
-```text
-/apscout on | off       enable or disable capture
-/apscout toggle         flip enabled state
-/apscout config         open or close the settings panel
-/apscout status         show current state and QR diagnostics
-/apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle
-/apscout reset          clear transport cache and queue a fresh snapshot
-/apscout shotnow        force a snapshot now while enabled
-/apscout qrvisible      keep the QR frame visible for debugging
-/apscout qrmove         toggle QR move mode; Alt-drag the QR frame
-/apscout qrreset        reset QR frame position to top-left
-/apscout taintcheck     inspect LFG field secret-tagging diagnostics
-/apscout debug [on|off] toggle debug logging
-/apscout competitive [on|off] legacy alias for Competitive / Off
-```
-
-## Transport And Privacy
-
-ApplicantScout emits versioned `APS1` snapshots through QR screenshots. The
-payload is binary and CRC-checked. QR generation uses legacy hex encoding first,
-then falls back to raw byte mode when a large snapshot would exceed QR capacity.
-The companion accepts both forms.
+## Privacy And Trust
 
 ApplicantScout does not read WoW memory, inject code, automate gameplay, or send
-chat messages as a transport. The addon renders QR snapshots and triggers normal
-WoW screenshots. The companion watches only the configured WoW `Screenshots`
-folder and stores Warcraft Logs credentials/cache files locally under the current
-Windows user profile.
+chat messages as a transport.
 
 Trust notes for the companion:
 
 - It does not ask for Blizzard credentials or account access.
+- It watches only the configured WoW `Screenshots` folder for ApplicantScout QR
+  payloads.
+- If the RaiderIO addon is installed, it can read local RaiderIO addon database
+  files under your WoW AddOns folder to enrich score/progress context.
 - It stores Warcraft Logs API credentials locally under your Windows user
   profile.
 - It is source-available in the public companion repository.
 - Current Windows builds are unsigned, so SmartScreen can warn on first install;
   the release also publishes a `.sha256` sidecar for file integrity.
 
+## Handy Slash Commands
+
+```text
+/apscout on | off       enable or disable capture
+/apscout config         open or close the settings panel
+/apscout status         show current state and QR diagnostics
+/apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle
+/apscout reset          clear transport cache and queue a fresh snapshot
+/apscout shotnow        force a snapshot now while enabled
+/apscout qrmove         toggle QR move mode; Alt-drag the QR frame
+/apscout qrreset        reset QR frame position to top-left
+/apscout debug [on|off] toggle debug logging
+```
+
 ## Compatibility
 
-- WoW Retail Midnight: Interface `120005, 120007`
-- Latest ApplicantScout addon release
-- Latest ApplicantScout Companion release
-- Wire payload: compact v8, including optional RaiderIO main-score,
-  target-relative completion data, party/raid roster snapshots, and leader
-  keystone context through ApplicantScout's built-in LibKS-compatible party
-  shim or another compatible key-tracker addon. It also distinguishes
-  terminal clears from temporary LFG-read lockdown snapshots. The
-  companion enriches highest timed key-per-dungeon context from the installed
-  local RaiderIO database.
-- Classic-era clients are not supported
+- WoW Retail Midnight: Interface `120005, 120007`.
+- Latest ApplicantScout addon release.
+- Latest ApplicantScout Companion release.
+- Versioned `APS1` QR payloads with optional RaiderIO, raid/M+ roster,
+  leader-keystone context, and temporary LFG-lockdown handling.
+- Classic-era clients are not supported.
 
 ## Troubleshooting
 
@@ -180,13 +160,10 @@ Package a development-only addon ZIP from a clean checkout:
 .\scripts\package-addon.ps1
 ```
 
-The script emits a development-only addon ZIP at
-`dist\ApplicantScout-<version>.zip` using the version in `ApplicantScout.toc`
-and verifies that the archive contains a top-level `ApplicantScout\` addon
-folder. Marketplace releases are produced by the BigWigs packager from
-`.pkgmeta`; use this local ZIP only for smoke testing. The script refuses to
-package dirty release inputs by default; use `-AllowDirty` only for local smoke
-builds that will not be published.
+The script emits `dist\ApplicantScout-<version>.zip`, verifies that the archive
+contains a top-level `ApplicantScout\` addon folder, and refuses dirty release
+inputs by default. Marketplace releases are produced by the BigWigs packager
+from `.pkgmeta`; use the local ZIP only for smoke testing.
 
 For workspace-wide Lua syntax and LuaLS diagnostics, run this from the private
 WOW coordination repo:
