@@ -9,9 +9,6 @@ on:
 permissions:
   contents: read
 
-env:
-  APPLICANT_SCOUT_VISUAL_BASELINE: smoke
-
 jobs:
   check:
     runs-on: windows-2022
@@ -53,7 +50,7 @@ jobs:
       - name: Check companion and addon contracts
         shell: pwsh
         working-directory: ApplicantScout-Companion
-        run: .\scripts\check.ps1 -AddonRoot ..\ApplicantScout-Addon
+        run: .\scripts\check.ps1 -AddonRoot ..\ApplicantScout-Addon -VisualMode Smoke
 
       - name: Development package smoke
         shell: pwsh

@@ -152,7 +152,7 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     preflight = _job_block(workflow, "preflight")
     release = _job_block(workflow, "release")
 
-    assert "APPLICANT_SCOUT_VISUAL_BASELINE: smoke" in workflow
+    assert "APPLICANT_SCOUT_VISUAL_BASELINE" not in workflow
     assert re.search(r"(?m)^    runs-on: windows-2022\s*$", preflight)
     assert re.search(r"(?m)^    permissions:\n      contents: read\s*$", preflight)
     assert re.search(r"(?m)^    needs: preflight\s*$", release)
@@ -187,7 +187,10 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     assert ".\\.venv\\Scripts\\python -m pip install -e '.[dev]' -c constraints-release.txt" in dependency_step
     assert "python -m pip install pytest" not in preflight
     assert "working-directory: ApplicantScout-Companion" in contract_step
-    assert ".\\scripts\\check.ps1 -AddonRoot ..\\ApplicantScout-Addon" in contract_step
+    assert (
+        ".\\scripts\\check.ps1 -AddonRoot ..\\ApplicantScout-Addon -VisualMode Smoke"
+        in contract_step
+    )
     assert "working-directory: ApplicantScout-Addon" in package_step
     assert ".\\scripts\\package-addon.ps1 -OutputDir" in package_step
     assert "working-directory: ApplicantScout-Addon" in published_companion_step
@@ -585,7 +588,7 @@ def test_check_workflow_runs_non_release_preflight_without_publishing():
     assert re.search(r"(?m)^    runs-on: windows-2022\s*$", job)
     assert "contents: read" in workflow
     assert "contents: write" not in workflow
-    assert "APPLICANT_SCOUT_VISUAL_BASELINE: smoke" in workflow
+    assert "APPLICANT_SCOUT_VISUAL_BASELINE" not in workflow
     assert "python-version: '3.13'" in workflow
     assert "repository: Antrakt92/ApplicantScout-Companion" in workflow
     assert "path: ApplicantScout-Addon" in workflow
@@ -594,7 +597,10 @@ def test_check_workflow_runs_non_release_preflight_without_publishing():
     assert ".\\.venv\\Scripts\\python -m pip install -r constraints-release.txt" in workflow
     assert ".\\.venv\\Scripts\\python -m pip install -e '.[dev]' -c constraints-release.txt" in workflow
     assert "choco install lua51 --version=5.1.5" in workflow
-    assert ".\\scripts\\check.ps1 -AddonRoot ..\\ApplicantScout-Addon" in workflow
+    assert (
+        ".\\scripts\\check.ps1 -AddonRoot ..\\ApplicantScout-Addon -VisualMode Smoke"
+        in workflow
+    )
     assert ".\\scripts\\package-addon.ps1 -OutputDir" in workflow
     _assert_order(
         job,

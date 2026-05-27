@@ -5,9 +5,6 @@ on:
     tags:
       - 'v*'
 
-env:
-  APPLICANT_SCOUT_VISUAL_BASELINE: smoke
-
 jobs:
   preflight:
     if: ${{ github.event.created == true && github.event.forced == false && github.event.deleted == false }}
@@ -110,7 +107,7 @@ jobs:
       - name: Check paired companion and addon contracts
         shell: pwsh
         working-directory: ApplicantScout-Companion
-        run: .\scripts\check.ps1 -AddonRoot ..\ApplicantScout-Addon
+        run: .\scripts\check.ps1 -AddonRoot ..\ApplicantScout-Addon -VisualMode Smoke
 
       - name: Development package smoke
         shell: pwsh
