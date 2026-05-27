@@ -91,6 +91,13 @@ jobs:
         working-directory: ApplicantScout-Addon
         run: .\scripts\package-addon.ps1 -OutputDir (Join-Path $env:RUNNER_TEMP "ApplicantScout-package-smoke")
 
+      - name: Verify paired companion published release assets
+        shell: pwsh
+        working-directory: ApplicantScout-Addon
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .\scripts\check-release-version.ps1 -Tag $env:GITHUB_REF_NAME -RequirePublishedPairedCompanionAssets -PublishedReleaseWaitSeconds 180
+
   release:
     needs: preflight
     if: ${{ github.event.created == true && github.event.forced == false && github.event.deleted == false }}
@@ -108,9 +115,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          error_file="$(mktemp)"
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease >/dev/null 2>"$error_file"; then
             echo "::error::Release $GITHUB_REF_NAME already exists; refusing to republish marketplace files."
+            rm -f "$error_file"
             exit 1
+          else
+            status=$?
+          fi
+          error_text="$(tr -d '\r' < "$error_file")"
+          rm -f "$error_file"
+          if [ -n "$error_text" ] && ! grep -Eiq 'not found|no release found' <<< "$error_text"; then
+            echo "::error::Could not determine whether release $GITHUB_REF_NAME already exists. $error_text"
+            exit "$status"
           fi
 
       - name: Package and release

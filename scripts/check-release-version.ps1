@@ -1,7 +1,11 @@
 param(
     [string]$Tag = $env:GITHUB_REF_NAME,
     [string]$PairedCompanionRefOutputPath,
-    [string]$PairedCompanionRoot
+    [string]$PairedCompanionRoot,
+    [switch]$RequirePublishedPairedCompanionAssets,
+    [string]$GitHubCliPath = "gh",
+    [int]$PublishedReleaseWaitSeconds = 120,
+    [int]$PublishedReleasePollSeconds = 10
 )
 
 $ErrorActionPreference = "Stop"
@@ -124,6 +128,113 @@ function Get-CompanionReleaseMetadata {
     }
 }
 
+function Invoke-GitHubReleaseView {
+    param(
+        [string]$CliPath,
+        [string]$Repo,
+        [string]$ReleaseTag
+    )
+
+    $ErrorPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $JsonLines = & $CliPath release view $ReleaseTag --repo $Repo --json "tagName,isDraft,isPrerelease,assets" 2> $ErrorPath
+        $ExitCode = $LASTEXITCODE
+        $ErrorRaw = Get-Content -LiteralPath $ErrorPath -Raw -ErrorAction SilentlyContinue
+        $ErrorText = if ($null -eq $ErrorRaw) { "" } else { $ErrorRaw.Trim() }
+        if ($ExitCode -ne 0) {
+            $Message = "gh release view failed for $Repo $ReleaseTag with exit code $ExitCode."
+            if ($ErrorText) {
+                $Message = "$Message $ErrorText"
+            }
+            throw $Message
+        }
+
+        $JsonText = ($JsonLines -join "`n").Trim()
+        if (-not $JsonText) {
+            throw "gh release view returned empty JSON for $Repo $ReleaseTag."
+        }
+        try {
+            return ($JsonText | ConvertFrom-Json)
+        }
+        catch {
+            throw "gh release view returned malformed JSON for $Repo $ReleaseTag."
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $ErrorPath) {
+            Remove-Item -LiteralPath $ErrorPath -Force
+        }
+    }
+}
+
+function Test-GitHubReleaseAssets {
+    param(
+        [object]$Release,
+        [string]$Repo,
+        [string]$ReleaseTag,
+        [string[]]$ExpectedAssets
+    )
+
+    if ($null -eq $Release) {
+        throw "GitHub Release $ReleaseTag in $Repo was not returned by gh."
+    }
+    if ($Release.isDraft) {
+        throw "GitHub Release $ReleaseTag in $Repo is still draft; publish the paired companion release before releasing ApplicantScout."
+    }
+    if ($Release.isPrerelease) {
+        throw "GitHub Release $ReleaseTag in $Repo is marked prerelease; publish the paired stable companion release before releasing ApplicantScout."
+    }
+
+    $Assets = if ($null -eq $Release.assets) { @() } else { @($Release.assets) }
+    $AssetNames = @($Assets | ForEach-Object { $_.name })
+    foreach ($AssetName in $ExpectedAssets) {
+        if ($AssetNames -notcontains $AssetName) {
+            throw "GitHub Release $ReleaseTag in $Repo is missing asset: $AssetName"
+        }
+    }
+}
+
+function Wait-GitHubReleaseAssets {
+    param(
+        [string]$CliPath,
+        [string]$Repo,
+        [string]$ReleaseTag,
+        [string[]]$ExpectedAssets,
+        [int]$WaitSeconds,
+        [int]$PollSeconds
+    )
+
+    if ($WaitSeconds -lt 0) {
+        throw "PublishedReleaseWaitSeconds must be zero or greater."
+    }
+    if ($PollSeconds -lt 1) {
+        throw "PublishedReleasePollSeconds must be at least 1."
+    }
+
+    $Deadline = (Get-Date).AddSeconds($WaitSeconds)
+    $LastError = $null
+    do {
+        try {
+            $Release = Invoke-GitHubReleaseView -CliPath $CliPath -Repo $Repo -ReleaseTag $ReleaseTag
+            Test-GitHubReleaseAssets `
+                -Release $Release `
+                -Repo $Repo `
+                -ReleaseTag $ReleaseTag `
+                -ExpectedAssets $ExpectedAssets
+            return
+        }
+        catch {
+            $LastError = $_.Exception.Message
+            if ((Get-Date) -ge $Deadline) {
+                break
+            }
+            Start-Sleep -Seconds $PollSeconds
+        }
+    } while ($true)
+
+    throw $LastError
+}
+
 if ([string]::IsNullOrWhiteSpace($Tag)) {
     throw "Missing release tag. Pass -Tag vX.Y.Z or set GITHUB_REF_NAME."
 }
@@ -197,6 +308,22 @@ if (-not [string]::IsNullOrWhiteSpace($PairedCompanionRefOutputPath)) {
         -Path $PairedCompanionRefOutputPath `
         -Name "companion_ref" `
         -Value "v$PairedCompanionVersion"
+}
+
+if ($RequirePublishedPairedCompanionAssets) {
+    $PairedCompanionTag = "v$PairedCompanionVersion"
+    $ExpectedCompanionAssets = @(
+        "ApplicantScoutCompanionSetup-$PairedCompanionVersion.exe",
+        "ApplicantScoutCompanionSetup-$PairedCompanionVersion.exe.sha256",
+        "ApplicantScoutCompanion-$PairedCompanionVersion-portable.zip"
+    )
+    Wait-GitHubReleaseAssets `
+        -CliPath $GitHubCliPath `
+        -Repo "Antrakt92/ApplicantScout-Companion" `
+        -ReleaseTag $PairedCompanionTag `
+        -ExpectedAssets $ExpectedCompanionAssets `
+        -WaitSeconds $PublishedReleaseWaitSeconds `
+        -PollSeconds $PublishedReleasePollSeconds
 }
 
 Write-Host "Release version check passed: $TagName -> $TagVersion"

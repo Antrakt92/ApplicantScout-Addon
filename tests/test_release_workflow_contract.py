@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -80,6 +81,72 @@ def _release_tool_install_args(workflow: str) -> dict[str, list[str]]:
     return install_args
 
 
+def _run_release_check(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
+            *args,
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+
+def _fake_gh_release_view(
+    tmp_path: Path,
+    *,
+    release_json: dict[str, object] | None = None,
+    stdout_text: str | None = None,
+    exit_code: int = 0,
+    expected_repo: str = "Antrakt92/ApplicantScout-Companion",
+    expected_tag: str | None = None,
+    expected_json: str = "tagName,isDraft,isPrerelease,assets",
+    stderr: str = "",
+) -> Path:
+    script = tmp_path / "fake-gh.ps1"
+    args_path = tmp_path / "fake-gh-args.txt"
+    stdout = stdout_text if stdout_text is not None else json.dumps(release_json or {})
+    script.write_text(
+        "\n".join(
+            [
+                f"Set-Content -LiteralPath {str(args_path)!r} -Value ($args -join \"`n\") -Encoding UTF8",
+                "if ($args.Count -ne 7 -or $args[0] -ne 'release' -or $args[1] -ne 'view') {",
+                "    Write-Error 'unexpected gh invocation'",
+                "    exit 2",
+                "}",
+                f"if ($args[3] -ne '--repo' -or $args[4] -ne {expected_repo!r}) {{",
+                "    Write-Error 'unexpected gh repo'",
+                "    exit 2",
+                "}",
+                f"if ($args[5] -ne '--json' -or $args[6] -ne {expected_json!r}) {{",
+                "    Write-Error 'unexpected gh json fields'",
+                "    exit 2",
+                "}",
+                (
+                    f"if ($args[2] -ne {expected_tag!r}) {{ Write-Error 'unexpected gh tag'; exit 2 }}"
+                    if expected_tag is not None
+                    else ""
+                ),
+                f"if ({exit_code} -ne 0) {{",
+                f"    [Console]::Error.WriteLine({stderr!r})",
+                f"    exit {exit_code}",
+                "}",
+                f"Write-Output {stdout!r}",
+                "exit 0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return script
+
+
 def test_release_preflight_checks_paired_companion_ref_before_packaging():
     workflow = _workflow_source()
     preflight = _job_block(workflow, "preflight")
@@ -99,6 +166,9 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     dependency_step = _step_block(preflight, "Install Python dependencies")
     contract_step = _step_block(preflight, "Check paired companion and addon contracts")
     package_step = _step_block(preflight, "Development package smoke")
+    published_companion_step = _step_block(
+        preflight, "Verify paired companion published release assets"
+    )
 
     assert "id: version" in version_step
     assert "-PairedCompanionRefOutputPath $env:GITHUB_OUTPUT" in version_step
@@ -120,6 +190,10 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     assert ".\\scripts\\check.ps1 -AddonRoot ..\\ApplicantScout-Addon" in contract_step
     assert "working-directory: ApplicantScout-Addon" in package_step
     assert ".\\scripts\\package-addon.ps1 -OutputDir" in package_step
+    assert "working-directory: ApplicantScout-Addon" in published_companion_step
+    assert "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in published_companion_step
+    assert "-RequirePublishedPairedCompanionAssets" in published_companion_step
+    assert "-PublishedReleaseWaitSeconds 180" in published_companion_step
 
     _assert_order(
         preflight,
@@ -130,6 +204,7 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
         "Install Python dependencies",
         "Check paired companion and addon contracts",
         "Development package smoke",
+        "Verify paired companion published release assets",
     )
     assert "CF_API_KEY" not in preflight
     assert "WAGO_API_TOKEN" not in preflight
@@ -138,16 +213,27 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     assert "uses: BigWigsMods/packager@" in release
 
 
-def test_release_workflow_does_not_require_published_companion_assets():
+def test_release_workflow_requires_published_companion_assets_before_packaging():
     workflow = _workflow_source()
     preflight = _job_block(workflow, "preflight")
     release = _job_block(workflow, "release")
 
-    assert "RequirePublishedPairedCompanionAssets" not in workflow
-    assert "ApplicantScoutCompanionSetup-" not in preflight
-    assert "gh release view" not in preflight
+    assert "RequirePublishedPairedCompanionAssets" in preflight
+    assert "ApplicantScoutCompanionSetup-" not in release
     assert "gh release view" in release
     assert release.index("gh release view") < release.index("BigWigsMods/packager")
+
+
+def test_release_job_refuses_existing_release_without_failing_open_on_gh_errors():
+    workflow = _workflow_source()
+    release = _job_block(workflow, "release")
+    guard = _step_block(release, "Refuse existing release")
+
+    assert "--json tagName,isDraft,isPrerelease" in guard
+    assert "$status" in guard
+    assert "not found" in guard
+    assert "Could not determine whether release" in guard
+    assert guard.index("gh release view") < release.index("BigWigsMods/packager")
 
 
 def test_release_job_keeps_marketplace_publish_checkout_at_repo_root():
@@ -279,6 +365,148 @@ def test_release_version_script_does_not_invoke_companion_release_script():
 
     assert "ApplicantScout-Companion\\scripts\\check-release-version.ps1" not in script
     assert "ApplicantScout-Companion/scripts/check-release-version.ps1" not in script
+
+
+def test_release_version_check_accepts_published_paired_companion_assets(
+    tmp_path: Path,
+):
+    gh = _fake_gh_release_view(
+        tmp_path,
+        expected_tag="v0.7.1",
+        release_json={
+            "tagName": "v0.7.1",
+            "isDraft": False,
+            "isPrerelease": False,
+            "assets": [
+                {"name": "ApplicantScoutCompanionSetup-0.7.1.exe"},
+                {"name": "ApplicantScoutCompanionSetup-0.7.1.exe.sha256"},
+                {"name": "ApplicantScoutCompanion-0.7.1-portable.zip"},
+            ],
+        },
+    )
+
+    result = _run_release_check(
+        "-Tag",
+        "v0.4.2",
+        "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath",
+        str(gh),
+        "-PublishedReleaseWaitSeconds",
+        "0",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_release_version_check_rejects_missing_paired_companion_checksum(
+    tmp_path: Path,
+):
+    gh = _fake_gh_release_view(
+        tmp_path,
+        expected_tag="v0.7.1",
+        release_json={
+            "tagName": "v0.7.1",
+            "isDraft": False,
+            "isPrerelease": False,
+            "assets": [
+                {"name": "ApplicantScoutCompanionSetup-0.7.1.exe"},
+                {"name": "ApplicantScoutCompanion-0.7.1-portable.zip"},
+            ],
+        },
+    )
+
+    result = _run_release_check(
+        "-Tag",
+        "v0.4.2",
+        "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath",
+        str(gh),
+        "-PublishedReleaseWaitSeconds",
+        "0",
+    )
+
+    assert result.returncode != 0
+    output = re.sub(r"\s+", "", result.stdout + result.stderr)
+    assert "missingasset:ApplicantScoutCompanionSetup-0.7.1.exe.sha256" in output
+
+
+def test_release_version_check_rejects_draft_paired_companion_release(
+    tmp_path: Path,
+):
+    gh = _fake_gh_release_view(
+        tmp_path,
+        expected_tag="v0.7.1",
+        release_json={
+            "tagName": "v0.7.1",
+            "isDraft": True,
+            "isPrerelease": False,
+            "assets": [
+                {"name": "ApplicantScoutCompanionSetup-0.7.1.exe"},
+                {"name": "ApplicantScoutCompanionSetup-0.7.1.exe.sha256"},
+                {"name": "ApplicantScoutCompanion-0.7.1-portable.zip"},
+            ],
+        },
+    )
+
+    result = _run_release_check(
+        "-Tag",
+        "v0.4.2",
+        "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath",
+        str(gh),
+        "-PublishedReleaseWaitSeconds",
+        "0",
+    )
+
+    assert result.returncode != 0
+    assert "is still draft" in (result.stdout + result.stderr)
+
+
+def test_release_version_check_reports_paired_companion_gh_failure(tmp_path: Path):
+    gh = _fake_gh_release_view(
+        tmp_path,
+        exit_code=7,
+        expected_tag="v0.7.1",
+        stderr="network failed",
+    )
+
+    result = _run_release_check(
+        "-Tag",
+        "v0.4.2",
+        "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath",
+        str(gh),
+        "-PublishedReleaseWaitSeconds",
+        "0",
+    )
+
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "gh release view failed for Antrakt92/ApplicantScout-Companion" in output
+    assert "network failed" in output
+
+
+def test_release_version_check_rejects_malformed_paired_companion_release_json(
+    tmp_path: Path,
+):
+    gh = _fake_gh_release_view(
+        tmp_path,
+        expected_tag="v0.7.1",
+        stdout_text="{bad json",
+    )
+
+    result = _run_release_check(
+        "-Tag",
+        "v0.4.2",
+        "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath",
+        str(gh),
+        "-PublishedReleaseWaitSeconds",
+        "0",
+    )
+
+    assert result.returncode != 0
+    assert "malformed JSON" in (result.stdout + result.stderr)
 
 
 def test_release_preflight_runs_python_through_companion_constraints():
