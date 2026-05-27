@@ -222,26 +222,45 @@ local entryCreationKeyState = {
     lastTransportHeartbeatAttemptTime = 0,
     LEADER_KEY_TTL_S = 60,
     LEADER_KEY_REQUEST_THROTTLE_S = 3,
+    LEADER_KEY_REQUEST_RETRY_DELAY_S = 1.0,
+    LEADER_KEY_REQUEST_MAX_RETRIES = 5,
     leaderKeystone = nil,
     leaderKeystoneLastRequestAt = 0,
+    leaderKeystoneLastRequestStatus = "never",
+    leaderKeystoneRequestRetryToken = 0,
+    leaderKeystoneRequestRetryDeadline = nil,
     leaderKeystoneCallbackRegistered = false,
     leaderKeystoneLib = nil,
     leaderKeystoneCallbackOwner = {},
     libKeystonePrefixRegistered = false,
     libKeystoneShim = nil,
     libKeystoneShimCallbacks = {},
+    libKeystoneLastSendStatus = "never",
+    LIB_KEYSTONE_RESPONSE_RETRY_DELAY_S = 1.0,
+    LIB_KEYSTONE_RESPONSE_MAX_RETRIES = 3,
+    libKeystoneResponseRetryToken = 0,
+    libKeystoneResponseRetryDeadline = nil,
     -- WARNING: keep Auto Hi state on this existing table instead of adding
     -- top-level locals; this file is near Lua 5.1's 200-local chunk limit.
     AUTO_HI_DELAY_S = 5,
     AUTO_HI_NEW_PARTY_MEMBER_DELAY_S = 10,
+    AUTO_HI_RETRY_DELAY_S = 1.0,
+    AUTO_HI_MAX_RETRIES = 5,
+    autoHiLastSendStatus = "never",
     autoHiEditBoxSyncing = false,
     autoHiGroupStateKnown = false,
     autoHiWasInGroup = false,
     autoHiWasInSoloGroup = false,
     autoHiGroupGen = 0,
+    autoHiGroupRetryToken = 0,
+    autoHiGroupRetryDeadline = nil,
+    autoHiGroupRetryGeneration = nil,
     autoHiKnownPartyGUIDs = {},
     autoHiKnownPartyMembersPrimed = false,
     autoHiNewPartyMemberGen = 0,
+    autoHiNewPartyRetryToken = 0,
+    autoHiNewPartyRetryDeadline = nil,
+    autoHiNewPartyRetryGeneration = nil,
     rosterInspectIlvlByGUID = {},
 }
 local ENTRY_CREATION_KEY_CACHE_TTL = 3600
@@ -539,17 +558,141 @@ entryCreationKeyState.AutoHiChatChannel = function()
 end
 
 entryCreationKeyState.SendAutoHiChatMessage = function(message)
-    if IsChatMessagingLockdown() then return false end
+    if IsChatMessagingLockdown() then return false, "lockdown" end
     local channel = entryCreationKeyState.AutoHiChatChannel()
     if C_ChatInfo and type(C_ChatInfo.SendChatMessage) == "function" then
-        C_ChatInfo.SendChatMessage(message, channel)
-        return true
+        local ok = pcall(function()
+            C_ChatInfo.SendChatMessage(message, channel)
+        end)
+        if ok then return true end
+        return false, "send-failed"
     end
     if type(SendChatMessage) == "function" then
-        SendChatMessage(message, channel)
-        return true
+        local ok = pcall(function()
+            SendChatMessage(message, channel)
+        end)
+        if ok then return true end
+        return false, "send-failed"
+    end
+    return false, "missing-chat-api"
+end
+
+entryCreationKeyState.IsAutoHiSendRetryable = function(reason)
+    return reason == "lockdown" or reason == "send-failed"
+end
+
+entryCreationKeyState.AutoHiRetryFields = function(kind)
+    if kind == "group" then
+        return "autoHiGroupRetryToken", "autoHiGroupRetryDeadline", "autoHiGroupRetryGeneration"
+    end
+    if kind == "new-party" then
+        return "autoHiNewPartyRetryToken", "autoHiNewPartyRetryDeadline", "autoHiNewPartyRetryGeneration"
+    end
+    return nil, nil, nil
+end
+
+entryCreationKeyState.ClearAutoHiSendRetry = function(kind)
+    local tokenField, deadlineField, generationField =
+        entryCreationKeyState.AutoHiRetryFields(kind)
+    if not tokenField then return end
+    entryCreationKeyState[tokenField] =
+        (entryCreationKeyState[tokenField] or 0) + 1
+    entryCreationKeyState[deadlineField] = nil
+    entryCreationKeyState[generationField] = nil
+end
+
+entryCreationKeyState.AutoHiContextReady = function(kind, generation)
+    if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return false end
+    if kind == "group" then
+        if generation ~= entryCreationKeyState.autoHiGroupGen then return false end
+        return entryCreationKeyState.IsGroupedForAutoHi()
+    end
+    if kind == "new-party" then
+        if generation ~= entryCreationKeyState.autoHiNewPartyMemberGen then return false end
+        if not ApplicantScoutDB.autoHiGreetNewPartyMembers then return false end
+        return entryCreationKeyState.IsPartyForAutoHiNewMembers()
     end
     return false
+end
+
+entryCreationKeyState.ScheduleAutoHiSendRetry = function(kind, generation, attempt, reason)
+    if not entryCreationKeyState.IsAutoHiSendRetryable(reason) then
+        entryCreationKeyState.autoHiLastSendStatus =
+            kind .. " failed: " .. tostring(reason or "unknown")
+        entryCreationKeyState.ClearAutoHiSendRetry(kind)
+        return false
+    end
+    attempt = math.floor(SafeNumber(attempt, 1))
+    if attempt >= entryCreationKeyState.AUTO_HI_MAX_RETRIES then
+        entryCreationKeyState.autoHiLastSendStatus =
+            kind .. " exhausted: " .. tostring(reason or "unknown")
+        entryCreationKeyState.ClearAutoHiSendRetry(kind)
+        return false
+    end
+    if not (C_Timer and C_Timer.After) then
+        entryCreationKeyState.autoHiLastSendStatus = kind .. " retry unavailable"
+        return false
+    end
+    if not entryCreationKeyState.AutoHiContextReady(kind, generation) then
+        entryCreationKeyState.ClearAutoHiSendRetry(kind)
+        return false
+    end
+
+    local tokenField, deadlineField, generationField =
+        entryCreationKeyState.AutoHiRetryFields(kind)
+    if not tokenField then return false end
+    local now = GetTime and GetTime() or 0
+    local delay = entryCreationKeyState.AUTO_HI_RETRY_DELAY_S
+    local due = now + delay
+    local existingDeadline = entryCreationKeyState[deadlineField]
+    if existingDeadline
+       and entryCreationKeyState[generationField] == generation
+       and existingDeadline <= due then
+        return true
+    end
+
+    entryCreationKeyState[tokenField] =
+        (entryCreationKeyState[tokenField] or 0) + 1
+    local retryToken = entryCreationKeyState[tokenField]
+    entryCreationKeyState[deadlineField] = due
+    entryCreationKeyState[generationField] = generation
+    entryCreationKeyState.autoHiLastSendStatus =
+        kind .. " retry scheduled: " .. tostring(reason or "unknown")
+    C_Timer.After(delay, function()
+        if retryToken ~= entryCreationKeyState[tokenField] then return end
+        entryCreationKeyState[deadlineField] = nil
+        if not entryCreationKeyState.AutoHiContextReady(kind, generation) then
+            return
+        end
+        entryCreationKeyState.TrySendAutoHiWithRetry(kind, generation, attempt + 1)
+    end)
+    return true
+end
+
+entryCreationKeyState.TrySendAutoHiWithRetry = function(kind, generation, attempt)
+    if not entryCreationKeyState.AutoHiContextReady(kind, generation) then
+        entryCreationKeyState.ClearAutoHiSendRetry(kind)
+        return false, "inactive"
+    end
+    local message = entryCreationKeyState.NormalizeAutoHiMessage(
+        ApplicantScoutDB.autoHiMessage
+    )
+    if message == "" then
+        entryCreationKeyState.ClearAutoHiSendRetry(kind)
+        return false, "empty-message"
+    end
+    local ok, reason = entryCreationKeyState.SendAutoHiChatMessage(message)
+    if ok then
+        entryCreationKeyState.autoHiLastSendStatus = kind .. " sent"
+        entryCreationKeyState.ClearAutoHiSendRetry(kind)
+        return true
+    end
+    return entryCreationKeyState.ScheduleAutoHiSendRetry(
+        kind,
+        generation,
+        attempt,
+        reason
+    )
 end
 
 entryCreationKeyState.IsPartyForAutoHiNewMembers = function()
@@ -692,11 +835,7 @@ entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
         if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
         if not entryCreationKeyState.IsGroupedForAutoHi() then return end
 
-        local message = entryCreationKeyState.NormalizeAutoHiMessage(
-            ApplicantScoutDB.autoHiMessage
-        )
-        if message == "" then return end
-        entryCreationKeyState.SendAutoHiChatMessage(message)
+        entryCreationKeyState.TrySendAutoHiWithRetry("group", groupGen, 1)
     end)
 end
 
@@ -731,11 +870,7 @@ entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()
         if not ApplicantScoutDB.autoHiGreetNewPartyMembers then return end
         if not entryCreationKeyState.IsPartyForAutoHiNewMembers() then return end
 
-        local message = entryCreationKeyState.NormalizeAutoHiMessage(
-            ApplicantScoutDB.autoHiMessage
-        )
-        if message == "" then return end
-        entryCreationKeyState.SendAutoHiChatMessage(message)
+        entryCreationKeyState.TrySendAutoHiWithRetry("new-party", groupGen, 1)
     end)
 end
 
@@ -2734,6 +2869,31 @@ entryCreationKeyState.RegisterLibKeystonePrefix = function()
     return true
 end
 
+entryCreationKeyState.IsLibKeystoneSendRetryable = function(reason)
+    return reason == "lockdown"
+        or reason == "send-failed"
+        or reason == "request-error"
+        or reason == "request-failed"
+end
+
+entryCreationKeyState.SendLibKeystoneAddonMessage = function(payload, channel)
+    if channel ~= "PARTY" then return false, "bad-channel" end
+    if not (IsInGroup and IsInGroup()) then return false, "not-grouped" end
+    if IsChatMessagingLockdown() then return false, "lockdown" end
+    if not entryCreationKeyState.RegisterLibKeystonePrefix() then
+        return false, "prefix-unavailable"
+    end
+    if not (C_ChatInfo and type(C_ChatInfo.SendAddonMessage) == "function") then
+        return false, "missing-chat-api"
+    end
+    local ok, result = pcall(function()
+        return C_ChatInfo.SendAddonMessage("LibKS", payload, channel)
+    end)
+    if not ok then return false, "send-failed" end
+    if result ~= nil and result ~= 0 then return false, "send-failed" end
+    return true
+end
+
 entryCreationKeyState.ReadOwnLibKeystoneInfo = function()
     local keyLevel, challengeMapID, playerRating = 0, 0, 0
     if C_MythicPlus then
@@ -2763,17 +2923,53 @@ entryCreationKeyState.NotifyLibKeystoneShimCallbacks = function(keyLevel, challe
 end
 
 entryCreationKeyState.SendLibKeystoneShimInfo = function(channel)
-    if channel ~= "PARTY" then return false end
-    if not (IsInGroup and IsInGroup()) then return false end
-    if IsChatMessagingLockdown() then return false end
-    if not entryCreationKeyState.RegisterLibKeystonePrefix() then return false end
-    if not (C_ChatInfo and type(C_ChatInfo.SendAddonMessage) == "function") then return false end
     local keyLevel, challengeMapID, playerRating = entryCreationKeyState.ReadOwnLibKeystoneInfo()
     local payload = string.format("%d,%d,%d", keyLevel, challengeMapID, playerRating)
-    local ok, result = pcall(function()
-        return C_ChatInfo.SendAddonMessage("LibKS", payload, channel)
+    local ok, reason = entryCreationKeyState.SendLibKeystoneAddonMessage(payload, channel)
+    entryCreationKeyState.libKeystoneLastSendStatus =
+        ok and "response sent" or ("response failed: " .. tostring(reason or "unknown"))
+    return ok, reason
+end
+
+entryCreationKeyState.ScheduleLibKeystoneResponseRetry = function(channel, reason, attempt)
+    if not entryCreationKeyState.IsLibKeystoneSendRetryable(reason) then
+        return false
+    end
+    attempt = math.floor(SafeNumber(attempt, 1))
+    if attempt >= entryCreationKeyState.LIB_KEYSTONE_RESPONSE_MAX_RETRIES then
+        entryCreationKeyState.libKeystoneLastSendStatus =
+            "response exhausted: " .. tostring(reason or "unknown")
+        return false
+    end
+    if not (C_Timer and C_Timer.After) then return false end
+    if not (IsInGroup and IsInGroup()) then return false end
+
+    local now = GetTime and GetTime() or 0
+    local delay = entryCreationKeyState.LIB_KEYSTONE_RESPONSE_RETRY_DELAY_S
+    local due = now + delay
+    local existingDeadline = entryCreationKeyState.libKeystoneResponseRetryDeadline
+    if existingDeadline and existingDeadline <= due then return true end
+
+    entryCreationKeyState.libKeystoneResponseRetryToken =
+        (entryCreationKeyState.libKeystoneResponseRetryToken or 0) + 1
+    local retryToken = entryCreationKeyState.libKeystoneResponseRetryToken
+    entryCreationKeyState.libKeystoneResponseRetryDeadline = due
+    C_Timer.After(delay, function()
+        if retryToken ~= entryCreationKeyState.libKeystoneResponseRetryToken then
+            return
+        end
+        entryCreationKeyState.libKeystoneResponseRetryDeadline = nil
+        if not (IsInGroup and IsInGroup()) then return end
+        local ok, retryReason = entryCreationKeyState.SendLibKeystoneShimInfo(channel)
+        if not ok then
+            entryCreationKeyState.ScheduleLibKeystoneResponseRetry(
+                channel,
+                retryReason,
+                attempt + 1
+            )
+        end
     end)
-    return ok and (result == nil or result == 0)
+    return true
 end
 
 entryCreationKeyState.GetLibKeystoneShim = function()
@@ -2796,9 +2992,7 @@ entryCreationKeyState.GetLibKeystoneShim = function()
                 playerName,
                 channel
             )
-            if IsInGroup and IsInGroup() and not IsChatMessagingLockdown() then
-                C_ChatInfo.SendAddonMessage("LibKS", "R", channel)
-            end
+            return entryCreationKeyState.SendLibKeystoneAddonMessage("R", channel)
         end,
     }
     return entryCreationKeyState.libKeystoneShim
@@ -2808,7 +3002,10 @@ entryCreationKeyState.LibKeystoneShimHandleAddonMessage = function(prefix, msg, 
     if prefix ~= "LibKS" or channel ~= "PARTY" then return end
     if IsSecretValue(msg) or type(msg) ~= "string" then return end
     if msg == "R" then
-        entryCreationKeyState.SendLibKeystoneShimInfo(channel)
+        local ok, reason = entryCreationKeyState.SendLibKeystoneShimInfo(channel)
+        if not ok then
+            entryCreationKeyState.ScheduleLibKeystoneResponseRetry(channel, reason)
+        end
         return
     end
     local keyLevelStr, challengeMapIDStr, playerRatingStr =
@@ -2855,8 +3052,15 @@ entryCreationKeyState.CurrentPartyLeaderName = function()
     return ""
 end
 
+entryCreationKeyState.CancelLeaderKeystoneRequestRetry = function()
+    entryCreationKeyState.leaderKeystoneRequestRetryDeadline = nil
+    entryCreationKeyState.leaderKeystoneRequestRetryToken =
+        (entryCreationKeyState.leaderKeystoneRequestRetryToken or 0) + 1
+end
+
 entryCreationKeyState.ClearLeaderKeystone = function()
     entryCreationKeyState.leaderKeystone = nil
+    entryCreationKeyState.CancelLeaderKeystoneRequestRetry()
 end
 
 entryCreationKeyState.OnLeaderKeystoneData = function(keyLevel, challengeMapID, _rating, playerName, channel)
@@ -2898,17 +3102,70 @@ entryCreationKeyState.RegisterLeaderKeystoneCallback = function()
     return lib
 end
 
-entryCreationKeyState.RequestLeaderKeystone = function(force)
-    local lib = entryCreationKeyState.RegisterLeaderKeystoneCallback()
-    if not lib or not (IsInGroup and IsInGroup()) then return end
+entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry = function(force, attempt, reason)
+    if not entryCreationKeyState.IsLibKeystoneSendRetryable(reason) then
+        return false
+    end
+    attempt = math.floor(SafeNumber(attempt, 1))
+    if attempt >= entryCreationKeyState.LEADER_KEY_REQUEST_MAX_RETRIES then
+        entryCreationKeyState.leaderKeystoneLastRequestStatus =
+            "request exhausted: " .. tostring(reason or "unknown")
+        entryCreationKeyState.CancelLeaderKeystoneRequestRetry()
+        return false
+    end
+    if not (C_Timer and C_Timer.After) then return false end
+    if not (IsInGroup and IsInGroup()) then return false end
+
     local now = GetTime and GetTime() or 0
+    local delay = entryCreationKeyState.LEADER_KEY_REQUEST_RETRY_DELAY_S
+    local due = now + delay
+    local existingDeadline = entryCreationKeyState.leaderKeystoneRequestRetryDeadline
+    if existingDeadline and existingDeadline <= due then return true end
+
+    entryCreationKeyState.leaderKeystoneRequestRetryToken =
+        (entryCreationKeyState.leaderKeystoneRequestRetryToken or 0) + 1
+    local retryToken = entryCreationKeyState.leaderKeystoneRequestRetryToken
+    entryCreationKeyState.leaderKeystoneRequestRetryDeadline = due
+    entryCreationKeyState.leaderKeystoneLastRequestStatus =
+        "request retry scheduled: " .. tostring(reason or "unknown")
+    C_Timer.After(delay, function()
+        if retryToken ~= entryCreationKeyState.leaderKeystoneRequestRetryToken then
+            return
+        end
+        entryCreationKeyState.leaderKeystoneRequestRetryDeadline = nil
+        if not (IsInGroup and IsInGroup()) then return end
+        entryCreationKeyState.RequestLeaderKeystone(true, attempt + 1)
+    end)
+    return true
+end
+
+entryCreationKeyState.RequestLeaderKeystone = function(force, attempt)
+    if not entryCreationKeyState.RegisterLeaderKeystoneCallback()
+       or not (IsInGroup and IsInGroup()) then
+        return
+    end
+    local now = GetTime and GetTime() or 0
+    attempt = math.floor(SafeNumber(attempt, 1))
+    if attempt < 1 then attempt = 1 end
     if not force
        and (now - SafeNumber(entryCreationKeyState.leaderKeystoneLastRequestAt, 0))
            < entryCreationKeyState.LEADER_KEY_REQUEST_THROTTLE_S then
         return
     end
-    entryCreationKeyState.leaderKeystoneLastRequestAt = now
-    pcall(function() lib.Request("PARTY") end)
+    -- WHY: external LibKeystone.Request() does not expose addon-message
+    -- delivery status, so route the wire request through our checked sender.
+    local ok, reason = entryCreationKeyState.SendLibKeystoneAddonMessage("R", "PARTY")
+    if ok then
+        entryCreationKeyState.leaderKeystoneLastRequestAt = now
+        entryCreationKeyState.leaderKeystoneLastRequestStatus = "request sent"
+        entryCreationKeyState.CancelLeaderKeystoneRequestRetry()
+        return true
+    end
+    reason = reason or "request-failed"
+    entryCreationKeyState.leaderKeystoneLastRequestStatus =
+        "request failed: " .. tostring(reason or "unknown")
+    entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry(force, attempt, reason)
+    return false
 end
 
 entryCreationKeyState.ResolveLeaderKeystoneContext = function()
@@ -4526,6 +4783,8 @@ _AttachSettingsPanel = function()
     end)
 
     enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
+    autoHiNewPartyMembersCheckbox:SetChecked(
+        ApplicantScoutDB.autoHiGreetNewPartyMembers and true or false)
     _SyncAutoMPlusPlaystyleDropdown()
     entryCreationKeyState.SyncAutoHiEditBox()
 
@@ -4615,7 +4874,14 @@ SlashCmdList.APSCOUT = function(msg)
                    and string.format("yes (%.2fs left)", suppressShotsUntil - GetTime())
                    or "no (window expired)")
               or "no"))
-        print("  ChatMessagingLockdown: " .. tostring(IsChatMessagingLockdown()))
+        local lfgReadsAllowed = not IsChatMessagingLockdown()
+        print("  ChatMessagingLockdown: " .. tostring(not lfgReadsAllowed))
+        print("  Auto Hi send: "
+              .. tostring(entryCreationKeyState.autoHiLastSendStatus or "never"))
+        print("  leader key request: "
+              .. tostring(entryCreationKeyState.leaderKeystoneLastRequestStatus or "never"))
+        print("  LibKS send: "
+              .. tostring(entryCreationKeyState.libKeystoneLastSendStatus or "never"))
         -- QR transport diagnostics
         print("|cff00ff7f---|r QR transport:")
         print("  QR library loaded: " .. tostring(_qrencode ~= nil))
@@ -4646,6 +4912,7 @@ SlashCmdList.APSCOUT = function(msg)
               tostring(ApplicantScoutDB.priorScreenshotFormat))
         -- raw API diagnostics
         print("|cff00ff7f---|r raw API:")
+        if lfgReadsAllowed then
         print("  HasActiveEntryInfo: " .. tostring(C_LFGList.HasActiveEntryInfo()))
         local entry = SafeTable(C_LFGList.GetActiveEntryInfo())
         if entry then
@@ -4739,6 +5006,9 @@ SlashCmdList.APSCOUT = function(msg)
                       i, SafeDiag(rawID)))
             end
         end
+        else
+            print("  raw API skipped during ChatMessagingLockdown")
+        end
         -- Phase 1 + 2 diagnostics
         print("|cff00ff7f---|r visibility:")
         print("  QR suppressed by interaction: " .. tostring(_qrSuppressedByInteraction or false))
@@ -4781,7 +5051,12 @@ SlashCmdList.APSCOUT = function(msg)
         -- No emit, no queue interaction. Useful with active applicants (probe
         -- their fields) or empty listing (probe lockdown / version flags only).
         print("|cff00ff7fApplicantScout|r taintcheck:")
-        print("  InChatMessagingLockdown: " .. tostring(IsChatMessagingLockdown()))
+        local lfgReadsAllowed = not IsChatMessagingLockdown()
+        print("  InChatMessagingLockdown: " .. tostring(not lfgReadsAllowed))
+        if not lfgReadsAllowed then
+            print("  LFG applicant reads skipped during ChatMessagingLockdown")
+            return
+        end
         local applicants = SafeTable(C_LFGList.GetApplicants()) or {}
         print("  applicants: " .. #applicants)
         for i = 1, math.min(3, #applicants) do

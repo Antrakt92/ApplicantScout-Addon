@@ -574,7 +574,7 @@ def test_leader_keystone_soft_dep_uses_libkeystone_party_protocol():
 
     assert 'pcall(libStub, "LibKeystone", true)' in leader_body
     assert "lib.Register(" in leader_body
-    assert "lib.Request(" in leader_body
+    assert 'type(lib.Request) == "function"' in leader_body
     assert "leaderKeystoneLib = nil" in source
     assert "entryCreationKeyState.leaderKeystoneLib = lib" in leader_body
     assert (
@@ -600,8 +600,8 @@ def test_leader_keystone_fallback_shim_speaks_libks_party_protocol():
 
     assert 'entryCreationKeyState.GetLibKeystoneShim()' in leader_body
     assert 'C_ChatInfo.RegisterAddonMessagePrefix("LibKS")' in leader_body
-    assert 'SendAddonMessage("LibKS", "R", channel)' in leader_body
-    assert 'SendAddonMessage("LibKS", payload, channel)' in leader_body
+    assert 'entryCreationKeyState.SendLibKeystoneAddonMessage("R", channel)' in leader_body
+    assert "entryCreationKeyState.SendLibKeystoneAddonMessage(payload, channel)" in leader_body
     assert 'msg == "R"' in leader_body
     assert 'msg:match("^(%d+),(%d+),(%d+)$")' in leader_body
     assert "C_MythicPlus.GetOwnedKeystoneLevel" in leader_body
@@ -609,6 +609,64 @@ def test_leader_keystone_fallback_shim_speaks_libks_party_protocol():
     assert "GetPlayerMythicPlusRatingSummary" in leader_body
     assert "LibKeystoneShimHandleAddonMessage(prefix, msg, channel, sender)" in events_body
     assert 'CHAT_MSG_ADDON                  = function(_, prefix, msg, channel, sender)' in events_body
+
+
+def test_libkeystone_shim_request_uses_checked_send_path():
+    source = _lua_source()
+    leader_body = _slice_between(
+        source,
+        "entryCreationKeyState.GetLibKeystone = function()",
+        "local function _RaidSubgroupForRoster(index)",
+    )
+    request_body = _slice_between(
+        leader_body,
+        "Request = function(channel)",
+        "    }\n    return entryCreationKeyState.libKeystoneShim",
+    )
+
+    assert "entryCreationKeyState.SendLibKeystoneAddonMessage = function(payload, channel)" in leader_body
+    assert "pcall(function()" in leader_body
+    assert "C_ChatInfo.SendAddonMessage(\"LibKS\", payload, channel)" in leader_body
+    assert 'return entryCreationKeyState.SendLibKeystoneAddonMessage("R", channel)' in request_body
+    assert 'C_ChatInfo.SendAddonMessage("LibKS", "R", channel)' not in request_body
+
+
+def test_libkeystone_response_failure_records_or_retries():
+    source = _lua_source()
+    leader_body = _slice_between(
+        source,
+        "entryCreationKeyState.GetLibKeystone = function()",
+        "local function _RaidSubgroupForRoster(index)",
+    )
+    response_idx = leader_body.index('if msg == "R" then')
+    parse_idx = leader_body.index('msg:match("^(%d+),(%d+),(%d+)$")')
+    response_body = leader_body[response_idx:parse_idx]
+
+    assert "local ok, reason = entryCreationKeyState.SendLibKeystoneShimInfo(channel)" in response_body
+    assert "if not ok then" in response_body
+    assert "entryCreationKeyState.ScheduleLibKeystoneResponseRetry(channel, reason)" in response_body
+
+
+def test_leader_keystone_request_uses_checked_send_and_throttle_updates_only_after_known_attempt():
+    source = _lua_source()
+    request_body = _slice_between(
+        source,
+        "entryCreationKeyState.RequestLeaderKeystone = function(force",
+        "entryCreationKeyState.ResolveLeaderKeystoneContext = function()",
+    )
+
+    request_idx = request_body.index(
+        'entryCreationKeyState.SendLibKeystoneAddonMessage("R", "PARTY")'
+    )
+    stamp_idx = request_body.index("entryCreationKeyState.leaderKeystoneLastRequestAt = now")
+    assert request_idx < stamp_idx
+    assert "RegisterLeaderKeystoneCallback()" in request_body
+    assert 'lib.Request("PARTY")' not in request_body
+    assert 'local ok, reason = entryCreationKeyState.SendLibKeystoneAddonMessage("R", "PARTY")' in request_body
+    assert "entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry" in request_body
+    assert "leaderKeystoneRequestRetryToken" in source
+    assert "leaderKeystoneRequestRetryDeadline" in source
+    assert 'reason == "request-failed"' in source
 
 
 def test_full_party_quiet_signature_requires_empty_resolved_non_raid_roster():
@@ -1266,6 +1324,31 @@ def test_auto_hi_settings_panel_persists_user_message_from_edit_box():
     assert "10 seconds after a new player joins your party" in settings_body
 
 
+def test_auto_hi_settings_panel_initializes_new_party_checkbox_from_db():
+    source = _lua_source()
+    settings_body = _slice_between(
+        source,
+        "-- Settings panel: pinned above PVEFrame",
+        "-- slash commands",
+    )
+
+    assert settings_body.count("autoHiNewPartyMembersCheckbox:SetChecked(") == 2
+    on_show_idx = settings_body.index('settingsFrame:HookScript("OnShow"')
+    initial_enabled_idx = settings_body.rindex(
+        "enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)"
+    )
+    initial_checkbox_idx = settings_body.rindex(
+        "autoHiNewPartyMembersCheckbox:SetChecked("
+    )
+    attached_idx = settings_body.index("settingsFrameAttached = true")
+
+    assert on_show_idx < initial_enabled_idx < initial_checkbox_idx < attached_idx
+    assert (
+        "ApplicantScoutDB.autoHiGreetNewPartyMembers"
+        in settings_body[initial_checkbox_idx:attached_idx]
+    )
+
+
 def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():
     source = _lua_source()
     auto_hi_body = _slice_between(
@@ -1290,11 +1373,38 @@ def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():
     assert "entryCreationKeyState.autoHiGroupGen + 1" in auto_hi_body
     assert "C_Timer.After(entryCreationKeyState.AUTO_HI_DELAY_S, function()" in auto_hi_body
     assert "if groupGen ~= entryCreationKeyState.autoHiGroupGen" in auto_hi_body
-    assert "entryCreationKeyState.SendAutoHiChatMessage(message)" in auto_hi_body
-    assert "if IsChatMessagingLockdown() then return false end" in auto_hi_body
+    assert 'entryCreationKeyState.TrySendAutoHiWithRetry("group", groupGen, 1)' in auto_hi_body
+    assert 'return false, "lockdown"' in auto_hi_body
     assert "GROUP_ROSTER_UPDATE              = function()" in events_body
     assert "entryCreationKeyState.ScheduleAutoHiIfGroupJoined()" in events_body
     assert "GROUP_LEFT                       = function()" in events_body
+
+
+def test_auto_hi_group_send_retries_bounded_when_lockdown_blocks_send():
+    source = _lua_source()
+    auto_hi_body = _slice_between(
+        source,
+        "entryCreationKeyState.AutoHiGroupMemberCount = function()",
+        "CheckSessionTransition = function()",
+    )
+    group_body = _slice_between(
+        source,
+        "entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()",
+        "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()",
+    )
+
+    assert "AUTO_HI_RETRY_DELAY_S" in source
+    assert "AUTO_HI_MAX_RETRIES" in source
+    assert "autoHiGroupRetryToken" in source
+    assert "autoHiGroupRetryDeadline" in source
+    assert "entryCreationKeyState.TrySendAutoHiWithRetry = function(kind, generation, attempt)" in auto_hi_body
+    assert "entryCreationKeyState.ScheduleAutoHiSendRetry = function(kind, generation, attempt, reason)" in auto_hi_body
+    assert 'kind == "group"' in auto_hi_body
+    assert "generation ~= entryCreationKeyState.autoHiGroupGen" in auto_hi_body
+    assert "local ok, reason = entryCreationKeyState.SendAutoHiChatMessage(message)" in auto_hi_body
+    assert "entryCreationKeyState.IsAutoHiSendRetryable(reason)" in auto_hi_body
+    assert 'entryCreationKeyState.TrySendAutoHiWithRetry("group", groupGen, 1)' in group_body
+    assert "entryCreationKeyState.SendAutoHiChatMessage(message)" not in group_body
 
 
 def test_auto_hi_baselines_existing_group_without_greeting_on_reload():
@@ -1352,6 +1462,32 @@ def test_auto_hi_new_party_members_is_opt_in_party_only_and_guid_tracked():
     assert "entryCreationKeyState.autoHiNewPartyMemberGen + 1" in auto_hi_body
     assert "if groupGen ~= entryCreationKeyState.autoHiNewPartyMemberGen" in auto_hi_body
     assert "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()" in events_body
+
+
+def test_auto_hi_new_party_member_send_retries_bounded_when_lockdown_blocks_send():
+    source = _lua_source()
+    auto_hi_body = _slice_between(
+        source,
+        "entryCreationKeyState.AutoHiGroupMemberCount = function()",
+        "CheckSessionTransition = function()",
+    )
+    new_party_body = _slice_between(
+        source,
+        "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()",
+        "CheckSessionTransition = function()",
+    )
+
+    assert "autoHiNewPartyRetryToken" in source
+    assert "autoHiNewPartyRetryDeadline" in source
+    assert 'kind == "new-party"' in auto_hi_body
+    assert "generation ~= entryCreationKeyState.autoHiNewPartyMemberGen" in auto_hi_body
+    assert "not ApplicantScoutDB.autoHiGreetNewPartyMembers" in auto_hi_body
+    assert "not entryCreationKeyState.IsPartyForAutoHiNewMembers()" in auto_hi_body
+    assert (
+        'entryCreationKeyState.TrySendAutoHiWithRetry("new-party", groupGen, 1)'
+        in new_party_body
+    )
+    assert "entryCreationKeyState.SendAutoHiChatMessage(message)" not in new_party_body
 
 
 def test_inspect_ready_batches_followup_roster_inspects_before_dirty():
@@ -1759,6 +1895,47 @@ def test_status_reports_roster_inspect_batch_diagnostics_without_raw_ids():
     assert "skipped count:" in diagnostics_body
     assert "rosterInspectPendingGUID)" not in diagnostics_body
     assert "lastQuietFullPartySignature)" not in diagnostics_body
+
+
+def test_status_support_command_skips_lfg_reads_during_chat_lockdown():
+    source = _lua_source()
+    status_body = _slice_between(
+        source,
+        'elseif msg == "status" then',
+        'elseif msg == "taintcheck" then',
+    )
+
+    guard_idx = status_body.index("local lfgReadsAllowed = not IsChatMessagingLockdown()")
+    raw_idx = status_body.index('print("|cff00ff7f---|r raw API:")')
+    raw_guard_idx = status_body.index("if lfgReadsAllowed then", raw_idx)
+    has_idx = status_body.index("C_LFGList.HasActiveEntryInfo()")
+    active_idx = status_body.index("C_LFGList.GetActiveEntryInfo()")
+    applicants_idx = status_body.index("C_LFGList.GetApplicants()")
+    skipped_idx = status_body.index("raw API skipped during ChatMessagingLockdown")
+    visibility_idx = status_body.index('print("|cff00ff7f---|r visibility:")')
+
+    assert guard_idx < raw_idx < raw_guard_idx < has_idx < active_idx < applicants_idx
+    assert raw_idx < skipped_idx < visibility_idx
+    assert "entryCreationKeyState.PrintRosterInspectBatchDiagnostics()" in status_body[:raw_idx]
+    assert "entryCreationKeyState.PrintDiagnostics()" in status_body[visibility_idx:]
+
+
+def test_taintcheck_support_command_skips_lfg_reads_during_chat_lockdown():
+    source = _lua_source()
+    taint_body = _slice_between(
+        source,
+        'elseif msg == "taintcheck" then',
+        'elseif msg == "reset" then',
+    )
+
+    guard_idx = taint_body.index("local lfgReadsAllowed = not IsChatMessagingLockdown()")
+    skip_idx = taint_body.index("LFG applicant reads skipped during ChatMessagingLockdown")
+    return_idx = taint_body.index("return", skip_idx)
+    applicants_idx = taint_body.index("C_LFGList.GetApplicants()")
+    info_idx = taint_body.index("C_LFGList.GetApplicantInfo")
+    member_idx = taint_body.index("C_LFGList.GetApplicantMemberInfo")
+
+    assert guard_idx < skip_idx < return_idx < applicants_idx < info_idx < member_idx
 
 
 def test_terminal_clear_force_path_bypasses_roster_inspect_batch_gate():

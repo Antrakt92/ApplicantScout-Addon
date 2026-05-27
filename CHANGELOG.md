@@ -7,6 +7,16 @@
 - Advanced APS1 QR transport to v8 flags so temporary LFG-read lockdown
   snapshots preserve the active listing/applicants while explicit terminal
   clears still clear companion state.
+- Fixed the Auto Hi new-party checkbox so the settings panel reflects the saved
+  setting immediately when first attached.
+- Fixed Auto Hi greetings retrying through temporary chat messaging lockdown
+  instead of silently dropping scheduled group or new-party messages.
+- Fixed leader-keystone LibKeystone request/response sends so transient chat
+  lockdown or send failures get bounded clean-timer retries before calibration
+  is treated as failed.
+- Fixed `/apscout status` and `/apscout taintcheck` support commands so raw LFG
+  reads are skipped during chat messaging lockdown while safe diagnostics still
+  print.
 
 ## 0.4.2 - 26-May-2026 - Companion 0.7.1 reliability release train
 
