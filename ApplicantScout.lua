@@ -3341,6 +3341,8 @@ end
 if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.BuildPayload = BuildPayload
     _G.ApplicantScoutFixtureHarness.HashSnapshot = HashSnapshot
+    _G.ApplicantScoutFixtureHarness.OnLeaderKeystoneData =
+        entryCreationKeyState.OnLeaderKeystoneData
 end
 
 -- Resolve QR encoder reference (set by libs/qrencode.lua via addon namespace).

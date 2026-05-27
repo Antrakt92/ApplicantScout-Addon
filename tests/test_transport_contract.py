@@ -8,9 +8,11 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-COMPANION_ROOT = REPO_ROOT.parent / "ApplicantScout-Companion"
-GOLDEN_FIXTURE = (
-    COMPANION_ROOT / "tests" / "fixtures" / "aps1_v8_lua_golden.hex"
+DEFAULT_COMPANION_ROOT = REPO_ROOT.parent / "ApplicantScout-Companion"
+LUA_FIXTURE_GENERATOR = REPO_ROOT / "tests" / "lua" / "generate_aps1_v8_fixture.lua"
+LUA_GOLDEN_CASES = (
+    (None, "aps1_v8_lua_golden.hex"),
+    ("leader-key", "aps1_v8_lua_leader_key_golden.hex"),
 )
 
 
@@ -1850,16 +1852,35 @@ def test_roster_dirty_events_are_registered():
     assert 'MarkDirty("spec")' in events_body
 
 
-def test_lua_producer_generates_committed_aps1_v8_golden_fixture():
-    if not COMPANION_ROOT.exists():
-        pytest.skip("ApplicantScout-Companion sibling checkout is not available")
-    assert GOLDEN_FIXTURE.exists(), f"missing golden fixture: {GOLDEN_FIXTURE}"
-    lua = shutil.which("lua5.1")
-    if lua is None:
-        pytest.skip("lua5.1 is not available")
+@pytest.mark.requires_companion
+@pytest.mark.parametrize(
+    ("mode", "fixture_name"),
+    LUA_GOLDEN_CASES,
+    ids=["base", "leader-key"],
+)
+def test_lua_producer_generates_committed_aps1_v8_golden_fixture(
+    pytestconfig, mode, fixture_name
+):
+    raw_companion_root = pytestconfig.getoption("--companion-root")
+    companion_root = Path(raw_companion_root) if raw_companion_root else DEFAULT_COMPANION_ROOT
+    assert companion_root.exists(), (
+        "ApplicantScout-Companion checkout is required for Lua golden contract tests; "
+        "pass --companion-root <path> when using a non-sibling checkout"
+    )
+    golden_fixture = companion_root / "tests" / "fixtures" / fixture_name
+    assert golden_fixture.exists(), f"missing golden fixture: {golden_fixture}"
 
+    raw_lua = pytestconfig.getoption("--lua51")
+    lua = raw_lua or shutil.which("lua5.1")
+    assert lua is not None, (
+        "lua5.1 is required for Lua golden contract tests; pass --lua51 <path>"
+    )
+
+    command = [lua, str(LUA_FIXTURE_GENERATOR)]
+    if mode:
+        command.append(mode)
     result = subprocess.run(
-        [lua, str(REPO_ROOT / "tests" / "lua" / "generate_aps1_v8_fixture.lua")],
+        command,
         cwd=REPO_ROOT,
         check=True,
         capture_output=True,
@@ -1867,7 +1888,7 @@ def test_lua_producer_generates_committed_aps1_v8_golden_fixture():
     )
 
     generated = "".join(result.stdout.split()).lower()
-    expected = "".join(GOLDEN_FIXTURE.read_text(encoding="ascii").split()).lower()
+    expected = "".join(golden_fixture.read_text(encoding="ascii").split()).lower()
     assert generated == expected
 
 

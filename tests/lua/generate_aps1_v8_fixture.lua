@@ -1,4 +1,8 @@
 local TWO32 = 4294967296
+local fixture_mode = arg and arg[1] or ""
+if fixture_mode ~= "" and fixture_mode ~= "leader-key" then
+    error("unsupported fixture mode: " .. tostring(fixture_mode))
+end
 
 local function norm32(n)
     n = math.floor(tonumber(n) or 0) % TWO32
@@ -159,6 +163,7 @@ UnitClass = function(unit)
     return data.class, data.class, data.classID
 end
 UnitIsUnit = function(left, right) return left == right end
+UnitIsGroupLeader = function(unit) return unit == "player" end
 GetSpecialization = function() return 3 end
 GetSpecializationInfo = function() return 73, "Protection", nil, nil, nil, "WARRIOR" end
 GetInspectSpecialization = function(unit)
@@ -270,6 +275,15 @@ local entry = {
     name = "+16 Fixture Halls",
     comment = "bring kicks",
 }
+if fixture_mode == "leader-key" then
+    assert(ApplicantScoutFixtureHarness.OnLeaderKeystoneData)(
+        17,
+        503,
+        0,
+        "Host-Realm",
+        "PARTY"
+    )
+end
 local payload = assert(ApplicantScoutFixtureHarness.BuildPayload)(entry, { 42 }, false)
 for i = 1, #payload do
     io.write(string.format("%02x", string.byte(payload, i)))
