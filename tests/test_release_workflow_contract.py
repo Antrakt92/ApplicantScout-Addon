@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 import json
+import pytest
 import re
 import subprocess
 from pathlib import Path
@@ -49,6 +50,39 @@ def _step_block(container: str, step_name: str) -> str:
 def _assert_order(container: str, *needles: str) -> None:
     positions = [container.index(needle) for needle in needles]
     assert positions == sorted(positions), f"Workflow order is wrong for {needles}"
+
+
+def _lua_print_help_command_lines(source: str) -> list[str]:
+    match = re.search(
+        r"(?ms)^local function PrintHelp\(\)\r?\n(?P<body>.*?)(?=^end\r?$)",
+        source,
+    )
+    assert match is not None, "Missing ApplicantScout.lua::PrintHelp"
+    lines = re.findall(r'print\("  (?P<line>/apscout[^"]+)"\)', match.group("body"))
+    assert lines, "PrintHelp did not expose any /apscout command lines"
+    return [line.rstrip() for line in lines]
+
+
+def _markdown_section(markdown: str, heading: str) -> str:
+    match = re.search(
+        rf"(?ms)^##\s+{re.escape(heading)}\s*\r?\n(?P<body>.*?)(?=^##\s+|\Z)",
+        markdown,
+    )
+    assert match is not None, f"Missing README section: {heading}"
+    return match.group("body")
+
+
+def _markdown_text_fence_lines(markdown: str, heading: str) -> list[str]:
+    section = _markdown_section(markdown, heading)
+    match = re.search(r"(?ms)```text\r?\n(?P<body>.*?)\r?\n```", section)
+    assert match is not None, f"Missing text code fence in README section: {heading}"
+    return [line.rstrip() for line in match.group("body").splitlines() if line.strip()]
+
+
+def _assert_copy_contains(text: str, phrase: str) -> None:
+    normalized_text = re.sub(r"\s+", " ", text)
+    normalized_phrase = re.sub(r"\s+", " ", phrase)
+    assert normalized_phrase in normalized_text
 
 
 def _workflow_action_refs(workflow: str) -> list[tuple[str, str]]:
@@ -782,3 +816,62 @@ def test_runtime_comments_do_not_claim_qr_visible_for_full_session():
 
     assert "always-visible during active session" not in source
     assert "short visibility lease" in source
+
+
+def test_readme_discloses_companion_local_data_and_checksum_limits():
+    readme = _read_repo_text("README.md")
+
+    _assert_copy_contains(readme, "_retail_\\Interface\\AddOns\\RaiderIO\\db")
+    _assert_copy_contains(readme, "%LOCALAPPDATA%\\applicant-scout\\cache\\raiderio-local")
+    _assert_copy_contains(readme, ".sha256")
+    _assert_copy_contains(readme, "file integrity, not publisher identity")
+
+
+def test_readme_documents_support_output_redaction():
+    readme = _read_repo_text("README.md")
+
+    for sensitive_surface in (
+        "/apscout status",
+        "/apscout taintcheck",
+        "companion logs",
+        "QR screenshots",
+        "manual decode output",
+        "config.env",
+        "token.json",
+        "character-cache.json",
+    ):
+        _assert_copy_contains(readme, sensitive_surface)
+
+    for private_detail in (
+        "WCL Client ID/Secret",
+        "OAuth access token",
+        "character names",
+        "realm names",
+        "listing titles/comments",
+        "screenshots folder paths",
+    ):
+        _assert_copy_contains(readme, private_detail)
+
+
+def test_readme_slash_command_blocks_match_lua_help_and_companion_readme(
+    pytestconfig,
+):
+    expected_lines = _lua_print_help_command_lines(_read_repo_text("ApplicantScout.lua"))
+    assert len(expected_lines) == 13
+    assert "/apscout toggle         flip enabled state" in expected_lines
+    assert "/apscout taintcheck     probe C_LFGList field secret-tagging" in expected_lines
+
+    assert _markdown_text_fence_lines(
+        _read_repo_text("README.md"),
+        "Handy Slash Commands",
+    ) == expected_lines
+
+    companion_root = pytestconfig.getoption("--companion-root")
+    if not companion_root:
+        pytest.skip("--companion-root is required for cross-repo README sync")
+    companion_readme = Path(companion_root) / "README.md"
+    assert companion_readme.is_file(), f"Missing paired companion README: {companion_readme}"
+    assert _markdown_text_fence_lines(
+        companion_readme.read_text(encoding="utf-8"),
+        "In-Game Commands",
+    ) == expected_lines

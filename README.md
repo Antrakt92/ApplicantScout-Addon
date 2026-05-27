@@ -111,25 +111,40 @@ Trust notes for the companion:
 - It watches only the configured WoW `Screenshots` folder for ApplicantScout QR
   payloads.
 - If the RaiderIO addon is installed, it can read local RaiderIO addon database
-  files under your WoW AddOns folder to enrich score/progress context.
+  files under `_retail_\Interface\AddOns\RaiderIO\db` to enrich score/progress
+  context.
 - It stores Warcraft Logs API credentials locally under your Windows user
   profile.
+- Decoded RaiderIO lookup payloads can be cached under
+  `%LOCALAPPDATA%\applicant-scout\cache\raiderio-local`.
 - It is source-available in the public companion repository.
 - Current Windows builds are unsigned, so SmartScreen can warn on first install;
-  the release also publishes a `.sha256` sidecar for file integrity.
+  the release also publishes a `.sha256` sidecar for file integrity, not
+  publisher identity.
+
+Before sharing support material publicly, redact `/apscout status` output,
+`/apscout taintcheck` output, companion logs, QR screenshots, manual decode
+output, `config.env`, `token.json`, and `character-cache.json`. These can
+include WCL Client ID/Secret, OAuth access token, character names, realm names,
+listing titles/comments, screenshots folder paths, keystone/listing metadata,
+and WCL/RaiderIO evidence.
 
 ## Handy Slash Commands
 
 ```text
-/apscout on | off       enable or disable capture
-/apscout config         open or close the settings panel
-/apscout status         show current state and QR diagnostics
+/apscout on | off       enable/disable capture
+/apscout toggle         flip enabled state
+/apscout config         open/close settings panel
+/apscout status         show current state + QR diagnostics
 /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle
-/apscout reset          clear transport cache and queue a fresh snapshot
-/apscout shotnow        force a snapshot now while enabled
-/apscout qrmove         toggle QR move mode; Alt-drag the QR frame
+/apscout reset          clear transport cache, queue fresh snapshot
+/apscout shotnow        force snapshot now while enabled (debug / manual sync)
+/apscout qrvisible      toggle QR frame always-visible (debug aid)
+/apscout qrmove         toggle QR move mode (Alt+drag QR frame)
 /apscout qrreset        reset QR frame position to top-left
+/apscout taintcheck     probe C_LFGList field secret-tagging
 /apscout debug [on|off] toggle debug logging
+/apscout competitive [on|off] legacy alias for Competitive / Off
 ```
 
 ## Compatibility
@@ -137,7 +152,7 @@ Trust notes for the companion:
 - WoW Retail Midnight: Interface `120005, 120007`.
 - Latest ApplicantScout addon release.
 - Latest ApplicantScout Companion release.
-- Versioned `APS1` QR payloads with optional RaiderIO, raid/M+ roster,
+- Wire payload: compact v8 (`APS1`) with optional RaiderIO, raid/M+ roster,
   leader-keystone context, and temporary LFG-lockdown handling.
 - Classic-era clients are not supported.
 
