@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Advanced APS1 QR transport to v8 flags so temporary LFG-read lockdown
+  snapshots preserve the active listing/applicants while explicit terminal
+  clears still clear companion state.
+
 ## 0.4.2 - 26-May-2026 - Companion 0.7.1 reliability release train
 
 This paired addon + companion release keeps the QR transport on compact v7 while

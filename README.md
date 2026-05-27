@@ -152,10 +152,11 @@ Trust notes for the companion:
 - WoW Retail Midnight: Interface `120005, 120007`
 - Latest ApplicantScout addon release
 - Latest ApplicantScout Companion release
-- Wire payload: compact v7, including optional RaiderIO main-score,
+- Wire payload: compact v8, including optional RaiderIO main-score,
   target-relative completion data, party/raid roster snapshots, and leader
   keystone context through ApplicantScout's built-in LibKS-compatible party
-  shim or another compatible key-tracker addon. The
+  shim or another compatible key-tracker addon. It also distinguishes
+  terminal clears from temporary LFG-read lockdown snapshots. The
   companion enriches highest timed key-per-dungeon context from the installed
   local RaiderIO database.
 - Classic-era clients are not supported

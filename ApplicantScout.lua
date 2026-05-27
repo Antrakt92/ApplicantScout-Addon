@@ -1364,7 +1364,7 @@ end
 --
 -- Wire format (binary, big-endian; unchanged from prior pixel transport — QR
 -- is purely a transport upgrade, the same bytes flow end-to-end):
---   Header:    "APS1" magic + version byte + uint16 length + 2 reserved bytes
+--   Header:    "APS1" magic + version byte + uint16 length + flags + reserved
 --   Listing:   has_listing byte; if 1: uint32 activityID + uint16 categoryID +
 --              uint16 difficultyID + key_level byte +
 --              len-prefixed dungeonName/listingName/comment (uint8 len + utf8)
@@ -3058,21 +3058,35 @@ end
 
 -- Builds binary payload from current LFG state. entry may be nil (no listing).
 -- applicantIDs is array from C_LFGList.GetApplicants(). Returns string of bytes.
-local function BuildPayload(entry, applicantIDs, terminalClear)
+local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
     local out = {}
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadApplicantCount = 0
     entryCreationKeyState.lastPayloadRosterIncomplete = false
+    if terminalClear then lfgUnavailable = false end
+    local headerFlags = 0
+    if terminalClear then
+        headerFlags = headerFlags + 0x01
+    end
+    if lfgUnavailable then
+        headerFlags = headerFlags + 0x02
+    end
 
     -- Header (length patched after we know body size)
     table.insert(out, "APS1")
-    table.insert(out, string.char(0x07))    -- protocol version (v7: leader key block)
+    table.insert(out, string.char(0x08))    -- protocol version (v8: partial/terminal flags)
     table.insert(out, "\0\0")                -- length placeholder (uint16 BE)
-    table.insert(out, "\0\0")                -- reserved
+    table.insert(out, string.char(headerFlags))
+    table.insert(out, "\0")                  -- reserved
 
     -- Listing block
     local cleanEntry = SafeTable(entry)
     local leaderKeystone = entryCreationKeyState.ResolveLeaderKeystoneContext()
+    if terminalClear then
+        cleanEntry = nil
+        applicantIDs = nil
+        leaderKeystone = nil
+    end
     local listingActivityIDForRio = 0
     local listingKeyLevelForRio = 0
     local listingQuietSignature = nil
@@ -3661,6 +3675,9 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     if entry then
         applicantIDs = SafeTable(C_LFGList.GetApplicants()) or {}
     end
+    local lfgUnavailable = isSessionActive
+       and not terminalClear
+       and not lfgReadsAllowed
     if not force
        and #applicantIDs == 0
        and entryCreationKeyState.lastEmittedApplicantCount == 0
@@ -3671,7 +3688,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         return
     end
 
-    local payload = BuildPayload(entry, applicantIDs, terminalClear)
+    local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
 
     local h = HashSnapshot(payload)
     if not force and h == lastSnapshotHash then
@@ -4808,8 +4825,9 @@ SlashCmdList.APSCOUT = function(msg)
             APSPrint("shotnow skipped — enable ApplicantScout first")
             return
         end
-        local entry = CheckSessionTransition()
-        MaybeTriggerScreenshot(true, entry)
+        local lfgReadsAllowed = not IsChatMessagingLockdown()
+        local entry = CheckSessionTransition(lfgReadsAllowed)
+        MaybeTriggerScreenshot(true, entry, nil, lfgReadsAllowed)
         APSPrint("forced snapshot — check Screenshots/ folder")
     elseif msg == "qrvisible" then
         -- Toggle debug-visible override. _RefreshQRVisibility resolves all four

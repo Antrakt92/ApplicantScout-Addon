@@ -10,7 +10,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPANION_ROOT = REPO_ROOT.parent / "ApplicantScout-Companion"
 GOLDEN_FIXTURE = (
-    COMPANION_ROOT / "tests" / "fixtures" / "aps1_v6_lua_golden.hex"
+    COMPANION_ROOT / "tests" / "fixtures" / "aps1_v8_lua_golden.hex"
 )
 
 
@@ -23,6 +23,8 @@ def _slice_between(text: str, start: str, end: str) -> str:
         "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)":
             "MaybeTriggerScreenshot = function(force, entryHint, terminalClear",
         "CheckSessionTransition = function()": "CheckSessionTransition = function(",
+        "local function BuildPayload(entry, applicantIDs, terminalClear)":
+            "local function BuildPayload(entry, applicantIDs, terminalClear",
     }
     end_fallbacks = {
         "CheckSessionTransition = function()": "CheckSessionTransition = function(",
@@ -46,7 +48,9 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
         "-- LFG entry creation",
     )
 
-    payload_idx = body.index("local payload = BuildPayload(entry, applicantIDs, terminalClear)")
+    payload_idx = body.index(
+        "local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
+    )
     hash_idx = body.index("local h = HashSnapshot(payload)")
     matrix_idx = body.index("local matrix = BuildQRMatrix(payload)")
     paint_idx = body.index("if not PaintQR(matrix) then")
@@ -78,7 +82,9 @@ def test_interaction_suppression_defers_non_force_payloads_before_dedup():
     )
 
     suppression_idx = screenshot_body.index("not force and _qrSuppressedByInteraction")
-    payload_idx = screenshot_body.index("local payload = BuildPayload(entry, applicantIDs, terminalClear)")
+    payload_idx = screenshot_body.index(
+        "local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
+    )
     suppression_block = screenshot_body[
         suppression_idx : screenshot_body.index("\n    end", suppression_idx)
     ]
@@ -501,7 +507,7 @@ def test_shotnow_refreshes_session_before_forced_snapshot():
         'elseif msg == "qrvisible" then',
     )
 
-    transition_idx = body.index("CheckSessionTransition()")
+    transition_idx = body.index("CheckSessionTransition(lfgReadsAllowed)")
     screenshot_idx = body.index("MaybeTriggerScreenshot(true")
 
     assert transition_idx < screenshot_idx
@@ -515,7 +521,7 @@ def test_payload_still_includes_raiderio_completion_summary():
         "local function HashSnapshot(payload)",
     )
 
-    assert "string.char(0x07)" in payload_body
+    assert "string.char(0x08)" in payload_body
     assert "_GetRaiderIOMPlusSummary(" in source
     assert "rioSummary.hasProfile" in payload_body
     assert "rioSummary.bestDungeonKey" in payload_body
@@ -529,7 +535,7 @@ def test_payload_v6_appends_current_group_roster_after_applicants():
         "local function HashSnapshot(payload)",
     )
 
-    assert "string.char(0x07)" in payload_body
+    assert "string.char(0x08)" in payload_body
     assert "BuildRosterPayloadRows(" in payload_body
     applicants_idx = payload_body.index("for _, chunk in ipairs(memberOut) do")
     roster_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
@@ -761,7 +767,7 @@ def test_terminal_clear_is_only_passed_by_end_session():
 
     assert "MaybeTriggerScreenshot(true, nil, true)" in end_body
     assert "MaybeTriggerScreenshot(true, entry, true)" not in shotnow_body
-    assert "MaybeTriggerScreenshot(true, entry)" in shotnow_body
+    assert "MaybeTriggerScreenshot(true, entry, nil, lfgReadsAllowed)" in shotnow_body
 
 
 def test_end_session_retries_terminal_clear_in_same_session_generation():
@@ -850,7 +856,10 @@ def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
         "local function HashSnapshot(payload)",
     )
 
-    assert "local payload = BuildPayload(entry, applicantIDs, terminalClear)" in screenshot_body
+    assert (
+        "local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
+        in screenshot_body
+    )
     assert "local rosterOut, rosterCount = {}, 0" in payload_body
     assert "local rosterIncomplete = false" in payload_body
     assert "if not terminalClear then" in payload_body
@@ -859,6 +868,88 @@ def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
     count_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
     assert terminal_guard_idx < roster_call_idx < count_idx
     assert "for _, chunk in ipairs(rosterOut) do" in payload_body
+
+
+def test_payload_v8_header_flags_distinguish_terminal_and_lfg_unavailable():
+    source = _lua_source()
+    payload_body = _slice_between(
+        source,
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        "local function HashSnapshot(payload)",
+    )
+
+    assert "string.char(0x08)" in payload_body
+    assert "local headerFlags = 0" in payload_body
+    assert "if terminalClear then" in payload_body
+    assert "0x01" in payload_body
+    assert "if lfgUnavailable then" in payload_body
+    assert "0x02" in payload_body
+    assert "table.insert(out, string.char(headerFlags))" in payload_body
+    assert 'table.insert(out, "\\0")' in payload_body
+
+
+def test_terminal_clear_payload_suppresses_leader_key_block():
+    source = _lua_source()
+    payload_body = _slice_between(
+        source,
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        "local function HashSnapshot(payload)",
+    )
+
+    resolve_idx = payload_body.index(
+        "local leaderKeystone = entryCreationKeyState.ResolveLeaderKeystoneContext()"
+    )
+    clear_idx = payload_body.index("if terminalClear then", resolve_idx)
+    nil_idx = payload_body.index("leaderKeystone = nil", clear_idx)
+    emit_idx = payload_body.index("if leaderKeystone and leaderKeystone.level > 0 then")
+    assert resolve_idx < clear_idx < nil_idx < emit_idx
+
+
+def test_terminal_clear_payload_forces_empty_listing_and_applicants():
+    source = _lua_source()
+    payload_body = _slice_between(
+        source,
+        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        "local function HashSnapshot(payload)",
+    )
+
+    clean_entry_idx = payload_body.index("local cleanEntry = SafeTable(entry)")
+    clear_idx = payload_body.index("if terminalClear then", clean_entry_idx)
+    listing_idx = payload_body.index("if cleanEntry then")
+    applicants_idx = payload_body.index("local cleanApplicantIDs = SafeTable(applicantIDs)")
+    assert clean_entry_idx < clear_idx < listing_idx < applicants_idx
+    assert "cleanEntry = nil" in payload_body[clear_idx:listing_idx]
+    assert "applicantIDs = nil" in payload_body[clear_idx:listing_idx]
+
+
+def test_lockdown_active_roster_snapshot_marks_lfg_unavailable_not_terminal():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    unavailable_idx = screenshot_body.index("local lfgUnavailable =")
+    payload_idx = screenshot_body.index("local payload = BuildPayload")
+    assert unavailable_idx < payload_idx
+    assert "not terminalClear" in screenshot_body[unavailable_idx:payload_idx]
+    assert "not lfgReadsAllowed" in screenshot_body[unavailable_idx:payload_idx]
+    assert "BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)" in screenshot_body
+
+
+def test_shotnow_uses_lockdown_guard_without_terminal_clear():
+    source = _lua_source()
+    shotnow_body = _slice_between(
+        source,
+        'elseif msg == "shotnow" then',
+        'elseif msg == "qrvisible" then',
+    )
+
+    assert "local lfgReadsAllowed = not IsChatMessagingLockdown()" in shotnow_body
+    assert "local entry = CheckSessionTransition(lfgReadsAllowed)" in shotnow_body
+    assert "MaybeTriggerScreenshot(true, entry, nil, lfgReadsAllowed)" in shotnow_body
+    assert "MaybeTriggerScreenshot(true, entry, true" not in shotnow_body
 
 
 def test_roster_payload_marks_group_snapshot_incomplete_when_expected_rows_are_missing():
@@ -1495,7 +1586,9 @@ def test_initial_unknown_roster_spec_preflight_defers_only_when_inspect_starts()
     )
 
     ensure_idx = screenshot_body.index("entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()")
-    payload_idx = screenshot_body.index("local payload = BuildPayload(entry, applicantIDs, terminalClear)")
+    payload_idx = screenshot_body.index(
+        "local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
+    )
 
     assert "_ForEachRosterUnit(function(unit)" in ensure_body
     assert "entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid)" in ensure_body
@@ -1757,7 +1850,7 @@ def test_roster_dirty_events_are_registered():
     assert 'MarkDirty("spec")' in events_body
 
 
-def test_lua_producer_generates_committed_aps1_v6_golden_fixture():
+def test_lua_producer_generates_committed_aps1_v8_golden_fixture():
     if not COMPANION_ROOT.exists():
         pytest.skip("ApplicantScout-Companion sibling checkout is not available")
     assert GOLDEN_FIXTURE.exists(), f"missing golden fixture: {GOLDEN_FIXTURE}"
@@ -1766,7 +1859,7 @@ def test_lua_producer_generates_committed_aps1_v6_golden_fixture():
         pytest.skip("lua5.1 is not available")
 
     result = subprocess.run(
-        [lua, str(REPO_ROOT / "tests" / "lua" / "generate_aps1_v6_fixture.lua")],
+        [lua, str(REPO_ROOT / "tests" / "lua" / "generate_aps1_v8_fixture.lua")],
         cwd=REPO_ROOT,
         check=True,
         capture_output=True,
