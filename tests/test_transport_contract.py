@@ -876,6 +876,81 @@ def test_end_session_retries_terminal_clear_in_same_session_generation():
     assert retry_clear_idx < hide_idx
 
 
+def test_terminal_clear_screenshot_callback_is_session_generation_guarded():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    capture_idx = screenshot_body.index(
+        "local terminalClearSessionGen = terminalClear and sessionGen or nil"
+    )
+    schedule_idx = screenshot_body.index(
+        "C_Timer.After(forceVisibleShotDelay, function()"
+    )
+    guard_idx = screenshot_body.index("if terminalClearSessionGen", schedule_idx)
+    mismatch_idx = screenshot_body.index(
+        "sessionGen ~= terminalClearSessionGen",
+        guard_idx,
+    )
+    active_idx = screenshot_body.index("isSessionActive", guard_idx)
+    release_idx = screenshot_body.index(
+        "_ReleaseForceVisibleShotLease(forceVisibleShotGen)",
+        guard_idx,
+    )
+    return_idx = screenshot_body.index("return", release_idx)
+    debug_idx = screenshot_body.index(
+        "if ApplicantScoutDB and ApplicantScoutDB.debug then",
+        schedule_idx,
+    )
+    shot_idx = screenshot_body.index("Screenshot()", schedule_idx)
+    normal_release_idx = screenshot_body.index(
+        "_ReleaseForceVisibleShotLease(forceVisibleShotGen)",
+        shot_idx,
+    )
+
+    assert capture_idx < schedule_idx < guard_idx
+    assert guard_idx < mismatch_idx < release_idx < return_idx < debug_idx < shot_idx
+    assert guard_idx < active_idx < release_idx
+    assert shot_idx < normal_release_idx
+
+
+def test_start_session_resets_last_shot_time_before_visibility_refresh():
+    source = _lua_source()
+    start_body = _slice_between(
+        source,
+        "StartSession = function()",
+        "EndSession = function()",
+    )
+
+    hash_idx = start_body.index("lastSnapshotHash = nil")
+    shot_idx = start_body.index("lastShotTime = 0")
+    refresh_idx = start_body.index("_RefreshQRVisibility()")
+
+    assert hash_idx < shot_idx < refresh_idx
+
+
+def test_terminal_clear_callback_guard_does_not_gate_manual_force_snapshots():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    schedule_idx = screenshot_body.index(
+        "C_Timer.After(forceVisibleShotDelay, function()"
+    )
+    shot_idx = screenshot_body.index("Screenshot()", schedule_idx)
+    guard_block = screenshot_body[schedule_idx:shot_idx]
+
+    assert "terminalClearSessionGen" in guard_block
+    assert "_qrSuppressedByInteraction" not in guard_block
+    assert "ApplicantScoutDB and ApplicantScoutDB.enabled" not in guard_block
+
+
 def test_disable_cleanup_restores_cvars_after_terminal_clear_retry_capture_window():
     source = _lua_source()
     state_body = _slice_between(

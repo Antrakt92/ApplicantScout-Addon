@@ -471,9 +471,10 @@ end
 --                 state for fresh full snapshot.
 --   EndSession:   invariant transition true→false. Force-emits final empty
 --                 snapshot (clears companion overlay state).
---   sessionGen:   monotonic counter — verified by EndSession's deferred Hide
---                 callback so a fast Start→End→Start sequence doesn't have
---                 the prior End's deferred Hide fire mid-new-session.
+--   sessionGen:   monotonic counter — verified by EndSession's deferred
+--                 terminal-clear capture and Hide callbacks so a fast
+--                 Start→End→Start sequence doesn't let the prior End mutate
+--                 a fresh session.
 
 StartSession = function()
     if isSessionActive then return end
@@ -484,6 +485,7 @@ StartSession = function()
     -- BuildPayload emits VERSION on every shot so companion-launched-mid-session
     -- still receives region/realm info from the freshest backlog snapshot.
     lastSnapshotHash = nil
+    lastShotTime = 0
     entryCreationKeyState.lastEmittedApplicantCount = 0
     pendingShotDirty = false
     lastQREncodeMode = "never"
@@ -539,12 +541,12 @@ EndSession = function()
     entryCreationKeyState.entryCreationKeyLevelCache = nil
 
     -- Schedule deferred Hide AFTER the final clear-shot has had a chance to
-    -- fire. The screenshot path inside MaybeTriggerScreenshot is
-    -- C_Timer.After(0, Screenshot()), so the actual capture happens NEXT
-    -- frame. Hiding synchronously here would make the screenshot capture an
-    -- empty screen (no QR), companion never sees the clear signal, overlay
-    -- stuck showing pre-end applicants. QR_RENDER_SETTLE_S lets the
-    -- Screenshot() fire first.
+    -- fire. The screenshot path inside MaybeTriggerScreenshot uses
+    -- C_Timer.After(forceVisibleShotDelay, Screenshot()), so hidden QR frames
+    -- may wait QR_RENDER_SETTLE_S before the capture. Hiding synchronously
+    -- here would make the screenshot capture an empty screen (no QR),
+    -- companion never sees the clear signal, overlay stuck showing pre-end
+    -- applicants.
     -- All gating (qrAlwaysVisible, new-session-started) re-checked at fire
     -- time so the deferred Hide respects the latest toggle state — important
     -- for /apscout off which resets qrAlwaysVisible right after EndSession.
@@ -4038,6 +4040,10 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         entryCreationKeyState.lastQuietFullPartySignature = quietSignature
     end
     local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()
+    -- WHY: terminal clears are delayed until the QR paints. If a new session
+    -- starts before that callback, the stale clear must not wipe the companion
+    -- state for the fresh listing.
+    local terminalClearSessionGen = terminalClear and sessionGen or nil
 
     entryCreationKeyState.lastEmittedApplicantCount =
         entryCreationKeyState.lastPayloadApplicantCount
@@ -4061,6 +4067,11 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     -- mode or overlapping shot lease), C_Timer.After(0) still gives the fresh
     -- texture set one render pass before Screenshot().
     C_Timer.After(forceVisibleShotDelay, function()
+        if terminalClearSessionGen
+           and (sessionGen ~= terminalClearSessionGen or isSessionActive) then
+            _ReleaseForceVisibleShotLease(forceVisibleShotGen)
+            return
+        end
         if ApplicantScoutDB and ApplicantScoutDB.debug then
             print(string.format("|cff999999[APS-debug]|r CAP qr_size=%dpx hash=%x t=%.2f",
                   qrCurrentSize, h, GetTime()))
