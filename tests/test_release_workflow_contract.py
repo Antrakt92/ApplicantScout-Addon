@@ -853,6 +853,17 @@ def test_readme_documents_support_output_redaction():
         _assert_copy_contains(readme, private_detail)
 
 
+def test_readme_documents_residual_qr_screenshot_cleanup_risk():
+    readme = _read_repo_text("README.md")
+
+    for phrase in (
+        "QR screenshots may remain",
+        "companion is absent, interrupted",
+        "synced/shared before cleanup",
+    ):
+        _assert_copy_contains(readme, phrase)
+
+
 def test_readme_slash_command_blocks_match_lua_help_and_companion_readme(
     pytestconfig,
 ):

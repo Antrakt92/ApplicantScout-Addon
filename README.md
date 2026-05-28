@@ -129,6 +129,9 @@ include WCL Client ID/Secret, OAuth access token, character names, realm names,
 listing titles/comments, screenshots folder paths, keystone/listing metadata,
 and WCL/RaiderIO evidence.
 
+QR screenshots may remain if the companion is absent, interrupted, pointed at
+the wrong folder, or the Screenshots folder is synced/shared before cleanup.
+
 ## Handy Slash Commands
 
 ```text
