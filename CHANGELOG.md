@@ -2,15 +2,25 @@
 
 ## Unreleased
 
+## 0.4.3 - 28-May-2026 - Companion 0.8.0 APS1 v8 release train
+
+This paired addon + companion release advances QR transport to compact v8 for
+temporary LFG-read lockdown snapshots and ships ApplicantScout Companion
+`0.8.0` for matching decode support, screenshot cleanup, local reliability,
+settings, updater, and Warcraft Logs resilience.
+
 ### Changed
 
 - Advanced APS1 QR transport to v8 flags so temporary LFG-read lockdown
   snapshots preserve the active listing/applicants while explicit terminal
-  clears still clear companion state. Keep this addon paired with a companion
-  release that supports APS1 v8.
+  clears still clear companion state.
 
 ### Fixed
 
+- Fixed stale terminal-clear captures so older reset screenshots cannot clear a
+  newer active listing in the companion.
+- Fixed roster snapshots skipping placeholder unit identities and normalized
+  saved boolean settings before they reach runtime toggles.
 - Fixed addon check and release workflows to request the companion's explicit
   smoke visual-fixture mode, so intentional overlay UI baseline drift does not
   block addon-side transport and packaging checks.
@@ -26,6 +36,22 @@
 - Fixed `/apscout status` and `/apscout taintcheck` support commands so raw LFG
   reads are skipped during chat messaging lockdown while safe diagnostics still
   print.
+
+### Improved
+
+- Refreshed README and marketplace-facing visual/support copy, including
+  updated overlay screenshots, current slash-command help, privacy guidance,
+  and residual QR screenshot cleanup expectations.
+- Companion `0.8.0` adds a marker-safe screenshot cleanup command, keeps
+  temporary partial snapshots from wiping active rows, improves raid evidence
+  coloring, hardens local RaiderIO/config/cache boundaries, stabilizes overlay
+  restore and settings flows, and strengthens paired release gates.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.8.0`.
+- Wire payloads advance to compact v8 for temporary LFG-lockdown handling. Keep
+  the addon and companion on their matching current releases.
 
 ## 0.4.2 - 26-May-2026 - Companion 0.7.1 reliability release train
 
