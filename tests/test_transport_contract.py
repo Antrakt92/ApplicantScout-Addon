@@ -16,6 +16,26 @@ LUA_GOLDEN_CASES = (
 )
 
 
+def _lua51_path(pytestconfig):
+    raw_lua = pytestconfig.getoption("--lua51")
+    lua = raw_lua or shutil.which("lua5.1")
+    assert lua is not None, (
+        "lua5.1 is required for Lua fixture tests; pass --lua51 <path>"
+    )
+    return lua
+
+
+def _run_lua_fixture(pytestconfig, *args: str) -> str:
+    result = subprocess.run(
+        [_lua51_path(pytestconfig), str(LUA_FIXTURE_GENERATOR), *args],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout
+
+
 def _lua_source() -> str:
     return (REPO_ROOT / "ApplicantScout.lua").read_text(encoding="utf-8")
 
@@ -443,7 +463,9 @@ def test_roster_name_filters_unknown_placeholder_unit_names():
     assert helper_idx < unit_name_idx < guard_idx
     assert "_G.UNKNOWNOBJECT" in name_body
     assert "_G.UNKNOWN" in name_body
-    assert 'name == "Unknown"' in name_body
+    assert "name:find(\"-\", 1, true)" in name_body
+    assert 'base == "Unknown"' in name_body
+    assert 'base == "UNKNOWNOBJECT"' in name_body
 
 
 def test_safe_str_strips_player_links_before_bare_pipe_cleanup():
@@ -2047,26 +2069,21 @@ def test_lua_producer_generates_committed_aps1_v8_golden_fixture(
     golden_fixture = companion_root / "tests" / "fixtures" / fixture_name
     assert golden_fixture.exists(), f"missing golden fixture: {golden_fixture}"
 
-    raw_lua = pytestconfig.getoption("--lua51")
-    lua = raw_lua or shutil.which("lua5.1")
-    assert lua is not None, (
-        "lua5.1 is required for Lua golden contract tests; pass --lua51 <path>"
-    )
-
-    command = [lua, str(LUA_FIXTURE_GENERATOR)]
-    if mode:
-        command.append(mode)
-    result = subprocess.run(
-        command,
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    generated = "".join(result.stdout.split()).lower()
+    args = (mode,) if mode else ()
+    generated = "".join(_run_lua_fixture(pytestconfig, *args).split()).lower()
     expected = "".join(golden_fixture.read_text(encoding="ascii").split()).lower()
     assert generated == expected
+
+
+def test_lua_producer_omits_fallback_placeholder_roster_identity(pytestconfig):
+    generated = "".join(
+        _run_lua_fixture(pytestconfig, "placeholder-roster").split()
+    )
+    payload = bytes.fromhex(generated)
+
+    assert b"Unknown-Realm" not in payload
+    assert b"Host-Realm" in payload
+    assert b"Healer-Realm" in payload
 
 
 def test_listing_key_level_uses_owned_keystone_only_after_listing_match_guard():

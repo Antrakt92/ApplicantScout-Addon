@@ -407,13 +407,32 @@ entryCreationKeyState.NormalizeAutoHiMessage = function(value)
     return text
 end
 
+entryCreationKeyState.NormalizeSavedBoolean = function(value)
+    if IsSecretValue(value) then return false end
+    local valueType = type(value)
+    if valueType == "boolean" then return value end
+    if valueType == "number" then
+        if value ~= value then return false end
+        return value == 1
+    end
+    if valueType == "string" then
+        local token = value:gsub("^%s+", ""):gsub("%s+$", ""):lower()
+        return token == "true" or token == "1"
+            or token == "on" or token == "yes"
+    end
+    return false
+end
+
 InitDB = function()
     if type(ApplicantScoutDB) ~= "table" then ApplicantScoutDB = {} end
     if ApplicantScoutDB.autoMPlusPlaystyle == nil
        and ApplicantScoutDB.autoCompetitivePlaystyle ~= nil then
+        local legacyCompetitive =
+            entryCreationKeyState.NormalizeSavedBoolean(
+                ApplicantScoutDB.autoCompetitivePlaystyle
+            )
         ApplicantScoutDB.autoMPlusPlaystyle =
-            ApplicantScoutDB.autoCompetitivePlaystyle
-            and AUTO_MPLUS_PLAYSTYLE_DEFAULT
+            legacyCompetitive and AUTO_MPLUS_PLAYSTYLE_DEFAULT
             or AUTO_MPLUS_PLAYSTYLE_DISABLED
     end
     for k, v in pairs(DB_DEFAULTS) do
@@ -423,6 +442,18 @@ InitDB = function()
         _NormalizeAutoMPlusPlaystyleToken(ApplicantScoutDB.autoMPlusPlaystyle)
     ApplicantScoutDB.autoHiMessage =
         entryCreationKeyState.NormalizeAutoHiMessage(ApplicantScoutDB.autoHiMessage)
+    ApplicantScoutDB.enabled =
+        entryCreationKeyState.NormalizeSavedBoolean(ApplicantScoutDB.enabled)
+    ApplicantScoutDB.debug =
+        entryCreationKeyState.NormalizeSavedBoolean(ApplicantScoutDB.debug)
+    ApplicantScoutDB.autoHiGreetNewPartyMembers =
+        entryCreationKeyState.NormalizeSavedBoolean(
+            ApplicantScoutDB.autoHiGreetNewPartyMembers
+        )
+    ApplicantScoutDB.debugDefaultMigrated =
+        entryCreationKeyState.NormalizeSavedBoolean(
+            ApplicantScoutDB.debugDefaultMigrated
+        )
     ApplicantScoutDB.autoCompetitivePlaystyle = nil
     if not ApplicantScoutDB.debugDefaultMigrated then
         ApplicantScoutDB.debug = false
@@ -2231,12 +2262,14 @@ end
 
 local function _IsPlaceholderUnitName(name)
     name = SafeStr(name, "")
-    if name == "" or name == "?" then return true end
+    local sep = name:find("-", 1, true)
+    local base = sep and name:sub(1, sep - 1) or name
+    if base == "" or base == "?" then return true end
     local unknownObject = SafeStr(_G.UNKNOWNOBJECT, "")
-    if unknownObject ~= "" and name == unknownObject then return true end
+    if unknownObject ~= "" and base == unknownObject then return true end
     local unknown = SafeStr(_G.UNKNOWN, "")
-    if unknown ~= "" and name == unknown then return true end
-    return name == "Unknown"
+    if unknown ~= "" and base == unknown then return true end
+    return base == "Unknown" or base == "UNKNOWN" or base == "UNKNOWNOBJECT"
 end
 
 local function _UnitFullNameForTransport(unit)
