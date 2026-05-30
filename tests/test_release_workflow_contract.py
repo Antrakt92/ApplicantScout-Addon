@@ -4,6 +4,7 @@ from collections import Counter
 import json
 import pytest
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -115,7 +116,7 @@ def _release_tool_install_args(workflow: str) -> dict[str, list[str]]:
     return install_args
 
 
-def _run_release_check(*args: str) -> subprocess.CompletedProcess[str]:
+def _run_release_check_in(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             "powershell",
@@ -123,14 +124,34 @@ def _run_release_check(*args: str) -> subprocess.CompletedProcess[str]:
             "-ExecutionPolicy",
             "Bypass",
             "-File",
-            str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
+            str(repo / "scripts" / "check-release-version.ps1"),
             *args,
         ],
-        cwd=REPO_ROOT,
+        cwd=repo,
         check=False,
         text=True,
         capture_output=True,
     )
+
+
+def _run_release_check(*args: str) -> subprocess.CompletedProcess[str]:
+    return _run_release_check_in(REPO_ROOT, *args)
+
+
+def _copy_release_check_fixture(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    for path in (
+        "scripts/check-release-version.ps1",
+        "ApplicantScout.toc",
+        "CHANGELOG.md",
+        "README.md",
+    ):
+        source = REPO_ROOT / path
+        target = repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    return repo
 
 
 def _fake_gh_release_view(
@@ -349,6 +370,39 @@ def test_release_version_script_outputs_paired_companion_ref(tmp_path: Path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert output_path.read_text(encoding="utf-8") == "companion_ref=v0.8.0\n"
+
+
+@pytest.mark.parametrize(
+    "bad_install_copy",
+    [
+        "https://github.com/Antrakt92/ApplicantScout-Addon/releases/download/v0.4.3/ApplicantScout-v0.4.3.zip",
+        "https://github.com/Antrakt92/ApplicantScout-Companion/releases/download/v0.8.0/ApplicantScoutCompanionSetup-0.8.0.exe",
+        "https://github.com/Antrakt92/ApplicantScout-Addon/releases",
+        "https://github.com/Antrakt92/ApplicantScout-Companion/releases",
+        "https://github.com/Antrakt92/ApplicantScout-Addon/archive/refs/tags/v0.4.3.zip",
+        "https://github.com/Antrakt92/ApplicantScout-Addon/zipball/v0.4.3",
+        "https://github.com/Antrakt92/ApplicantScout-Companion/tarball/v0.8.0",
+        "ApplicantScout WoW addon `0.4.3`",
+        "ApplicantScout Companion `0.8.0`",
+        "Install `ApplicantScout-0.4.3.zip` from GitHub.",
+        "Install `ApplicantScoutCompanionSetup-0.8.0.exe` from GitHub.",
+    ],
+)
+def test_release_version_script_rejects_pinned_readme_install_links(
+    tmp_path: Path,
+    bad_install_copy: str,
+):
+    repo = _copy_release_check_fixture(tmp_path)
+    readme_path = repo / "README.md"
+    readme_path.write_text(
+        readme_path.read_text(encoding="utf-8") + f"\n{bad_install_copy}\n",
+        encoding="utf-8",
+    )
+
+    result = _run_release_check_in(repo, "-Tag", "v0.4.3")
+
+    assert result.returncode != 0
+    assert "use releases/latest" in (result.stdout + result.stderr)
 
 
 def test_release_version_script_validates_paired_companion_minimum_addon(

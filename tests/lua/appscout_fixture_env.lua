@@ -275,7 +275,10 @@ local env = {
 env.load_addon = function()
     ApplicantScoutFixtureHarness = {}
     local chunk = assert(loadfile("ApplicantScout.lua"))
-    chunk("ApplicantScout", { QR = {} })
+    chunk("ApplicantScout", {
+        QR = {},
+        ApplicantScoutFixtureHarness = ApplicantScoutFixtureHarness,
+    })
     return ApplicantScoutFixtureHarness
 end
 

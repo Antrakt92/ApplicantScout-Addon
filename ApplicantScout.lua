@@ -4162,6 +4162,12 @@ _MaybeAutoSelectDefaultPlaystyle = function(panel, reason)
     return true
 end
 
+if type(_addonNS) == "table"
+   and type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
+    _addonNS.ApplicantScoutFixtureHarness.MaybeAutoSelectDefaultPlaystyle =
+        _MaybeAutoSelectDefaultPlaystyle
+end
+
 _SetupLFGEntryCreationKeyCapture = function()
     if lfgEntryCreationKeyCaptureState.hooksSetup or lfgEntryCreationKeyCaptureState.hookError then
         return lfgEntryCreationKeyCaptureState.hooksSetup

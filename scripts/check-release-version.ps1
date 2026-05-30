@@ -58,6 +58,38 @@ function Get-TopChangelogSection {
     return $Match
 }
 
+function Assert-PublicInstallLinksUseLatest {
+    param(
+        [string]$Name,
+        [string]$Text,
+        [string[]]$RequiredLatestUrls
+    )
+
+    $LinkErrors = @()
+    foreach ($Url in $RequiredLatestUrls) {
+        if (-not $Text.Contains($Url)) {
+            $LinkErrors += "$Name does not point installs at $Url."
+        }
+    }
+
+    $PinnedPatterns = @(
+        'https://github\.com/Antrakt92/(ApplicantScout-Addon|ApplicantScout-Companion)/(releases(?!/latest)(?:[/?#\s\)\]\}]|$)|archive(/|$)|archive/refs/tags/|zipball/|tarball/)',
+        '\bApplicantScout\s+WoW\s+addon\s+`?\d+\.\d+\.\d+`?',
+        '\bApplicantScout\s+Companion\s+`?\d+\.\d+\.\d+`?',
+        '\bApplicantScout-v?\d+\.\d+\.\d+\.zip\b',
+        '\bApplicantScoutCompanionSetup-\d+\.\d+\.\d+\.exe(?:\.sha256)?\b',
+        '\bApplicantScoutCompanion-\d+\.\d+\.\d+-portable\.zip\b'
+    )
+    foreach ($Pattern in $PinnedPatterns) {
+        if ([regex]::IsMatch($Text, $Pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+            $LinkErrors += "$Name pins install/version copy; use releases/latest for cross-component docs."
+            break
+        }
+    }
+
+    return $LinkErrors
+}
+
 function Write-GitHubOutput {
     param(
         [string]$Path,
@@ -263,6 +295,7 @@ $TocVersion = Get-SingleRegexMatch `
 $TopChangelogMatch = Get-TopChangelogSection -Path "CHANGELOG.md"
 $ChangelogVersion = $TopChangelogMatch.Groups[1].Value
 $TopChangelogSection = $TopChangelogMatch.Value
+$Readme = Get-Content -LiteralPath (Join-Path $RepoRoot "README.md") -Raw -Encoding UTF8
 
 $PairedCompanionMatches = [regex]::Matches(
     $TopChangelogSection,
@@ -288,6 +321,13 @@ if ($PairedCompanionVersions.Count -eq 0) {
 if ($PairedCompanionVersions.Count -gt 1) {
     $Errors += "CHANGELOG.md top entry names multiple paired ApplicantScout Companion versions: $($PairedCompanionVersions -join ', ')."
 }
+$Errors += Assert-PublicInstallLinksUseLatest `
+    -Name "README.md" `
+    -Text $Readme `
+    -RequiredLatestUrls @(
+        "https://github.com/Antrakt92/ApplicantScout-Addon/releases/latest",
+        "https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest"
+    )
 
 if ($Errors.Count -gt 0) {
     throw ($Errors -join "`n")

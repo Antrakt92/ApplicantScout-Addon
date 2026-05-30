@@ -75,6 +75,8 @@ if scenario == "corrupt" then
 elseif scenario == "defaults" then
     assert_equal("enabled", ApplicantScoutDB.enabled, true)
     assert_equal("debug", ApplicantScoutDB.debug, false)
+    assert_equal("autoMPlusPlaystyle", ApplicantScoutDB.autoMPlusPlaystyle, "FunSerious")
+    assert_nil("autoCompetitivePlaystyle", ApplicantScoutDB.autoCompetitivePlaystyle)
     assert_equal(
         "autoHiGreetNewPartyMembers",
         ApplicantScoutDB.autoHiGreetNewPartyMembers,
