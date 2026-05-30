@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 0.4.4 - 30-May-2026 - Companion 0.8.1 WCL retry release train
+
+This paired addon + companion release keeps the addon QR runtime and compact v8
+wire format unchanged while shipping ApplicantScout Companion `0.8.1` for
+Warcraft Logs retry handling, release-check hardening, and refreshed public
+visual media.
+
+### Improved
+
+- Refreshed README overlay screenshots with anonymized local media and balanced
+  the public image layout for the current raid and Mythic+ overlay views.
+- Added release-copy and default M+ playstyle regression coverage so current
+  defaults, public install links, and release metadata stay guarded before
+  packaging.
+- Companion `0.8.1` adds scoped WCL retry handling for transient OAuth,
+  malformed, and GraphQL failures, refreshes anonymized public overlay media,
+  and tightens release-prep checks.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.8.1`.
+- No user-facing addon runtime or wire-format changes; wire payloads remain
+  compact v8 for temporary LFG-lockdown handling.
+
 ## 0.4.3 - 28-May-2026 - Companion 0.8.0 APS1 v8 release train
 
 This paired addon + companion release advances QR transport to compact v8 for
