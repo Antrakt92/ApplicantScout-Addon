@@ -19,8 +19,8 @@ your listing fills, and understanding a group you just joined before the key
 starts or the first raid pull happens.
 
 <p align="center">
-  <img src="docs/visual/applicantscout-curseforge-raid-party-overlay.jpg" alt="ApplicantScout Party view with Warcraft Logs, RaiderIO, raid progress, and role context" width="49%">
-  <img src="docs/visual/applicantscout-curseforge-mplus-overlay.jpg" alt="ApplicantScout Mythic Plus overlay with key fit, WCL percentiles, and RaiderIO score context" width="40%">
+  <img src="docs/visual/applicantscout-curseforge-raid-party-overlay.jpg" alt="ApplicantScout raid applicant overlay with Warcraft Logs, RaiderIO, raid progress, and role context" width="45%">
+  <img src="docs/visual/applicantscout-curseforge-mplus-overlay.jpg" alt="ApplicantScout Mythic Plus applicant overlay with key fit, WCL percentiles, and RaiderIO score context" width="45%">
 </p>
 
 > [!IMPORTANT]

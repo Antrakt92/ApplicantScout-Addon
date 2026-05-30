@@ -881,6 +881,28 @@ def test_readme_discloses_companion_local_data_and_checksum_limits():
     _assert_copy_contains(readme, "file integrity, not publisher identity")
 
 
+def test_readme_uses_local_anonymized_public_overlay_media():
+    readme = _read_repo_text("README.md")
+
+    assert "media.forgecdn.net" not in readme
+    for image_name in (
+        "applicantscout-curseforge-raid-party-overlay.jpg",
+        "applicantscout-curseforge-mplus-overlay.jpg",
+    ):
+        assert f'src="docs/visual/{image_name}"' in readme
+        assert (REPO_ROOT / "docs" / "visual" / image_name).read_bytes().startswith(
+            b"\xff\xd8\xff"
+        )
+    assert (
+        'alt="ApplicantScout raid applicant overlay with Warcraft Logs, RaiderIO, '
+        'raid progress, and role context" width="45%"'
+    ) in readme
+    assert (
+        'alt="ApplicantScout Mythic Plus applicant overlay with key fit, WCL '
+        'percentiles, and RaiderIO score context" width="45%"'
+    ) in readme
+
+
 def test_readme_documents_support_output_redaction():
     readme = _read_repo_text("README.md")
 
