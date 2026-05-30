@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 0.4.5 - 30-May-2026 - Companion 0.8.2 self-update release train
+
+This paired addon + companion release keeps the addon QR runtime and compact v8
+wire format unchanged while shipping ApplicantScout Companion `0.8.2` to
+restore checksum-gated one-click self updates for unsigned Windows installer
+releases.
+
+### Improved
+
+- Companion `0.8.2` restores in-app update launch after `.sha256` verification
+  for current unsigned builds, while keeping checksum copy clear that integrity
+  is not publisher identity.
+- Refreshed paired release metadata so addon users see the companion updater
+  fix in the public release train without changing addon Lua behavior.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.8.2`.
+- No user-facing addon runtime or wire-format changes; wire payloads remain
+  compact v8 for temporary LFG-lockdown handling.
+
 ## 0.4.4 - 30-May-2026 - Companion 0.8.1 WCL retry release train
 
 This paired addon + companion release keeps the addon QR runtime and compact v8

@@ -358,7 +358,7 @@ def test_release_version_script_outputs_paired_companion_ref(tmp_path: Path):
             "-File",
             str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
             "-Tag",
-            "v0.4.4",
+            "v0.4.5",
             "-PairedCompanionRefOutputPath",
             str(output_path),
         ],
@@ -369,23 +369,23 @@ def test_release_version_script_outputs_paired_companion_ref(tmp_path: Path):
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert output_path.read_text(encoding="utf-8") == "companion_ref=v0.8.1\n"
+    assert output_path.read_text(encoding="utf-8") == "companion_ref=v0.8.2\n"
 
 
 @pytest.mark.parametrize(
     "bad_install_copy",
     [
-        "https://github.com/Antrakt92/ApplicantScout-Addon/releases/download/v0.4.4/ApplicantScout-v0.4.4.zip",
-        "https://github.com/Antrakt92/ApplicantScout-Companion/releases/download/v0.8.1/ApplicantScoutCompanionSetup-0.8.1.exe",
+        "https://github.com/Antrakt92/ApplicantScout-Addon/releases/download/v0.4.5/ApplicantScout-v0.4.5.zip",
+        "https://github.com/Antrakt92/ApplicantScout-Companion/releases/download/v0.8.2/ApplicantScoutCompanionSetup-0.8.2.exe",
         "https://github.com/Antrakt92/ApplicantScout-Addon/releases",
         "https://github.com/Antrakt92/ApplicantScout-Companion/releases",
-        "https://github.com/Antrakt92/ApplicantScout-Addon/archive/refs/tags/v0.4.4.zip",
-        "https://github.com/Antrakt92/ApplicantScout-Addon/zipball/v0.4.4",
-        "https://github.com/Antrakt92/ApplicantScout-Companion/tarball/v0.8.1",
-        "ApplicantScout WoW addon `0.4.4`",
-        "ApplicantScout Companion `0.8.1`",
-        "Install `ApplicantScout-0.4.4.zip` from GitHub.",
-        "Install `ApplicantScoutCompanionSetup-0.8.1.exe` from GitHub.",
+        "https://github.com/Antrakt92/ApplicantScout-Addon/archive/refs/tags/v0.4.5.zip",
+        "https://github.com/Antrakt92/ApplicantScout-Addon/zipball/v0.4.5",
+        "https://github.com/Antrakt92/ApplicantScout-Companion/tarball/v0.8.2",
+        "ApplicantScout WoW addon `0.4.5`",
+        "ApplicantScout Companion `0.8.2`",
+        "Install `ApplicantScout-0.4.5.zip` from GitHub.",
+        "Install `ApplicantScoutCompanionSetup-0.8.2.exe` from GitHub.",
     ],
 )
 def test_release_version_script_rejects_pinned_readme_install_links(
@@ -399,7 +399,7 @@ def test_release_version_script_rejects_pinned_readme_install_links(
         encoding="utf-8",
     )
 
-    result = _run_release_check_in(repo, "-Tag", "v0.4.4")
+    result = _run_release_check_in(repo, "-Tag", "v0.4.5")
 
     assert result.returncode != 0
     assert "use releases/latest" in (result.stdout + result.stderr)
@@ -415,11 +415,11 @@ def test_release_version_script_validates_paired_companion_minimum_addon(
             [
                 "# ApplicantScout Companion Release Notes",
                 "",
-                "## 0.8.1 - 30-May-2026",
+                "## 0.8.2 - 30-May-2026",
                 "",
                 "### Release Assets",
                 "",
-                "- Requires the ApplicantScout WoW addon `0.4.4`.",
+                "- Requires the ApplicantScout WoW addon `0.4.5`.",
                 "",
             ]
         ),
@@ -435,7 +435,7 @@ def test_release_version_script_validates_paired_companion_minimum_addon(
             "-File",
             str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
             "-Tag",
-            "v0.4.4",
+            "v0.4.5",
             "-PairedCompanionRoot",
             str(companion),
         ],
@@ -458,11 +458,11 @@ def test_release_version_script_rejects_companion_requiring_newer_addon(
             [
                 "# ApplicantScout Companion Release Notes",
                 "",
-                "## 0.8.1 - 30-May-2026",
+                "## 0.8.2 - 30-May-2026",
                 "",
                 "### Release Assets",
                 "",
-                "- Requires the ApplicantScout WoW addon `0.4.5`.",
+                "- Requires the ApplicantScout WoW addon `0.4.6`.",
                 "",
             ]
         ),
@@ -478,7 +478,7 @@ def test_release_version_script_rejects_companion_requiring_newer_addon(
             "-File",
             str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
             "-Tag",
-            "v0.4.4",
+            "v0.4.5",
             "-PairedCompanionRoot",
             str(companion),
         ],
@@ -490,8 +490,8 @@ def test_release_version_script_rejects_companion_requiring_newer_addon(
 
     assert result.returncode != 0
     output = result.stdout + result.stderr
-    assert "requires addon 0.4.5" in output
-    assert "current addon tag is 0.4.4" in output
+    assert "requires addon 0.4.6" in output
+    assert "current addon tag is 0.4.5" in output
 
 
 def test_release_version_script_does_not_invoke_companion_release_script():
@@ -506,22 +506,22 @@ def test_release_version_check_accepts_published_paired_companion_assets(
 ):
     gh = _fake_gh_release_view(
         tmp_path,
-        expected_tag="v0.8.1",
+        expected_tag="v0.8.2",
         release_json={
-            "tagName": "v0.8.1",
+            "tagName": "v0.8.2",
             "isDraft": False,
             "isPrerelease": False,
             "assets": [
-                {"name": "ApplicantScoutCompanionSetup-0.8.1.exe"},
-                {"name": "ApplicantScoutCompanionSetup-0.8.1.exe.sha256"},
-                {"name": "ApplicantScoutCompanion-0.8.1-portable.zip"},
+                {"name": "ApplicantScoutCompanionSetup-0.8.2.exe"},
+                {"name": "ApplicantScoutCompanionSetup-0.8.2.exe.sha256"},
+                {"name": "ApplicantScoutCompanion-0.8.2-portable.zip"},
             ],
         },
     )
 
     result = _run_release_check(
         "-Tag",
-        "v0.4.4",
+        "v0.4.5",
         "-RequirePublishedPairedCompanionAssets",
         "-GitHubCliPath",
         str(gh),
@@ -537,21 +537,21 @@ def test_release_version_check_rejects_missing_paired_companion_checksum(
 ):
     gh = _fake_gh_release_view(
         tmp_path,
-        expected_tag="v0.8.1",
+        expected_tag="v0.8.2",
         release_json={
-            "tagName": "v0.8.1",
+            "tagName": "v0.8.2",
             "isDraft": False,
             "isPrerelease": False,
             "assets": [
-                {"name": "ApplicantScoutCompanionSetup-0.8.1.exe"},
-                {"name": "ApplicantScoutCompanion-0.8.1-portable.zip"},
+                {"name": "ApplicantScoutCompanionSetup-0.8.2.exe"},
+                {"name": "ApplicantScoutCompanion-0.8.2-portable.zip"},
             ],
         },
     )
 
     result = _run_release_check(
         "-Tag",
-        "v0.4.4",
+        "v0.4.5",
         "-RequirePublishedPairedCompanionAssets",
         "-GitHubCliPath",
         str(gh),
@@ -561,7 +561,7 @@ def test_release_version_check_rejects_missing_paired_companion_checksum(
 
     assert result.returncode != 0
     output = re.sub(r"\s+", "", result.stdout + result.stderr)
-    assert "missingasset:ApplicantScoutCompanionSetup-0.8.1.exe.sha256" in output
+    assert "missingasset:ApplicantScoutCompanionSetup-0.8.2.exe.sha256" in output
 
 
 def test_release_version_check_rejects_draft_paired_companion_release(
@@ -569,22 +569,22 @@ def test_release_version_check_rejects_draft_paired_companion_release(
 ):
     gh = _fake_gh_release_view(
         tmp_path,
-        expected_tag="v0.8.1",
+        expected_tag="v0.8.2",
         release_json={
-            "tagName": "v0.8.1",
+            "tagName": "v0.8.2",
             "isDraft": True,
             "isPrerelease": False,
             "assets": [
-                {"name": "ApplicantScoutCompanionSetup-0.8.1.exe"},
-                {"name": "ApplicantScoutCompanionSetup-0.8.1.exe.sha256"},
-                {"name": "ApplicantScoutCompanion-0.8.1-portable.zip"},
+                {"name": "ApplicantScoutCompanionSetup-0.8.2.exe"},
+                {"name": "ApplicantScoutCompanionSetup-0.8.2.exe.sha256"},
+                {"name": "ApplicantScoutCompanion-0.8.2-portable.zip"},
             ],
         },
     )
 
     result = _run_release_check(
         "-Tag",
-        "v0.4.4",
+        "v0.4.5",
         "-RequirePublishedPairedCompanionAssets",
         "-GitHubCliPath",
         str(gh),
@@ -600,13 +600,13 @@ def test_release_version_check_reports_paired_companion_gh_failure(tmp_path: Pat
     gh = _fake_gh_release_view(
         tmp_path,
         exit_code=7,
-        expected_tag="v0.8.1",
+        expected_tag="v0.8.2",
         stderr="network failed",
     )
 
     result = _run_release_check(
         "-Tag",
-        "v0.4.4",
+        "v0.4.5",
         "-RequirePublishedPairedCompanionAssets",
         "-GitHubCliPath",
         str(gh),
@@ -625,13 +625,13 @@ def test_release_version_check_rejects_malformed_paired_companion_release_json(
 ):
     gh = _fake_gh_release_view(
         tmp_path,
-        expected_tag="v0.8.1",
+        expected_tag="v0.8.2",
         stdout_text="{bad json",
     )
 
     result = _run_release_check(
         "-Tag",
-        "v0.4.4",
+        "v0.4.5",
         "-RequirePublishedPairedCompanionAssets",
         "-GitHubCliPath",
         str(gh),
