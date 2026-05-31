@@ -102,8 +102,8 @@ local scanDirty = false
 -- run-length encoding folds adjacent black modules into single rectangle
 -- textures. Large QR versions with high-entropy byte payloads can still reach
 -- several thousand runs, so BuildQRMatrix rejects encode modes whose rendered
--- run count would exceed QR_TEXTURE_HARD_CAP and falls through to raw/lower-EC
--- alternatives instead of painting an incomplete QR.
+-- run count would exceed QR_TEXTURE_RENDER_BUDGET and falls through to
+-- raw/lower-EC alternatives instead of tripping WoW's script watchdog.
 --
 -- WHY transient QR uses a settle lease, not alpha-flicker: Screenshot() in the
 -- After(0) callback empirically fired before SetAlpha(1) reached the GPU
@@ -195,7 +195,6 @@ local settingsFrameAttached = false
 local lfgDefaultPlaystyleHooksSetup = false
 local lfgDefaultPlaystyleApplying = false
 local lfgDefaultPlaystyleHookError = nil
-local lfgDefaultPlaystyleTouchedPanels = setmetatable({}, { __mode = "k" })
 local lfgEntryCreationKeyCaptureState = {
     hooksSetup = false,
     hookError = nil,
@@ -209,6 +208,11 @@ local entryCreationKeyState = {
     activeListingCacheContext = nil,
     activeListingGeneration = 0,
     activeListingMaybeChanged = false,
+    lfgEntryCreationWorkPending = false,
+    lfgEntryCreationKeyCapturePending = false,
+    lfgDefaultPlaystylePending = false,
+    lfgDefaultPlaystyleResetTouched = false,
+    lfgDefaultPlaystyleUserTouched = false,
     entryCreationKeyLevelCacheDecision = "none",
     lastPayloadApplicantCount = 0,
     lastPayloadRosterIncomplete = false,
@@ -1120,17 +1124,19 @@ qrMoveMode = false
 -- hidden→shown transition so the next Screenshot() doesn't capture an
 -- unpainted post-Hide frame.
 --
--- WHY hybrid event + OnShow/OnHide: vendor-class frames have dedicated
+-- WHY hybrid event + polling: vendor-class frames have dedicated
 -- events (MERCHANT_SHOW etc) that fire even when third-party addons replace
 -- the Blizzard frame entirely (BetterMerchant, custom gossip overlays).
 -- Info panels (CharacterFrame, WorldMapFrame, EncounterJournalFrame, etc.)
--- have no dedicated events but are rarely replaced — OnShow/OnHide hooks on
--- the frame itself are reliable for those.
+-- have no dedicated events, so the scan ticker samples their shown state.
+-- Avoid hooking their OnShow/OnHide stacks; some Blizzard panels read secret
+-- fields while showing/sorting, and addon callbacks there can make unrelated
+-- protected comparisons inherit ApplicantScout taint.
 --
 -- WHY ADDON_LOADED-driven re-scan: many info panels live in load-on-demand
 -- addons (Blizzard_AchievementUI, Blizzard_EncounterJournal, etc.) and don't
--- exist at PLAYER_LOGIN. Hooking via re-scan on every ADDON_LOADED catches
--- them as their addons load. _hookedInfoPanels set keeps re-scans idempotent.
+-- exist at PLAYER_LOGIN. Re-scan on every ADDON_LOADED catches them as their
+-- addons load. _trackedInfoPanels keeps scans idempotent.
 
 -- desired = true  → event opens an interaction frame (suppress QR)
 -- desired = false → event closes one (clear that slot)
@@ -1175,9 +1181,8 @@ local INTERACTION_EVENT_KIND = {
     TRADE_SKILL_SHOW       = "professions",  TRADE_SKILL_CLOSE      = "professions",
 }
 
--- Frames without dedicated events. OnShow/OnHide hooked when the frame
--- becomes available. Most are LoD; _TryHookInfoPanels re-runs on
--- ADDON_LOADED to catch each as it materializes.
+-- Frames without dedicated events. Track them when the frame becomes available;
+-- _TryHookInfoPanels re-runs on ADDON_LOADED/ticker to catch LoD panels.
 local INFO_PANEL_FRAMES = {
     "WorldMapFrame", "EncounterJournalFrame", "SpellBookFrame",
     "PlayerSpellsFrame", "CharacterFrame", "CollectionsJournal",
@@ -1186,7 +1191,7 @@ local INFO_PANEL_FRAMES = {
 }
 
 local _interactionSlots = {}  -- kind → bool (only set when active; nil = inactive)
-local _hookedInfoPanels  = {} -- frame name → true once OnShow/OnHide hooks installed
+local _trackedInfoPanels = {} -- frame name → true once available for polling
 
 -- Single visibility decision. Three axes:
 --   qrForceVisibleForShot       — auto: changed snapshot is being captured
@@ -1225,7 +1230,7 @@ _IsQRVisibleForScreenshot = function()
     return qrFrame and qrFrame:IsShown()
 end
 
--- Aggregator: walks events table + info-panel hooks to determine if any
+-- Aggregator: walks events table + tracked info panels to determine if any
 -- interaction frame is currently open. Calls _RefreshQRVisibility only when
 -- the suppression boolean actually flips — avoids redundant Show/Hide calls
 -- on every event burst.
@@ -1235,7 +1240,7 @@ _RecomputeInteractionSuppression = function()
         if active then anyActive = true; break end
     end
     if not anyActive then
-        for name in pairs(_hookedInfoPanels) do
+        for name in pairs(_trackedInfoPanels) do
             local frame = _G[name]
             if frame and frame:IsShown() then
                 anyActive = true; break
@@ -1261,26 +1266,24 @@ _OnInteractionEvent = function(event)
     _RecomputeInteractionSuppression()
 end
 
--- Lazy hookup. Called at PLAYER_LOGIN and every ADDON_LOADED. Idempotent via
--- _hookedInfoPanels set — once a frame is hooked, subsequent calls skip it.
+-- Lazy tracker. Called at PLAYER_LOGIN, ADDON_LOADED, and the scan ticker.
+-- Idempotent via _trackedInfoPanels — once a frame is seen, later calls skip it.
 -- Frames not yet existing (LoD that hasn't loaded) are silently skipped;
--- next ADDON_LOADED triggers another scan.
+-- next ADDON_LOADED/ticker pass triggers another scan.
 _TryHookInfoPanels = function()
-    local newlyHookedVisible = false
+    local newlyTrackedVisible = false
     for _, name in ipairs(INFO_PANEL_FRAMES) do
-        if not _hookedInfoPanels[name] then
+        if not _trackedInfoPanels[name] then
             local frame = _G[name]
-            if frame and frame.HookScript then
-                frame:HookScript("OnShow", _RecomputeInteractionSuppression)
-                frame:HookScript("OnHide", _RecomputeInteractionSuppression)
-                _hookedInfoPanels[name] = true
+            if frame then
+                _trackedInfoPanels[name] = true
                 if frame.IsShown and frame:IsShown() then
-                    newlyHookedVisible = true
+                    newlyTrackedVisible = true
                 end
             end
         end
     end
-    if newlyHookedVisible then
+    if newlyTrackedVisible then
         _RecomputeInteractionSuppression()
     end
 end
@@ -1309,6 +1312,11 @@ end
 -- WHY BlizzMove cohabitation: if user has BlizzMove installed, defer
 -- entirely (early return). Avoids two competing drag handlers fighting over
 -- the same frame.
+--
+-- WARNING: do not hook PVEFrame OnShow. GroupFinder reads secret applicant
+-- fields while its panels Show()/sort; addon code on that stack can make
+-- Blizzard's own comparisons fault as tainted. Position restore is polled from
+-- ApplicantScout's ticker after Blizzard layout has finished instead.
 local PVE_POSITION_LIMIT = 100000
 local PVE_VALID_POINTS = {
     CENTER = true,
@@ -1360,6 +1368,51 @@ local function _SavePVEFramePositionFromFrame(frame)
     }
 end
 
+entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker = function()
+    if not _G.PVEFrame then
+        entryCreationKeyState.pveFrameRestoreShown = false
+        entryCreationKeyState.pveFrameRestorePoint = nil
+        entryCreationKeyState.pveFrameRestoreX = nil
+        entryCreationKeyState.pveFrameRestoreY = nil
+        return
+    end
+    if not PVEFrame:IsShown() then
+        entryCreationKeyState.pveFrameRestoreShown = false
+        entryCreationKeyState.pveFrameRestorePoint = nil
+        entryCreationKeyState.pveFrameRestoreX = nil
+        entryCreationKeyState.pveFrameRestoreY = nil
+        return
+    end
+
+    local saved = ApplicantScoutDB and ApplicantScoutDB.pveFramePosition
+    if not saved then return end
+    local point, x, y, ok = _NormalizePVEFramePosition(saved)
+    if not ok then
+        _ClearInvalidPVEFramePosition()
+        entryCreationKeyState.pveFrameRestoreShown = false
+        entryCreationKeyState.pveFrameRestorePoint = nil
+        entryCreationKeyState.pveFrameRestoreX = nil
+        entryCreationKeyState.pveFrameRestoreY = nil
+        return
+    end
+    if InCombatLockdown() then return end
+    if entryCreationKeyState.pveFrameRestoreShown
+       and entryCreationKeyState.pveFrameRestorePoint == point
+       and entryCreationKeyState.pveFrameRestoreX == x
+       and entryCreationKeyState.pveFrameRestoreY == y then
+        return
+    end
+
+    -- WARNING: keep order load-bearing: ClearAllPoints -> SetPoint -> SetUserPlaced.
+    PVEFrame:ClearAllPoints()
+    PVEFrame:SetPoint(point, UIParent, point, x, y)
+    PVEFrame:SetUserPlaced(true)
+    entryCreationKeyState.pveFrameRestoreShown = true
+    entryCreationKeyState.pveFrameRestorePoint = point
+    entryCreationKeyState.pveFrameRestoreX = x
+    entryCreationKeyState.pveFrameRestoreY = y
+end
+
 local function _OnPVEFrameDragStart()
     if InCombatLockdown() then return end
     if not IsAltKeyDown() then return end
@@ -1405,33 +1458,6 @@ _SetupPVEFrameMovement = function()
     -- forward-compatible if Blizzard adds one later.
     titleRegion:HookScript("OnDragStart", _OnPVEFrameDragStart)
     titleRegion:HookScript("OnDragStop", _OnPVEFrameDragStop)
-
-    -- Position restore on every Show. WHY C_Timer.After(0, ...) defer:
-    -- Blizzard's UIPanelLayout positions PVEFrame the same frame OnShow
-    -- fires; inline SetPoint can lose visually for one frame to layout-cache
-    -- restore (visible flicker on /reload). The 0-delay timer dispatches
-    -- next frame after layout cache settles. Re-checks lockdown + IsShown
-    -- since user could close PVEFrame in the one-frame gap.
-    PVEFrame:HookScript("OnShow", function(self)
-        local saved = ApplicantScoutDB and ApplicantScoutDB.pveFramePosition
-        if not saved then return end
-        local point, x, y, ok = _NormalizePVEFramePosition(saved)
-        if not ok then
-            _ClearInvalidPVEFramePosition()
-            return
-        end
-        if InCombatLockdown() then return end
-        C_Timer.After(0, function()
-            if InCombatLockdown() then return end
-            if not self:IsShown() then return end
-            -- WARNING: SetUserPlaced order is
-            -- ClearAllPoints -> SetPoint -> SetUserPlaced(true). Wrong
-            -- order leaks WoW's layout-cache restore atop our anchor.
-            self:ClearAllPoints()
-            self:SetPoint(point, UIParent, point, x, y)
-            self:SetUserPlaced(true)
-        end)
-    end)
 
     PVEFrame.apsMovementSetup = true
 end
@@ -3694,8 +3720,13 @@ local _qrencode = _addonNS.QR and _addonNS.QR.qrcode
 -- Returns the texture or nil if pool exhausted (caller logs warning).
 -- Pool grows as needed; never shrinks. Excess textures from prior larger QRs
 -- are hidden, not destroyed (cheap reuse on next render).
-local QR_TEXTURE_HARD_CAP = 10000  -- safety against runaway texture creation
+entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET = 3500  -- script-watchdog budget; above this, skip/fallback
+local QR_TEXTURE_HARD_CAP = 10000                      -- safety against runaway texture creation
+entryCreationKeyState.QR_RAW_FIRST_PAYLOAD_BYTES = 900 -- avoid expensive hex/M for large applicant bursts
 local function _AcquireQRTexture(x, y, w, h)
+    if qrTextureUsed >= entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then
+        return nil
+    end
     qrTextureUsed = qrTextureUsed + 1
     local t = qrTexturePool[qrTextureUsed]
     if not t then
@@ -3714,7 +3745,7 @@ local function _AcquireQRTexture(x, y, w, h)
     return t
 end
 
-local function _CountQRBlackRuns(matrix)
+local function _CountQRBlackRuns(matrix, limit)
     local runs = 0
     for y = 1, #matrix do
         local row = matrix[y]
@@ -3724,6 +3755,9 @@ local function _CountQRBlackRuns(matrix)
             if isBlack then
                 if not inRun then
                     runs = runs + 1
+                    if limit and runs > limit then
+                        return runs
+                    end
                     inRun = true
                 end
             else
@@ -3740,8 +3774,8 @@ end
 -- Typical QR has ~10-15 runs per row → ~10-15 textures × N rows; far below the
 -- one-texture-per-module count which would crash WoW's renderer.
 --
--- Returns true on success, false on overflow (texture pool exhausted — payload
--- needs a smaller QR version OR pool cap raised).
+-- Returns true on success, false on overflow (script-safe render budget
+-- exceeded — payload needs a smaller QR version or lower-density encode mode).
 local function PaintQR(matrix)
     local rows = #matrix
     local cols = #matrix[1]
@@ -3758,16 +3792,17 @@ local function PaintQR(matrix)
     qrTextureUsed = 0
 
     local quiet_offset = QR_QUIET_ZONE * QR_MODULE_PX
-    -- Overflow tracking: _AcquireQRTexture returns nil when its hard cap is hit
-    -- AND we'd need to create a new texture (existing pool entries reusable past
-    -- the cap aren't blocked). We observe the return so we can warn at end + tell
-    -- caller this QR couldn't be fully rendered.
+    -- Overflow tracking: _AcquireQRTexture returns nil when the render budget
+    -- is hit. We observe the return so we can warn at end + tell caller this QR
+    -- couldn't be fully rendered.
     local overflow = false
 
     for y = 1, rows do
+        if overflow then break end
         local row = matrix[y]
         local x_start = nil  -- start col of current black run, nil = no run
         for x = 1, cols do
+            if overflow then break end
             local is_black = (row[x] or 0) > 0
             if is_black then
                 if x_start == nil then x_start = x end
@@ -3778,12 +3813,13 @@ local function PaintQR(matrix)
                 local px_y = quiet_offset + (y - 1) * QR_MODULE_PX
                 if not _AcquireQRTexture(px_x, px_y, run_len * QR_MODULE_PX, QR_MODULE_PX) then
                     overflow = true
+                    break
                 end
                 x_start = nil
             end
         end
         -- Trailing run (extends to row end)
-        if x_start ~= nil then
+        if not overflow and x_start ~= nil then
             local run_len = cols - x_start + 1
             local px_x = quiet_offset + (x_start - 1) * QR_MODULE_PX
             local px_y = quiet_offset + (y - 1) * QR_MODULE_PX
@@ -3802,8 +3838,8 @@ local function PaintQR(matrix)
 
     if overflow then
         if APSPrint then
-            APSPrint("WARN: QR texture pool exhausted at hard cap " ..
-                     QR_TEXTURE_HARD_CAP .. " — rendered QR is INCOMPLETE; companion will fail to decode")
+            APSPrint("WARN: QR render exceeded script-safe texture budget " ..
+                     entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET .. " — rendered QR is INCOMPLETE; companion will fail to decode")
         end
         return false  -- caller treats as render failure (skip Screenshot, retry on next data change)
     end
@@ -3838,11 +3874,11 @@ local function _SetLastQREncodeDiag(mode, payload_bytes, err)
 end
 
 -- Builds QR matrix from payload bytes via embedded lua-qrcode library. The
--- transport ladder keeps the historical hex/M path first so already-working
--- payloads keep backward compatibility with legacy companions. Once hex/M
--- fails, prefer raw byte-mode before hex/L: raw usually produces a smaller QR
--- and fewer row-RLE textures, while current companions understand embedded NUL
--- bytes. Hex/L stays as a last fallback for edge cases where raw encode fails.
+-- transport ladder keeps the historical hex/M path first for small payloads so
+-- already-working snapshots keep backward compatibility with legacy companions.
+-- Large payloads go raw/L immediately: raw byte-mode produces smaller QRs, and
+-- skipping hex/M avoids spending the whole script budget on an encode we would
+-- reject for too many render runs anyway.
 -- WHY pcall: qrencode.lua's get_version_eclevel uses assert() (real Lua error)
 -- on capacity overflow at line 214, NOT the documented (false, errmsg) tuple
 -- return. Plain `local ok, result = _qrencode(...)` lets that error propagate
@@ -3864,14 +3900,18 @@ local function BuildQRMatrix(payload)
         end
         return nil
     end
-    local hex = _HexEncode(payload)
     local attempts = {
-        { kind = "hex", data = hex, ec_level = QR_EC_LEVEL, size = #hex, unit = "hex" },
-        { kind = "raw", data = payload, ec_level = QR_EC_LEVEL, size = #payload, unit = "bytes" },
     }
-    if QR_EC_LEVEL ~= 1 then
+    if #payload > entryCreationKeyState.QR_RAW_FIRST_PAYLOAD_BYTES then
         table.insert(attempts, { kind = "raw", data = payload, ec_level = 1, size = #payload, unit = "bytes" })
-        table.insert(attempts, { kind = "hex", data = hex, ec_level = 1, size = #hex, unit = "hex" })
+    else
+        local hex = _HexEncode(payload)
+        table.insert(attempts, { kind = "hex", data = hex, ec_level = QR_EC_LEVEL, size = #hex, unit = "hex" })
+        table.insert(attempts, { kind = "raw", data = payload, ec_level = QR_EC_LEVEL, size = #payload, unit = "bytes" })
+        if QR_EC_LEVEL ~= 1 then
+            table.insert(attempts, { kind = "raw", data = payload, ec_level = 1, size = #payload, unit = "bytes" })
+            table.insert(attempts, { kind = "hex", data = hex, ec_level = 1, size = #hex, unit = "hex" })
+        end
     end
 
     local first_label = nil
@@ -3887,10 +3927,10 @@ local function BuildQRMatrix(payload)
         end
         local matrix, err = _TryQrEncode(attempt.data, attempt.ec_level)
         if matrix then
-            local renderRuns = _CountQRBlackRuns(matrix)
-            if renderRuns > QR_TEXTURE_HARD_CAP then
+            local renderRuns = _CountQRBlackRuns(matrix, entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET)
+            if renderRuns > entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then
                 failure_parts[#failure_parts + 1] = label .. ": render needs " ..
-                    renderRuns .. " textures > cap " .. QR_TEXTURE_HARD_CAP
+                    renderRuns .. " textures > script-safe budget " .. entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET
             else
                 _SetLastQREncodeDiag(label, #payload, nil)
                 if APSPrint and ApplicantScoutDB and ApplicantScoutDB.debug and label ~= first_label then
@@ -3930,7 +3970,7 @@ lastQREncodeError = nil
 qrForceVisibleForShot = false
 qrForceVisibleShotGen = 0
 local SHOT_THROTTLE_S = 0.5
-local TRANSPORT_POLL_S = 2.0
+local TRANSPORT_POLL_S = 0.5
 local lastTransportPollTime = 0
 
 local function _ReleaseForceVisibleShotLease(forceVisibleShotGen)
@@ -4149,6 +4189,51 @@ end
 -- AllowedWhenUntainted in 12.x. We prefill `generalPlaystyle` before the user
 -- clicks List Group, then let Blizzard's own hardware-event path submit it.
 -- Do not replace Blizzard functions or call CreateListing/UpdateListing here.
+--
+-- WARNING: LFG hooksecurefunc callbacks run on Blizzard's GroupFinder stack,
+-- where Blizzard may still compare secret listing/applicant fields. Those
+-- callbacks must only set primitive pending flags; C_LFGList reads, frame
+-- HookScript calls, and form mutations are drained from ApplicantScout's ticker.
+
+entryCreationKeyState.QueueLFGEntryCreationDeferredWork = function(keyCapture, defaultPlaystyle, resetTouched)
+    entryCreationKeyState.lfgEntryCreationWorkPending = true
+    if keyCapture then
+        entryCreationKeyState.lfgEntryCreationKeyCapturePending = true
+    end
+    if defaultPlaystyle then
+        entryCreationKeyState.lfgDefaultPlaystylePending = true
+    end
+    if resetTouched then
+        entryCreationKeyState.lfgDefaultPlaystyleResetTouched = true
+    end
+end
+
+entryCreationKeyState.ProcessLFGEntryCreationDeferredWork = function()
+    if not entryCreationKeyState.lfgEntryCreationWorkPending then return end
+
+    local frame = _G.LFGListFrame
+    local panel = frame and frame.EntryCreation
+    if not panel then return end
+
+    local keyCapturePending = entryCreationKeyState.lfgEntryCreationKeyCapturePending
+    local defaultPlaystylePending = entryCreationKeyState.lfgDefaultPlaystylePending
+    local resetTouched = entryCreationKeyState.lfgDefaultPlaystyleResetTouched
+
+    entryCreationKeyState.lfgEntryCreationWorkPending = false
+    entryCreationKeyState.lfgEntryCreationKeyCapturePending = false
+    entryCreationKeyState.lfgDefaultPlaystylePending = false
+    entryCreationKeyState.lfgDefaultPlaystyleResetTouched = false
+
+    if resetTouched then
+        entryCreationKeyState.lfgDefaultPlaystyleUserTouched = false
+    end
+    if keyCapturePending then
+        _HookEntryCreationKeyCapture(panel)
+    end
+    if defaultPlaystylePending then
+        _MaybeAutoSelectDefaultPlaystyle(panel, "deferred")
+    end
+end
 
 _MaybeAutoSelectDefaultPlaystyle = function(panel, reason)
     if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then
@@ -4158,7 +4243,7 @@ _MaybeAutoSelectDefaultPlaystyle = function(panel, reason)
     local configuredPlaystyle, token = _GetConfiguredMPlusPlaystyleEnum()
     if configuredPlaystyle == nil then return false end
 
-    if not panel or lfgDefaultPlaystyleTouchedPanels[panel] then return false end
+    if not panel or entryCreationKeyState.lfgDefaultPlaystyleUserTouched then return false end
 
     local isEditMode = _G.LFGListEntryCreation_IsEditMode
     if type(isEditMode) ~= "function" or isEditMode(panel) then return false end
@@ -4216,8 +4301,15 @@ if type(_addonNS) == "table"
 end
 
 _SetupLFGEntryCreationKeyCapture = function()
-    if lfgEntryCreationKeyCaptureState.hooksSetup or lfgEntryCreationKeyCaptureState.hookError then
-        return lfgEntryCreationKeyCaptureState.hooksSetup
+    if lfgEntryCreationKeyCaptureState.hooksSetup then
+        local frame = _G.LFGListFrame
+        if frame and frame.EntryCreation then
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false, false)
+        end
+        return true
+    end
+    if lfgEntryCreationKeyCaptureState.hookError then
+        return false
     end
 
     local hook = _G.hooksecurefunc
@@ -4232,14 +4324,14 @@ _SetupLFGEntryCreationKeyCapture = function()
     end
 
     local ok, err = pcall(function()
-        hook("LFGListEntryCreation_Select", function(panel)
-            _HookEntryCreationKeyCapture(panel)
+        hook("LFGListEntryCreation_Select", function()
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false, false)
         end)
-        hook("LFGListEntryCreation_Show", function(panel)
-            _HookEntryCreationKeyCapture(panel)
+        hook("LFGListEntryCreation_Show", function()
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false, false)
         end)
-        hook("LFGListEntryCreation_SetEditMode", function(panel)
-            _HookEntryCreationKeyCapture(panel)
+        hook("LFGListEntryCreation_SetEditMode", function()
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false, false)
         end)
     end)
 
@@ -4255,14 +4347,21 @@ _SetupLFGEntryCreationKeyCapture = function()
     lfgEntryCreationKeyCaptureState.hooksSetup = true
     local frame = _G.LFGListFrame
     if frame and frame.EntryCreation then
-        _HookEntryCreationKeyCapture(frame.EntryCreation)
+        entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false, false)
     end
     return true
 end
 
 _SetupLFGDefaultPlaystyle = function()
-    if lfgDefaultPlaystyleHooksSetup or lfgDefaultPlaystyleHookError then
-        return lfgDefaultPlaystyleHooksSetup
+    if lfgDefaultPlaystyleHooksSetup then
+        local frame = _G.LFGListFrame
+        if frame and frame.EntryCreation then
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true, false)
+        end
+        return true
+    end
+    if lfgDefaultPlaystyleHookError then
+        return false
     end
 
     local hook = _G.hooksecurefunc
@@ -4279,21 +4378,18 @@ _SetupLFGDefaultPlaystyle = function()
     end
 
     local ok, err = pcall(function()
-        hook("LFGListEntryCreation_Select", function(panel)
-            _MaybeAutoSelectDefaultPlaystyle(panel, "select")
+        hook("LFGListEntryCreation_Select", function()
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true, false)
         end)
-        hook("LFGListEntryCreation_Show", function(panel)
-            if panel then lfgDefaultPlaystyleTouchedPanels[panel] = nil end
-            _MaybeAutoSelectDefaultPlaystyle(panel, "show")
+        hook("LFGListEntryCreation_Show", function()
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true, true)
         end)
-        hook("LFGListEntryCreation_SetEditMode", function(panel, editMode)
-            if not editMode then
-                _MaybeAutoSelectDefaultPlaystyle(panel, "create-mode")
-            end
+        hook("LFGListEntryCreation_SetEditMode", function()
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true, false)
         end)
-        hook("LFGListEntryCreation_OnPlayStyleSelectedInternal", function(panel)
-            if panel and not lfgDefaultPlaystyleApplying then
-                lfgDefaultPlaystyleTouchedPanels[panel] = true
+        hook("LFGListEntryCreation_OnPlayStyleSelectedInternal", function()
+            if not lfgDefaultPlaystyleApplying then
+                entryCreationKeyState.lfgDefaultPlaystyleUserTouched = true
             end
         end)
     end)
@@ -4310,7 +4406,7 @@ _SetupLFGDefaultPlaystyle = function()
     lfgDefaultPlaystyleHooksSetup = true
     local frame = _G.LFGListFrame
     if frame and frame.EntryCreation then
-        _MaybeAutoSelectDefaultPlaystyle(frame.EntryCreation, "setup")
+        entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true, false)
     end
     return true
 end
@@ -4324,7 +4420,7 @@ local EVENT_HANDLERS = {
         _SetupPVEFrameMovement()  -- no-ops if BlizzMove loaded OR PVEFrame missing
         _SetupLFGEntryCreationKeyCapture() -- no-ops until Blizzard LFG globals exist
         _SetupLFGDefaultPlaystyle() -- no-ops until Blizzard LFG globals exist
-        _TryHookInfoPanels()      -- initial scan; ADDON_LOADED catches LoD frames later
+        _TryHookInfoPanels()      -- initial track; ADDON_LOADED/ticker catches LoD frames later
     end,
     PLAYER_ENTERING_WORLD            = function()
         CreateQRFrame()
@@ -4356,12 +4452,6 @@ local EVENT_HANDLERS = {
         if PVEFrame and PVEFrame:IsUserPlaced() and ApplicantScoutDB then
             _SavePVEFramePositionFromFrame(PVEFrame)
         end
-    end,
-    LFG_LIST_APPLICANT_LIST_UPDATED  = function() MarkDirty("listupd") end,
-    LFG_LIST_APPLICANT_UPDATED       = function() MarkDirty("appupd") end,
-    LFG_LIST_ACTIVE_ENTRY_UPDATE     = function()
-        entryCreationKeyState.activeListingMaybeChanged = true
-        MarkDirty("entryupd")
     end,
     PARTY_LEADER_CHANGED             = function()
         entryCreationKeyState.ClearLeaderKeystone()
@@ -4419,16 +4509,22 @@ frame:SetScript("OnEvent", function(_, event, ...)
     if h then h(event, ...) end
 end)
 
--- Scan ticker. Events flip scanDirty (boolean — primitives can't propagate
--- taint from a tainted writer to a clean reader); we drain the flag here from
--- the native NewTicker scheduler's clean call frame. CheckSessionTransition
--- handles StartSession/EndSession lifecycle; MaybeTriggerScreenshot does the
--- rest (read C_LFGList, build payload, paint QR, trigger Screenshot()).
+-- Scan ticker. Non-LFG events flip scanDirty (boolean — primitives can't
+-- propagate taint from a tainted writer to a clean reader); LFG applicant/listing
+-- changes are polled here instead of registered as addon event handlers because
+-- Blizzard GroupFinder compares secret fields while dispatching those events.
+-- CheckSessionTransition handles StartSession/EndSession lifecycle;
+-- MaybeTriggerScreenshot does the rest (read C_LFGList, build payload, paint QR,
+-- trigger Screenshot()).
 -- Lockdown short-circuit: skip scheduler-driven C_LFGList reads during
 -- ChatMessagingLockdown. Roster-only group transport still runs because it
 -- uses Unit* reads plus Screenshot(), not chat sends or active-listing reads.
 C_Timer.NewTicker(0.25, function()
     local now = GetTime()
+    _TryHookInfoPanels()
+    _RecomputeInteractionSuppression()
+    entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker()
+    entryCreationKeyState.ProcessLFGEntryCreationDeferredWork()
     local lfgReadsAllowed = not IsChatMessagingLockdown()
     if not (scanDirty and ApplicantScoutDB and ApplicantScoutDB.enabled) then
         -- Drain pending throttled shot: data was changed during throttle
@@ -4610,7 +4706,7 @@ _SetAutoMPlusPlaystyle = function(token, quiet)
         _SetupLFGDefaultPlaystyle()
         local frame = _G.LFGListFrame
         if frame and frame.EntryCreation then
-            _MaybeAutoSelectDefaultPlaystyle(frame.EntryCreation, "toggle")
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true, false)
         end
     end
     if not quiet then
@@ -5119,9 +5215,9 @@ SlashCmdList.APSCOUT = function(msg)
         end
         print("  active interaction slots: " .. (#activeKinds > 0
               and table.concat(activeKinds, ", ") or "(none)"))
-        local hookedCount = 0
-        for _ in pairs(_hookedInfoPanels) do hookedCount = hookedCount + 1 end
-        print("  info panels hooked: " .. hookedCount .. "/" .. #INFO_PANEL_FRAMES)
+        local trackedCount = 0
+        for _ in pairs(_trackedInfoPanels) do trackedCount = trackedCount + 1 end
+        print("  info panels tracked: " .. trackedCount .. "/" .. #INFO_PANEL_FRAMES)
         print("|cff00ff7f---|r LFG window:")
         local hasBlizzMove = C_AddOns and C_AddOns.IsAddOnLoaded
                              and C_AddOns.IsAddOnLoaded("BlizzMove") or false

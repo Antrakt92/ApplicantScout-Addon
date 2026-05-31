@@ -2117,6 +2117,113 @@ def test_taintcheck_support_command_skips_lfg_reads_during_chat_lockdown():
     assert guard_idx < skip_idx < return_idx < applicants_idx < info_idx < member_idx
 
 
+def test_lfg_updates_are_polled_instead_of_registered_on_tainted_event_stack():
+    source = _lua_source()
+    event_body = _slice_between(
+        source,
+        "local EVENT_HANDLERS = {",
+        "-- Bind every interaction event to _OnInteractionEvent.",
+    )
+    ticker_body = _slice_between(
+        source,
+        "C_Timer.NewTicker(0.25, function()",
+        "-- Settings panel:",
+    )
+
+    assert "LFG_LIST_APPLICANT_LIST_UPDATED" not in event_body
+    assert "LFG_LIST_APPLICANT_UPDATED" not in event_body
+    assert "LFG_LIST_ACTIVE_ENTRY_UPDATE" not in event_body
+    assert "TRANSPORT_POLL_S = 0.5" in source
+    assert "local entry = CheckSessionTransition(lfgReadsAllowed)" in ticker_body
+    assert "MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)" in ticker_body
+
+
+def test_info_panel_suppression_is_polled_instead_of_hooking_blizzard_frames():
+    source = _lua_source()
+    interaction_body = _slice_between(
+        source,
+        "-- Frames without dedicated events.",
+        "-- PVEFrame movement (Alt+drag, persistent across /reload)",
+    )
+    ticker_body = _slice_between(
+        source,
+        "C_Timer.NewTicker(0.25, function()",
+        "-- Settings panel:",
+    )
+    status_body = _slice_between(
+        source,
+        'elseif msg == "status" then',
+        'elseif msg == "taintcheck" then',
+    )
+
+    assert ':HookScript("OnShow"' not in interaction_body
+    assert ':HookScript("OnHide"' not in interaction_body
+    assert "_trackedInfoPanels" in interaction_body
+    assert "_TryHookInfoPanels()" in ticker_body
+    assert "_RecomputeInteractionSuppression()" in ticker_body
+    assert "info panels tracked:" in status_body
+
+
+def test_pveframe_position_restore_does_not_hook_groupfinder_show_stack():
+    source = _lua_source()
+    movement_body = _slice_between(
+        source,
+        "-- PVEFrame movement (Alt+drag, persistent across /reload)",
+        "-- Set screenshot format.",
+    )
+    ticker_body = _slice_between(
+        source,
+        "C_Timer.NewTicker(0.25, function()",
+        "-- Settings panel:",
+    )
+
+    assert 'PVEFrame:HookScript("OnShow"' not in movement_body
+    assert "entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker = function()" in movement_body
+    assert "entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker()" in ticker_body
+
+
+def test_qr_render_uses_script_safe_budget_before_texture_hard_cap():
+    source = _lua_source()
+    qr_body = _slice_between(
+        source,
+        "-- Acquire (or reuse from pool) a black-rectangle texture and position+size it.",
+        "-- State for trigger throttling + dedup",
+    )
+
+    budget_idx = qr_body.index("entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET = 3500")
+    hard_cap_idx = qr_body.index("local QR_TEXTURE_HARD_CAP = 10000")
+    count_idx = qr_body.index(
+        "_CountQRBlackRuns(matrix, entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET)"
+    )
+    paint_budget_idx = qr_body.index(
+        "if qrTextureUsed >= entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then"
+    )
+
+    assert budget_idx < hard_cap_idx
+    assert count_idx < qr_body.index("return matrix")
+    assert paint_budget_idx < qr_body.index("if overflow then")
+
+
+def test_large_qr_payloads_try_raw_low_correction_before_hex_modes():
+    source = _lua_source()
+    build_body = _slice_between(
+        source,
+        "local function BuildQRMatrix(payload)",
+        "-- State for trigger throttling + dedup",
+    )
+
+    threshold_idx = build_body.index(
+        "if #payload > entryCreationKeyState.QR_RAW_FIRST_PAYLOAD_BYTES then"
+    )
+    raw_l_idx = build_body.index(
+        '{ kind = "raw", data = payload, ec_level = 1, size = #payload, unit = "bytes" }',
+        threshold_idx,
+    )
+    hex_idx = build_body.index("local hex = _HexEncode(payload)")
+
+    assert threshold_idx < raw_l_idx < hex_idx
+
+
 def test_terminal_clear_force_path_bypasses_roster_inspect_batch_gate():
     source = _lua_source()
     screenshot_body = _slice_between(
@@ -2412,9 +2519,62 @@ def test_lfg_key_capture_setup_is_independent_from_default_playstyle_internal():
     )
 
     assert "LFGListEntryCreation_OnPlayStyleSelectedInternal" not in key_capture_body
-    assert "_HookEntryCreationKeyCapture(panel)" in key_capture_body
+    assert "entryCreationKeyState.QueueLFGEntryCreationDeferredWork" in key_capture_body
     assert "LFGListEntryCreation_OnPlayStyleSelectedInternal" in playstyle_body
     assert "_HookEntryCreationKeyCapture" not in playstyle_body
+
+
+def test_lfg_entry_creation_hooks_defer_addon_work_off_blizzard_stack():
+    source = _lua_source()
+    key_capture_body = _slice_between(
+        source,
+        "_SetupLFGEntryCreationKeyCapture = function()",
+        "_SetupLFGDefaultPlaystyle = function()",
+    )
+    playstyle_body = _slice_between(
+        source,
+        "_SetupLFGDefaultPlaystyle = function()",
+        "local EVENT_HANDLERS = {",
+    )
+    deferred_body = _slice_between(
+        source,
+        "entryCreationKeyState.QueueLFGEntryCreationDeferredWork = function(",
+        "_MaybeAutoSelectDefaultPlaystyle = function(panel, reason)",
+    )
+    ticker_body = _slice_between(
+        source,
+        "C_Timer.NewTicker(0.25, function()",
+        "-- Settings panel:",
+    )
+    hook_bodies = key_capture_body + playstyle_body
+
+    assert "entryCreationKeyState.QueueLFGEntryCreationDeferredWork" in key_capture_body
+    assert "entryCreationKeyState.QueueLFGEntryCreationDeferredWork" in playstyle_body
+    assert "function(panel" not in hook_bodies
+    assert "_HookEntryCreationKeyCapture(panel)" not in hook_bodies
+    assert "_MaybeAutoSelectDefaultPlaystyle(panel" not in hook_bodies
+    assert "_HookEntryCreationKeyCapture(frame.EntryCreation)" not in source
+    assert "_MaybeAutoSelectDefaultPlaystyle(frame.EntryCreation" not in source
+    assert "entryCreationKeyState.ProcessLFGEntryCreationDeferredWork = function()" in deferred_body
+    assert "entryCreationKeyState.ProcessLFGEntryCreationDeferredWork()" in ticker_body
+
+
+def test_lfg_default_playstyle_user_touch_state_is_not_panel_keyed_from_hook_stack():
+    source = _lua_source()
+    playstyle_body = _slice_between(
+        source,
+        "_SetupLFGDefaultPlaystyle = function()",
+        "local EVENT_HANDLERS = {",
+    )
+    auto_select_body = _slice_between(
+        source,
+        "_MaybeAutoSelectDefaultPlaystyle = function(panel, reason)",
+        "if type(_addonNS) == \"table\"",
+    )
+
+    assert "lfgDefaultPlaystyleTouchedPanels" not in source
+    assert "entryCreationKeyState.lfgDefaultPlaystyleUserTouched = true" in playstyle_body
+    assert "entryCreationKeyState.lfgDefaultPlaystyleUserTouched" in auto_select_body
 
 
 def test_status_reports_key_capture_hooks_and_cache_decision_separately():
