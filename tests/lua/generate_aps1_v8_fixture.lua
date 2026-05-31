@@ -1,6 +1,7 @@
 local fixture_mode = arg and arg[1] or ""
 if fixture_mode ~= "" and fixture_mode ~= "leader-key"
-   and fixture_mode ~= "placeholder-roster" then
+   and fixture_mode ~= "placeholder-roster"
+   and fixture_mode ~= "placeholder-applicant" then
     error("unsupported fixture mode: " .. tostring(fixture_mode))
 end
 
@@ -9,6 +10,16 @@ local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 if fixture_mode == "placeholder-roster" then
     env.unit_data.party1.unitFullName = { "", "" }
     env.unit_data.party1.unitName = "Unknown-Realm"
+end
+if fixture_mode == "placeholder-applicant" then
+    local originalGetApplicantMemberInfo = C_LFGList.GetApplicantMemberInfo
+    C_LFGList.GetApplicantMemberInfo = function(id, memberIndex)
+        if id == 42 and memberIndex == 1 then
+            return "Unknown-Realm", "WARRIOR", nil, nil, 710.2, nil, nil, nil, nil,
+                "TANK", nil, 3210, nil, nil, nil, 73
+        end
+        return originalGetApplicantMemberInfo(id, memberIndex)
+    end
 end
 
 local harness = env.load_addon()

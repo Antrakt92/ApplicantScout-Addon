@@ -220,6 +220,7 @@ local entryCreationKeyState = {
     pendingTtl = 10,
     TRANSPORT_HEARTBEAT_S = 15.0,
     lastTransportHeartbeatAttemptTime = 0,
+    groupTransportGen = 0,
     LEADER_KEY_TTL_S = 60,
     LEADER_KEY_REQUEST_THROTTLE_S = 3,
     LEADER_KEY_REQUEST_RETRY_DELAY_S = 1.0,
@@ -229,6 +230,7 @@ local entryCreationKeyState = {
     leaderKeystoneLastRequestStatus = "never",
     leaderKeystoneRequestRetryToken = 0,
     leaderKeystoneRequestRetryDeadline = nil,
+    leaderKeystoneRequestRetryGeneration = nil,
     leaderKeystoneCallbackRegistered = false,
     leaderKeystoneLib = nil,
     leaderKeystoneCallbackOwner = {},
@@ -240,6 +242,7 @@ local entryCreationKeyState = {
     LIB_KEYSTONE_RESPONSE_MAX_RETRIES = 3,
     libKeystoneResponseRetryToken = 0,
     libKeystoneResponseRetryDeadline = nil,
+    libKeystoneResponseRetryGeneration = nil,
     -- WARNING: keep Auto Hi state on this existing table instead of adding
     -- top-level locals; this file is near Lua 5.1's 200-local chunk limit.
     AUTO_HI_DELAY_S = 5,
@@ -632,6 +635,20 @@ entryCreationKeyState.ClearAutoHiSendRetry = function(kind)
         (entryCreationKeyState[tokenField] or 0) + 1
     entryCreationKeyState[deadlineField] = nil
     entryCreationKeyState[generationField] = nil
+end
+
+entryCreationKeyState.ClearAutoHiRuntimeState = function()
+    entryCreationKeyState.ClearAutoHiSendRetry("group")
+    entryCreationKeyState.ClearAutoHiSendRetry("new-party")
+    entryCreationKeyState.autoHiGroupGen =
+        entryCreationKeyState.autoHiGroupGen + 1
+    entryCreationKeyState.autoHiNewPartyMemberGen =
+        entryCreationKeyState.autoHiNewPartyMemberGen + 1
+    entryCreationKeyState.autoHiGroupStateKnown = false
+    entryCreationKeyState.autoHiWasInGroup = false
+    entryCreationKeyState.autoHiWasInSoloGroup = false
+    entryCreationKeyState.autoHiKnownPartyGUIDs = {}
+    entryCreationKeyState.autoHiKnownPartyMembersPrimed = false
 end
 
 entryCreationKeyState.AutoHiContextReady = function(kind, generation)
@@ -2982,18 +2999,26 @@ entryCreationKeyState.ScheduleLibKeystoneResponseRetry = function(channel, reaso
     local now = GetTime and GetTime() or 0
     local delay = entryCreationKeyState.LIB_KEYSTONE_RESPONSE_RETRY_DELAY_S
     local due = now + delay
+    local retryGroupGen = entryCreationKeyState.groupTransportGen
     local existingDeadline = entryCreationKeyState.libKeystoneResponseRetryDeadline
-    if existingDeadline and existingDeadline <= due then return true end
+    if existingDeadline
+       and entryCreationKeyState.libKeystoneResponseRetryGeneration == retryGroupGen
+       and existingDeadline <= due then
+        return true
+    end
 
     entryCreationKeyState.libKeystoneResponseRetryToken =
         (entryCreationKeyState.libKeystoneResponseRetryToken or 0) + 1
     local retryToken = entryCreationKeyState.libKeystoneResponseRetryToken
     entryCreationKeyState.libKeystoneResponseRetryDeadline = due
+    entryCreationKeyState.libKeystoneResponseRetryGeneration = retryGroupGen
     C_Timer.After(delay, function()
         if retryToken ~= entryCreationKeyState.libKeystoneResponseRetryToken then
             return
         end
         entryCreationKeyState.libKeystoneResponseRetryDeadline = nil
+        entryCreationKeyState.libKeystoneResponseRetryGeneration = nil
+        if retryGroupGen ~= entryCreationKeyState.groupTransportGen then return end
         if not (IsInGroup and IsInGroup()) then return end
         local ok, retryReason = entryCreationKeyState.SendLibKeystoneShimInfo(channel)
         if not ok then
@@ -3005,6 +3030,19 @@ entryCreationKeyState.ScheduleLibKeystoneResponseRetry = function(channel, reaso
         end
     end)
     return true
+end
+
+entryCreationKeyState.CancelLibKeystoneResponseRetry = function()
+    entryCreationKeyState.libKeystoneResponseRetryDeadline = nil
+    entryCreationKeyState.libKeystoneResponseRetryGeneration = nil
+    entryCreationKeyState.libKeystoneResponseRetryToken =
+        (entryCreationKeyState.libKeystoneResponseRetryToken or 0) + 1
+end
+
+entryCreationKeyState.AdvanceGroupTransportGeneration = function()
+    entryCreationKeyState.groupTransportGen =
+        (entryCreationKeyState.groupTransportGen or 0) + 1
+    entryCreationKeyState.CancelLibKeystoneResponseRetry()
 end
 
 entryCreationKeyState.GetLibKeystoneShim = function()
@@ -3089,6 +3127,7 @@ end
 
 entryCreationKeyState.CancelLeaderKeystoneRequestRetry = function()
     entryCreationKeyState.leaderKeystoneRequestRetryDeadline = nil
+    entryCreationKeyState.leaderKeystoneRequestRetryGeneration = nil
     entryCreationKeyState.leaderKeystoneRequestRetryToken =
         (entryCreationKeyState.leaderKeystoneRequestRetryToken or 0) + 1
 end
@@ -3154,13 +3193,19 @@ entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry = function(force, attem
     local now = GetTime and GetTime() or 0
     local delay = entryCreationKeyState.LEADER_KEY_REQUEST_RETRY_DELAY_S
     local due = now + delay
+    local retryGroupGen = entryCreationKeyState.groupTransportGen
     local existingDeadline = entryCreationKeyState.leaderKeystoneRequestRetryDeadline
-    if existingDeadline and existingDeadline <= due then return true end
+    if existingDeadline
+       and entryCreationKeyState.leaderKeystoneRequestRetryGeneration == retryGroupGen
+       and existingDeadline <= due then
+        return true
+    end
 
     entryCreationKeyState.leaderKeystoneRequestRetryToken =
         (entryCreationKeyState.leaderKeystoneRequestRetryToken or 0) + 1
     local retryToken = entryCreationKeyState.leaderKeystoneRequestRetryToken
     entryCreationKeyState.leaderKeystoneRequestRetryDeadline = due
+    entryCreationKeyState.leaderKeystoneRequestRetryGeneration = retryGroupGen
     entryCreationKeyState.leaderKeystoneLastRequestStatus =
         "request retry scheduled: " .. tostring(reason or "unknown")
     C_Timer.After(delay, function()
@@ -3168,6 +3213,8 @@ entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry = function(force, attem
             return
         end
         entryCreationKeyState.leaderKeystoneRequestRetryDeadline = nil
+        entryCreationKeyState.leaderKeystoneRequestRetryGeneration = nil
+        if retryGroupGen ~= entryCreationKeyState.groupTransportGen then return end
         if not (IsInGroup and IsInGroup()) then return end
         entryCreationKeyState.RequestLeaderKeystone(true, attempt + 1)
     end)
@@ -3547,7 +3594,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
             local name, class, _, _, ilvl, _, _, _, _, role, _, score, _, _, _, specID
                 = C_LFGList.GetApplicantMemberInfo(app.id, m)
             local memberName = SafeStr(name, "")
-            if memberName ~= "" and memberName ~= "?" then
+            if not _IsPlaceholderUnitName(memberName) then
                 local classToken = SafeEnumKey(class, "")
                 local roleToken = SafeEnumKey(role, "DAMAGER")
                 table.insert(memberOut, _Uint32BE(app.id))
@@ -4329,6 +4376,7 @@ local EVENT_HANDLERS = {
         entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()
     end,
     GROUP_LEFT                       = function()
+        entryCreationKeyState.AdvanceGroupTransportGeneration()
         entryCreationKeyState.ClearLeaderKeystone()
         entryCreationKeyState.MarkRosterCompositionChanged()
         MarkDirty("groupleft")
@@ -4472,6 +4520,9 @@ local function _RunDisabledCleanup()
     end
 
     ApplicantScoutDB.enabled = false
+    entryCreationKeyState.ClearAutoHiRuntimeState()
+    entryCreationKeyState.AdvanceGroupTransportGeneration()
+    entryCreationKeyState.ClearLeaderKeystone()
     scanDirty = false
     pendingShotDirty = false
 

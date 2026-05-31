@@ -691,6 +691,53 @@ def test_leader_keystone_request_uses_checked_send_and_throttle_updates_only_aft
     assert 'reason == "request-failed"' in source
 
 
+def test_libkeystone_retries_are_group_generation_scoped_and_cancelled_on_group_left():
+    source = _lua_source()
+    state_body = _slice_between(
+        source,
+        "local entryCreationKeyState = {",
+        "local ENTRY_CREATION_KEY_CACHE_TTL = 3600",
+    )
+    leader_body = _slice_between(
+        source,
+        "entryCreationKeyState.GetLibKeystone = function()",
+        "local function _RaidSubgroupForRoster(index)",
+    )
+    events_body = _slice_between(source, "local EVENT_HANDLERS = {", "for event in pairs")
+
+    assert "groupTransportGen = 0" in state_body
+    assert "libKeystoneResponseRetryGeneration = nil" in state_body
+    assert "leaderKeystoneRequestRetryGeneration = nil" in state_body
+    assert "entryCreationKeyState.CancelLibKeystoneResponseRetry = function()" in leader_body
+    assert "entryCreationKeyState.AdvanceGroupTransportGeneration = function()" in leader_body
+
+    response_body = _slice_between(
+        leader_body,
+        "entryCreationKeyState.ScheduleLibKeystoneResponseRetry = function(",
+        "entryCreationKeyState.GetLibKeystoneShim = function()",
+    )
+    assert "local retryGroupGen = entryCreationKeyState.groupTransportGen" in response_body
+    assert "entryCreationKeyState.libKeystoneResponseRetryGeneration == retryGroupGen" in response_body
+    assert "entryCreationKeyState.libKeystoneResponseRetryGeneration = retryGroupGen" in response_body
+    assert "retryGroupGen ~= entryCreationKeyState.groupTransportGen" in response_body
+
+    request_body = _slice_between(
+        leader_body,
+        "entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry = function(",
+        "entryCreationKeyState.RequestLeaderKeystone = function(",
+    )
+    assert "local retryGroupGen = entryCreationKeyState.groupTransportGen" in request_body
+    assert "entryCreationKeyState.leaderKeystoneRequestRetryGeneration == retryGroupGen" in request_body
+    assert "entryCreationKeyState.leaderKeystoneRequestRetryGeneration = retryGroupGen" in request_body
+    assert "retryGroupGen ~= entryCreationKeyState.groupTransportGen" in request_body
+
+    group_left_idx = events_body.index("GROUP_LEFT                       = function()")
+    chat_msg_idx = events_body.index("CHAT_MSG_ADDON", group_left_idx)
+    group_left_body = events_body[group_left_idx:chat_msg_idx]
+    assert "entryCreationKeyState.AdvanceGroupTransportGeneration()" in group_left_body
+    assert "entryCreationKeyState.ClearLeaderKeystone()" in group_left_body
+
+
 def test_full_party_quiet_signature_requires_empty_resolved_non_raid_roster():
     source = _lua_source()
     payload_body = _slice_between(
@@ -988,6 +1035,41 @@ def test_disable_cleanup_restores_cvars_after_terminal_clear_retry_capture_windo
     assert "restoreSessionGen" in cleanup_body
 
 
+def test_disable_cleanup_invalidates_pending_auto_hi_generations_and_retries():
+    source = _lua_source()
+    auto_hi_body = _slice_between(
+        source,
+        "entryCreationKeyState.AutoHiGroupMemberCount = function()",
+        "CheckSessionTransition = function()",
+    )
+    cleanup_body = _slice_between(
+        source,
+        "local function _RunDisabledCleanup()",
+        "-- Single source of truth for the enabled toggle.",
+    )
+
+    assert "entryCreationKeyState.ClearAutoHiRuntimeState = function()" in auto_hi_body
+    assert 'entryCreationKeyState.ClearAutoHiSendRetry("group")' in auto_hi_body
+    assert 'entryCreationKeyState.ClearAutoHiSendRetry("new-party")' in auto_hi_body
+    assert "entryCreationKeyState.autoHiGroupGen + 1" in auto_hi_body
+    assert "entryCreationKeyState.autoHiNewPartyMemberGen + 1" in auto_hi_body
+    assert "entryCreationKeyState.autoHiGroupStateKnown = false" in auto_hi_body
+    assert "entryCreationKeyState.autoHiKnownPartyGUIDs = {}" in auto_hi_body
+    assert "entryCreationKeyState.ClearAutoHiRuntimeState()" in cleanup_body
+
+
+def test_disable_cleanup_invalidates_pending_libkeystone_transport_retries():
+    source = _lua_source()
+    cleanup_body = _slice_between(
+        source,
+        "local function _RunDisabledCleanup()",
+        "-- Single source of truth for the enabled toggle.",
+    )
+
+    assert "entryCreationKeyState.AdvanceGroupTransportGeneration()" in cleanup_body
+    assert "entryCreationKeyState.ClearLeaderKeystone()" in cleanup_body
+
+
 def test_applicant_payload_skips_secret_placeholder_names():
     source = _lua_source()
     payload_body = _slice_between(
@@ -997,7 +1079,7 @@ def test_applicant_payload_skips_secret_placeholder_names():
     )
 
     assert 'local memberName = SafeStr(name, "")' in payload_body
-    assert 'if memberName ~= "" and memberName ~= "?" then' in payload_body
+    assert "if not _IsPlaceholderUnitName(memberName) then" in payload_body
 
 
 def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
@@ -2159,6 +2241,16 @@ def test_lua_producer_omits_fallback_placeholder_roster_identity(pytestconfig):
     assert b"Unknown-Realm" not in payload
     assert b"Host-Realm" in payload
     assert b"Healer-Realm" in payload
+
+
+def test_lua_producer_omits_placeholder_applicant_member_but_keeps_valid_group_member(pytestconfig):
+    generated = "".join(
+        _run_lua_fixture(pytestconfig, "placeholder-applicant").split()
+    )
+    payload = bytes.fromhex(generated)
+
+    assert b"Unknown-Realm" not in payload
+    assert b"Mageone-Realm" in payload
 
 
 def test_listing_key_level_uses_owned_keystone_only_after_listing_match_guard():
