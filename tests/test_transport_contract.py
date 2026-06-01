@@ -10,6 +10,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_COMPANION_ROOT = REPO_ROOT.parent / "ApplicantScout-Companion"
 LUA_FIXTURE_GENERATOR = REPO_ROOT / "tests" / "lua" / "generate_aps1_v8_fixture.lua"
+LUA_LIBKEYSTONE_DISABLED_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_libkeystone_disabled_transport.lua"
+)
 LUA_GOLDEN_CASES = (
     (None, "aps1_v8_lua_golden.hex"),
     ("leader-key", "aps1_v8_lua_leader_key_golden.hex"),
@@ -26,8 +29,12 @@ def _lua51_path(pytestconfig):
 
 
 def _run_lua_fixture(pytestconfig, *args: str) -> str:
+    return _run_lua_script(pytestconfig, LUA_FIXTURE_GENERATOR, *args)
+
+
+def _run_lua_script(pytestconfig, script: Path, *args: str) -> str:
     result = subprocess.run(
-        [_lua51_path(pytestconfig), str(LUA_FIXTURE_GENERATOR), *args],
+        [_lua51_path(pytestconfig), str(script), *args],
         cwd=REPO_ROOT,
         check=True,
         capture_output=True,
@@ -2358,6 +2365,13 @@ def test_lua_producer_omits_placeholder_applicant_member_but_keeps_valid_group_m
 
     assert b"Unknown-Realm" not in payload
     assert b"Mageone-Realm" in payload
+
+
+def test_lua_libkeystone_transport_respects_disabled_kill_switch(pytestconfig):
+    assert (
+        _run_lua_script(pytestconfig, LUA_LIBKEYSTONE_DISABLED_CHECK).strip()
+        == "ok libkeystone-disabled"
+    )
 
 
 def test_listing_key_level_uses_owned_keystone_only_after_listing_match_guard():

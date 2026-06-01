@@ -22,6 +22,13 @@ if fixture_mode == "placeholder-applicant" then
     end
 end
 
+if fixture_mode == "leader-key" then
+    ApplicantScoutDB = {
+        enabled = true,
+        debug = false,
+    }
+end
+
 local harness = env.load_addon()
 
 local entry = {

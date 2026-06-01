@@ -2954,7 +2954,14 @@ entryCreationKeyState.IsLibKeystoneSendRetryable = function(reason)
         or reason == "request-failed"
 end
 
+entryCreationKeyState.IsLibKeystoneTransportEnabled = function()
+    return ApplicantScoutDB and ApplicantScoutDB.enabled
+end
+
 entryCreationKeyState.SendLibKeystoneAddonMessage = function(payload, channel)
+    if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then
+        return false, "disabled"
+    end
     if channel ~= "PARTY" then return false, "bad-channel" end
     if not (IsInGroup and IsInGroup()) then return false, "not-grouped" end
     if IsChatMessagingLockdown() then return false, "lockdown" end
@@ -3013,6 +3020,9 @@ entryCreationKeyState.ScheduleLibKeystoneResponseRetry = function(channel, reaso
     if not entryCreationKeyState.IsLibKeystoneSendRetryable(reason) then
         return false
     end
+    if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then
+        return false
+    end
     attempt = math.floor(SafeNumber(attempt, 1))
     if attempt >= entryCreationKeyState.LIB_KEYSTONE_RESPONSE_MAX_RETRIES then
         entryCreationKeyState.libKeystoneLastSendStatus =
@@ -3046,6 +3056,7 @@ entryCreationKeyState.ScheduleLibKeystoneResponseRetry = function(channel, reaso
         entryCreationKeyState.libKeystoneResponseRetryGeneration = nil
         if retryGroupGen ~= entryCreationKeyState.groupTransportGen then return end
         if not (IsInGroup and IsInGroup()) then return end
+        if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return end
         local ok, retryReason = entryCreationKeyState.SendLibKeystoneShimInfo(channel)
         if not ok then
             entryCreationKeyState.ScheduleLibKeystoneResponseRetry(
@@ -3081,6 +3092,9 @@ entryCreationKeyState.GetLibKeystoneShim = function()
         end,
         Request = function(channel)
             if channel ~= "PARTY" then return end
+            if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then
+                return false, "disabled"
+            end
             local keyLevel, challengeMapID, playerRating =
                 entryCreationKeyState.ReadOwnLibKeystoneInfo()
             local playerName = SafeStr(UnitNameUnmodified and UnitNameUnmodified("player"), "")
@@ -3099,6 +3113,7 @@ end
 
 entryCreationKeyState.LibKeystoneShimHandleAddonMessage = function(prefix, msg, channel, sender)
     if prefix ~= "LibKS" or channel ~= "PARTY" then return end
+    if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return end
     if IsSecretValue(msg) or type(msg) ~= "string" then return end
     if msg == "R" then
         local ok, reason = entryCreationKeyState.SendLibKeystoneShimInfo(channel)
@@ -3164,6 +3179,7 @@ entryCreationKeyState.ClearLeaderKeystone = function()
 end
 
 entryCreationKeyState.OnLeaderKeystoneData = function(keyLevel, challengeMapID, _rating, playerName, channel)
+    if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return end
     if channel ~= "PARTY" then return end
     local leaderName = entryCreationKeyState.CurrentPartyLeaderName()
     if leaderName == "" then return end
@@ -3206,6 +3222,9 @@ entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry = function(force, attem
     if not entryCreationKeyState.IsLibKeystoneSendRetryable(reason) then
         return false
     end
+    if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then
+        return false
+    end
     attempt = math.floor(SafeNumber(attempt, 1))
     if attempt >= entryCreationKeyState.LEADER_KEY_REQUEST_MAX_RETRIES then
         entryCreationKeyState.leaderKeystoneLastRequestStatus =
@@ -3242,12 +3261,16 @@ entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry = function(force, attem
         entryCreationKeyState.leaderKeystoneRequestRetryGeneration = nil
         if retryGroupGen ~= entryCreationKeyState.groupTransportGen then return end
         if not (IsInGroup and IsInGroup()) then return end
+        if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return end
         entryCreationKeyState.RequestLeaderKeystone(true, attempt + 1)
     end)
     return true
 end
 
 entryCreationKeyState.RequestLeaderKeystone = function(force, attempt)
+    if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then
+        return
+    end
     if not entryCreationKeyState.RegisterLeaderKeystoneCallback()
        or not (IsInGroup and IsInGroup()) then
         return
@@ -3708,6 +3731,20 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.HashSnapshot = HashSnapshot
     _G.ApplicantScoutFixtureHarness.OnLeaderKeystoneData =
         entryCreationKeyState.OnLeaderKeystoneData
+    _G.ApplicantScoutFixtureHarness.SendLibKeystoneAddonMessage =
+        entryCreationKeyState.SendLibKeystoneAddonMessage
+    _G.ApplicantScoutFixtureHarness.RequestLeaderKeystone =
+        entryCreationKeyState.RequestLeaderKeystone
+    _G.ApplicantScoutFixtureHarness.GetLibKeystoneShim =
+        entryCreationKeyState.GetLibKeystoneShim
+    _G.ApplicantScoutFixtureHarness.LibKeystoneShimHandleAddonMessage =
+        entryCreationKeyState.LibKeystoneShimHandleAddonMessage
+    _G.ApplicantScoutFixtureHarness.ScheduleLibKeystoneResponseRetry =
+        entryCreationKeyState.ScheduleLibKeystoneResponseRetry
+    _G.ApplicantScoutFixtureHarness.ScheduleLeaderKeystoneRequestRetry =
+        entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry
+    _G.ApplicantScoutFixtureHarness.ResolveLeaderKeystoneContext =
+        entryCreationKeyState.ResolveLeaderKeystoneContext
 end
 
 -- Resolve QR encoder reference (set by libs/qrencode.lua via addon namespace).
