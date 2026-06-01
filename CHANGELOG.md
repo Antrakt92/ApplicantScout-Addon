@@ -2,6 +2,91 @@
 
 ## Unreleased
 
+## 0.4.6 - 02-Jun-2026 - Companion 0.8.3 performance release train
+
+This paired addon + companion release keeps the compact v8 QR wire format
+unchanged while making the in-game QR screenshot transport and Windows overlay
+more responsive during applicant bursts, overlay interaction, Settings changes,
+startup, screenshot-path changes, RaiderIO preload, and WCL cache writes.
+
+### Changed
+
+- QR rendering now paints large QR codes in script-safe chunks across frames
+  instead of creating/showing every QR texture in one synchronous burst. This
+  is the main in-game fix for visible microfreezes when a large applicant group
+  or roster update needs a new screenshot.
+- Medium and large payloads now try the smaller raw/lower-error-correction QR
+  path earlier, reducing QR size and texture work before the addon falls back to
+  denser encodes.
+- Screenshot throttling and active-paint checks now happen before extra LFG
+  reads and payload work when possible, so repeated applicant churn does less
+  redundant work while a previous QR is still painting.
+
+### Improved
+
+- Reused addon-side RaiderIO M+ summaries for the same character/activity/key
+  within a transport cycle, so large applicant groups spend less time repeating
+  RaiderIO profile parsing.
+- Sanitized RaiderIO lookup names before optional RaiderIO addon calls, keeping
+  the hot path away from secret-tagged or placeholder applicant strings.
+- Companion `0.8.3` reduces overlay open/collapse and Alt-Tab hitches by
+  debouncing foreground polling, preserving interaction grace while the cursor
+  is over the overlay, repainting only changed hover/pinned rows, and skipping
+  unchanged table-row rewrites when row order is stable.
+- Companion `0.8.3` reuses package-fit results during sorting/rendering instead
+  of recomputing grouped-applicant package scores for the same snapshot.
+- Companion `0.8.3` moves QR decoder import, startup shortcut changes,
+  screenshot watcher cleanup, RaiderIO fingerprint/decode/realm hydration, and
+  WCL character-cache JSON/disk work off the Qt UI path where those operations
+  could pause overlay clicks, tab changes, or startup for seconds.
+- Companion `0.8.3` debounces Screenshots path health checks in Settings and
+  reuses the current warning state during autosave, avoiding slow path probes
+  while the user is typing or saving.
+- Companion `0.8.3` caches Windows private ACL setup for local config/cache
+  writes, reducing repeated `icacls` overhead during settings and cache writes.
+
+### Fixed
+
+- Preserved dirty snapshots that arrive while a QR is painting or waiting for
+  the screenshot settle delay, so fresh applicant/roster changes are not lost
+  behind an older capture.
+- Guarded screenshots by the completed QR paint generation, so stale delayed
+  captures cannot fire after a newer QR paint job has replaced the visible QR.
+- Cancelled stale QR paint jobs when sessions end and kept terminal-clear shots
+  tied to the session that created them, so an old clear cannot race a newer
+  listing.
+- Kept roster preflight and incomplete-roster retry state alive when newer data
+  arrives during QR paint/settle; the next snapshot is queued instead of
+  treating the older capture as final.
+- Committed quiet full-party suppression, emitted applicant counts, screenshot
+  throttle time, and roster-composition clears only after a successful QR paint
+  and scheduled capture, reducing stale-state edge cases after failed or
+  cancelled paints.
+- Companion `0.8.3` keeps stale screenshot watchers from decoding/deleting new
+  marker screenshots after path changes by marking old watchers stopped before
+  asynchronous cleanup finishes.
+- Companion `0.8.3` reports lazy pyzbar/zbar load failures as decode health
+  failures and preserves screenshots in that failure state instead of silently
+  treating them as unrelated no-QR images.
+- Companion `0.8.3` distinguishes rapid reused WoW screenshot filenames by
+  precise stat metadata, preventing same-second screenshot bursts from being
+  dropped by event dedupe.
+- Companion `0.8.3` fixes WCL character-cache write races, stale snapshot
+  overwrites, and same-target/cache-hit completion edge cases that could leave
+  rows waiting or lose newer cache updates during slow disk writes.
+- Companion `0.8.3` avoids duplicate current-session WoW lifecycle watcher
+  launches and reports startup-shortcut update failures back in Settings without
+  blocking the saved runtime setting.
+- Release-prep contract tests now derive the current addon and paired companion
+  versions from release metadata, so future version bumps verify the prepared
+  release instead of a stale previous tag.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.8.3`.
+- No wire-format change; wire payloads remain compact v8 for temporary
+  LFG-lockdown handling.
+
 ## 0.4.5 - 30-May-2026 - Companion 0.8.2 self-update release train
 
 This paired addon + companion release keeps the addon QR runtime and compact v8

@@ -20,6 +20,43 @@ _RELEASE_TOOL_PACKAGES = {
 }
 
 
+def _current_addon_version() -> str:
+    toc = (REPO_ROOT / "ApplicantScout.toc").read_text(encoding="utf-8")
+    match = re.search(r"(?m)^##\s+Version:\s*(\d+\.\d+\.\d+)\s*$", toc)
+    assert match is not None, "ApplicantScout.toc is missing ## Version"
+    return match.group(1)
+
+
+def _current_paired_companion_version() -> str:
+    changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    top = re.search(
+        r"(?ms)^##\s+\d+\.\d+\.\d+\s+-.*?(?=^##\s+\d+\.\d+\.\d+\s+-|\Z)",
+        changelog,
+    )
+    assert top is not None, "CHANGELOG.md is missing a top versioned entry"
+    versions = sorted(
+        set(
+            re.findall(
+                r"(?i)(?:ApplicantScout\s+)?Companion\s+`?(\d+\.\d+\.\d+)`?",
+                top.group(0),
+            )
+        )
+    )
+    assert len(versions) == 1, f"Expected one paired companion version, got {versions}"
+    return versions[0]
+
+
+def _next_patch_version(version: str) -> str:
+    major, minor, patch = (int(part) for part in version.split("."))
+    return f"{major}.{minor}.{patch + 1}"
+
+
+CURRENT_ADDON_VERSION = _current_addon_version()
+CURRENT_ADDON_TAG = f"v{CURRENT_ADDON_VERSION}"
+CURRENT_COMPANION_VERSION = _current_paired_companion_version()
+CURRENT_COMPANION_TAG = f"v{CURRENT_COMPANION_VERSION}"
+
+
 def _workflow_source() -> str:
     return (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8"
@@ -358,7 +395,7 @@ def test_release_version_script_outputs_paired_companion_ref(tmp_path: Path):
             "-File",
             str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
             "-Tag",
-            "v0.4.5",
+            CURRENT_ADDON_TAG,
             "-PairedCompanionRefOutputPath",
             str(output_path),
         ],
@@ -369,7 +406,10 @@ def test_release_version_script_outputs_paired_companion_ref(tmp_path: Path):
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert output_path.read_text(encoding="utf-8") == "companion_ref=v0.8.2\n"
+    assert (
+        output_path.read_text(encoding="utf-8")
+        == f"companion_ref={CURRENT_COMPANION_TAG}\n"
+    )
 
 
 @pytest.mark.parametrize(
@@ -399,7 +439,7 @@ def test_release_version_script_rejects_pinned_readme_install_links(
         encoding="utf-8",
     )
 
-    result = _run_release_check_in(repo, "-Tag", "v0.4.5")
+    result = _run_release_check_in(repo, "-Tag", CURRENT_ADDON_TAG)
 
     assert result.returncode != 0
     assert "use releases/latest" in (result.stdout + result.stderr)
@@ -415,11 +455,11 @@ def test_release_version_script_validates_paired_companion_minimum_addon(
             [
                 "# ApplicantScout Companion Release Notes",
                 "",
-                "## 0.8.2 - 30-May-2026",
+                f"## {CURRENT_COMPANION_VERSION} - 30-May-2026",
                 "",
                 "### Release Assets",
                 "",
-                "- Requires the ApplicantScout WoW addon `0.4.5`.",
+                f"- Requires the ApplicantScout WoW addon `{CURRENT_ADDON_VERSION}`.",
                 "",
             ]
         ),
@@ -435,7 +475,7 @@ def test_release_version_script_validates_paired_companion_minimum_addon(
             "-File",
             str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
             "-Tag",
-            "v0.4.5",
+            CURRENT_ADDON_TAG,
             "-PairedCompanionRoot",
             str(companion),
         ],
@@ -451,6 +491,7 @@ def test_release_version_script_validates_paired_companion_minimum_addon(
 def test_release_version_script_rejects_companion_requiring_newer_addon(
     tmp_path: Path,
 ):
+    newer_addon_version = _next_patch_version(CURRENT_ADDON_VERSION)
     companion = tmp_path / "ApplicantScout-Companion"
     companion.mkdir()
     (companion / "RELEASE_NOTES.md").write_text(
@@ -458,11 +499,11 @@ def test_release_version_script_rejects_companion_requiring_newer_addon(
             [
                 "# ApplicantScout Companion Release Notes",
                 "",
-                "## 0.8.2 - 30-May-2026",
+                f"## {CURRENT_COMPANION_VERSION} - 30-May-2026",
                 "",
                 "### Release Assets",
                 "",
-                "- Requires the ApplicantScout WoW addon `0.4.6`.",
+                f"- Requires the ApplicantScout WoW addon `{newer_addon_version}`.",
                 "",
             ]
         ),
@@ -478,7 +519,7 @@ def test_release_version_script_rejects_companion_requiring_newer_addon(
             "-File",
             str(REPO_ROOT / "scripts" / "check-release-version.ps1"),
             "-Tag",
-            "v0.4.5",
+            CURRENT_ADDON_TAG,
             "-PairedCompanionRoot",
             str(companion),
         ],
@@ -490,8 +531,8 @@ def test_release_version_script_rejects_companion_requiring_newer_addon(
 
     assert result.returncode != 0
     output = result.stdout + result.stderr
-    assert "requires addon 0.4.6" in output
-    assert "current addon tag is 0.4.5" in output
+    assert f"requires addon {newer_addon_version}" in output
+    assert f"current addon tag is {CURRENT_ADDON_VERSION}" in output
 
 
 def test_release_version_script_does_not_invoke_companion_release_script():
@@ -506,22 +547,32 @@ def test_release_version_check_accepts_published_paired_companion_assets(
 ):
     gh = _fake_gh_release_view(
         tmp_path,
-        expected_tag="v0.8.2",
+        expected_tag=CURRENT_COMPANION_TAG,
         release_json={
-            "tagName": "v0.8.2",
+            "tagName": CURRENT_COMPANION_TAG,
             "isDraft": False,
             "isPrerelease": False,
             "assets": [
-                {"name": "ApplicantScoutCompanionSetup-0.8.2.exe"},
-                {"name": "ApplicantScoutCompanionSetup-0.8.2.exe.sha256"},
-                {"name": "ApplicantScoutCompanion-0.8.2-portable.zip"},
+                {"name": f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}.exe"},
+                {
+                    "name": (
+                        f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}"
+                        ".exe.sha256"
+                    )
+                },
+                {
+                    "name": (
+                        f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}"
+                        "-portable.zip"
+                    )
+                },
             ],
         },
     )
 
     result = _run_release_check(
         "-Tag",
-        "v0.4.5",
+        CURRENT_ADDON_TAG,
         "-RequirePublishedPairedCompanionAssets",
         "-GitHubCliPath",
         str(gh),
@@ -537,21 +588,26 @@ def test_release_version_check_rejects_missing_paired_companion_checksum(
 ):
     gh = _fake_gh_release_view(
         tmp_path,
-        expected_tag="v0.8.2",
+        expected_tag=CURRENT_COMPANION_TAG,
         release_json={
-            "tagName": "v0.8.2",
+            "tagName": CURRENT_COMPANION_TAG,
             "isDraft": False,
             "isPrerelease": False,
             "assets": [
-                {"name": "ApplicantScoutCompanionSetup-0.8.2.exe"},
-                {"name": "ApplicantScoutCompanion-0.8.2-portable.zip"},
+                {"name": f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}.exe"},
+                {
+                    "name": (
+                        f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}"
+                        "-portable.zip"
+                    )
+                },
             ],
         },
     )
 
     result = _run_release_check(
         "-Tag",
-        "v0.4.5",
+        CURRENT_ADDON_TAG,
         "-RequirePublishedPairedCompanionAssets",
         "-GitHubCliPath",
         str(gh),
@@ -561,7 +617,10 @@ def test_release_version_check_rejects_missing_paired_companion_checksum(
 
     assert result.returncode != 0
     output = re.sub(r"\s+", "", result.stdout + result.stderr)
-    assert "missingasset:ApplicantScoutCompanionSetup-0.8.2.exe.sha256" in output
+    assert (
+        f"missingasset:ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}"
+        ".exe.sha256"
+    ) in output
 
 
 def test_release_version_check_rejects_draft_paired_companion_release(
@@ -569,22 +628,32 @@ def test_release_version_check_rejects_draft_paired_companion_release(
 ):
     gh = _fake_gh_release_view(
         tmp_path,
-        expected_tag="v0.8.2",
+        expected_tag=CURRENT_COMPANION_TAG,
         release_json={
-            "tagName": "v0.8.2",
+            "tagName": CURRENT_COMPANION_TAG,
             "isDraft": True,
             "isPrerelease": False,
             "assets": [
-                {"name": "ApplicantScoutCompanionSetup-0.8.2.exe"},
-                {"name": "ApplicantScoutCompanionSetup-0.8.2.exe.sha256"},
-                {"name": "ApplicantScoutCompanion-0.8.2-portable.zip"},
+                {"name": f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}.exe"},
+                {
+                    "name": (
+                        f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}"
+                        ".exe.sha256"
+                    )
+                },
+                {
+                    "name": (
+                        f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}"
+                        "-portable.zip"
+                    )
+                },
             ],
         },
     )
 
     result = _run_release_check(
         "-Tag",
-        "v0.4.5",
+        CURRENT_ADDON_TAG,
         "-RequirePublishedPairedCompanionAssets",
         "-GitHubCliPath",
         str(gh),
@@ -600,13 +669,13 @@ def test_release_version_check_reports_paired_companion_gh_failure(tmp_path: Pat
     gh = _fake_gh_release_view(
         tmp_path,
         exit_code=7,
-        expected_tag="v0.8.2",
+        expected_tag=CURRENT_COMPANION_TAG,
         stderr="network failed",
     )
 
     result = _run_release_check(
         "-Tag",
-        "v0.4.5",
+        CURRENT_ADDON_TAG,
         "-RequirePublishedPairedCompanionAssets",
         "-GitHubCliPath",
         str(gh),
@@ -625,13 +694,13 @@ def test_release_version_check_rejects_malformed_paired_companion_release_json(
 ):
     gh = _fake_gh_release_view(
         tmp_path,
-        expected_tag="v0.8.2",
+        expected_tag=CURRENT_COMPANION_TAG,
         stdout_text="{bad json",
     )
 
     result = _run_release_check(
         "-Tag",
-        "v0.4.5",
+        CURRENT_ADDON_TAG,
         "-RequirePublishedPairedCompanionAssets",
         "-GitHubCliPath",
         str(gh),

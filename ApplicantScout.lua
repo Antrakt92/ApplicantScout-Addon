@@ -225,6 +225,11 @@ local entryCreationKeyState = {
     TRANSPORT_HEARTBEAT_S = 15.0,
     lastTransportHeartbeatAttemptTime = 0,
     groupTransportGen = 0,
+    rioMPlusSummaryCache = {},
+    qrPaintJobGen = 0,
+    qrPaintInProgress = false,
+    qrPaintDirtyDuringPaint = false,
+    transportDirtyGeneration = 0,
     LEADER_KEY_TTL_S = 60,
     LEADER_KEY_REQUEST_THROTTLE_S = 3,
     LEADER_KEY_REQUEST_RETRY_DELAY_S = 1.0,
@@ -498,6 +503,10 @@ StartSession = function()
     lastQREncodeMode = "never"
     lastQREncodeBytes = 0
     lastQREncodeError = nil
+    entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
+    entryCreationKeyState.qrPaintInProgress = false
+    entryCreationKeyState.qrPaintDirtyDuringPaint = false
+    entryCreationKeyState.rioMPlusSummaryCache = {}
     entryCreationKeyState.lastQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
     entryCreationKeyState.MarkRosterCompositionChanged()
@@ -531,6 +540,9 @@ EndSession = function()
     entryCreationKeyState.ClearRosterInspectBatchState()
     entryCreationKeyState.ClearRosterLoadRetryState()
     entryCreationKeyState.ClearRosterCompositionChanged()
+    entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
+    entryCreationKeyState.qrPaintInProgress = false
+    entryCreationKeyState.qrPaintDirtyDuringPaint = false
     MaybeTriggerScreenshot(true, nil, true)
     entryCreationKeyState.lastQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
@@ -546,6 +558,7 @@ EndSession = function()
     pendingShotDirty = false
     entryCreationKeyState.lastEmittedApplicantCount = 0
     entryCreationKeyState.entryCreationKeyLevelCache = nil
+    entryCreationKeyState.rioMPlusSummaryCache = {}
 
     -- Schedule deferred Hide AFTER the final clear-shot has had a chance to
     -- fire. The screenshot path inside MaybeTriggerScreenshot uses
@@ -967,6 +980,8 @@ end
 MarkDirty = function(reason)
     local wasClean = not scanDirty
     scanDirty = true
+    entryCreationKeyState.transportDirtyGeneration =
+        (entryCreationKeyState.transportDirtyGeneration or 0) + 1
     if wasClean and ApplicantScoutDB and ApplicantScoutDB.debug then
         print("|cff999999[APS-debug]|r DIRTY reason=" .. tostring(reason))
     end
@@ -2217,6 +2232,7 @@ local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey
     -- RaiderIO is optional. Query only with the SafeStr-cleaned applicant name:
     -- the raw LFG name can be secret-tagged, and RaiderIO's public API performs
     -- string parsing internally.
+    memberName = SafeStr(memberName, "")
     if memberName == "" or memberName == "?" then
         return _EmptyRaiderIOMPlusSummary(0, 0)
     end
@@ -2225,15 +2241,33 @@ local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey
         return _EmptyRaiderIOMPlusSummary(0, 0)
     end
 
+    listingActivityID = math.floor(SafeNumber(listingActivityID, 0))
+    targetKey = _NormalizeKeystoneLevel(targetKey)
+    local rioSummaryCache = entryCreationKeyState.rioMPlusSummaryCache
+    if not rioSummaryCache then
+        rioSummaryCache = {}
+        entryCreationKeyState.rioMPlusSummaryCache = rioSummaryCache
+    end
+    local cacheKey = memberName .. "\031" .. tostring(listingActivityID)
+        .. "\031" .. tostring(targetKey)
+    local cachedSummary = rioSummaryCache[cacheKey]
+    if cachedSummary then return cachedSummary end
+    local function StoreRaiderIOSummary(summary)
+        rioSummaryCache[cacheKey] = summary
+        return summary
+    end
+
     local ok, profile = pcall(rio.GetProfile, memberName)
     if not ok then return _EmptyRaiderIOMPlusSummary(0, 0) end
     profile = SafeTable(profile)
     if not profile then return _EmptyRaiderIOMPlusSummary(0, 0) end
 
     local keystoneProfile = SafeTable(profile.mythicKeystoneProfile)
-    if not keystoneProfile then return _EmptyRaiderIOMPlusSummary(0, 0) end
+    if not keystoneProfile then
+        return StoreRaiderIOSummary(_EmptyRaiderIOMPlusSummary(0, 0))
+    end
     if IsSecretValue(keystoneProfile.blocked) or keystoneProfile.blocked then
-        return _EmptyRaiderIOMPlusSummary(0, 0)
+        return StoreRaiderIOSummary(_EmptyRaiderIOMPlusSummary(0, 0))
     end
 
     local current = SafeTable(keystoneProfile.mplusCurrent)
@@ -2249,9 +2283,8 @@ local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey
     local summary = _EmptyRaiderIOMPlusSummary(currentScore, mainScore)
 
     local sortedDungeons = SafeTable(keystoneProfile.sortedDungeons)
-    if not sortedDungeons then return summary end
+    if not sortedDungeons then return StoreRaiderIOSummary(summary) end
 
-    targetKey = _NormalizeKeystoneLevel(targetKey)
     local targetMinus1 = targetKey > 0 and math.max(2, targetKey - 1) or 0
     local targetMinus2 = targetKey > 0 and math.max(2, targetKey - 2) or 0
     summary.hasProfile = true
@@ -2302,7 +2335,7 @@ local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey
     summary.completedAtOrAboveMinus1 =
         _ClampUInt8(summary.completedAtOrAboveMinus1)
     summary.dungeonCount = _ClampUInt8(summary.dungeonCount)
-    return summary
+    return StoreRaiderIOSummary(summary)
 end
 
 local function _IsPlaceholderUnitName(name)
@@ -2531,6 +2564,8 @@ entryCreationKeyState.ClearRosterCompositionChanged = function()
 end
 entryCreationKeyState.MarkRosterCompositionChanged = function()
     entryCreationKeyState.rosterChangedSinceLastPayload = true
+    entryCreationKeyState.transportDirtyGeneration =
+        (entryCreationKeyState.transportDirtyGeneration or 0) + 1
     local now = GetTime and GetTime() or 0
     local delay = entryCreationKeyState.ROSTER_CHANGE_PREFLIGHT_DEADLINE_S
     entryCreationKeyState.rosterChangePreflightDeadline = now + delay
@@ -3758,8 +3793,9 @@ local _qrencode = _addonNS.QR and _addonNS.QR.qrcode
 -- Pool grows as needed; never shrinks. Excess textures from prior larger QRs
 -- are hidden, not destroyed (cheap reuse on next render).
 entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET = 3500  -- script-watchdog budget; above this, skip/fallback
+entryCreationKeyState.QR_TEXTURE_PAINT_CHUNK = 450     -- max texture ops per frame while painting one QR
 local QR_TEXTURE_HARD_CAP = 10000                      -- safety against runaway texture creation
-entryCreationKeyState.QR_RAW_FIRST_PAYLOAD_BYTES = 900 -- avoid expensive hex/M for large applicant bursts
+entryCreationKeyState.QR_RAW_FIRST_PAYLOAD_BYTES = 512 -- avoid expensive hex/M for medium applicant bursts
 local function _AcquireQRTexture(x, y, w, h)
     if qrTextureUsed >= entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then
         return nil
@@ -3805,15 +3841,49 @@ local function _CountQRBlackRuns(matrix, limit)
     return runs
 end
 
+local function _BuildQRBlackRuns(matrix, quiet_offset)
+    local runs = {}
+    for y = 1, #matrix do
+        local row = matrix[y]
+        local x_start = nil
+        for x = 1, #row do
+            local is_black = (row[x] or 0) > 0
+            if is_black then
+                if x_start == nil then x_start = x end
+            elseif x_start ~= nil then
+                local run_len = x - x_start
+                runs[#runs + 1] = {
+                    quiet_offset + (x_start - 1) * QR_MODULE_PX,
+                    quiet_offset + (y - 1) * QR_MODULE_PX,
+                    run_len * QR_MODULE_PX,
+                    QR_MODULE_PX,
+                }
+                x_start = nil
+            end
+        end
+        if x_start ~= nil then
+            local run_len = #row - x_start + 1
+            runs[#runs + 1] = {
+                quiet_offset + (x_start - 1) * QR_MODULE_PX,
+                quiet_offset + (y - 1) * QR_MODULE_PX,
+                run_len * QR_MODULE_PX,
+                QR_MODULE_PX,
+            }
+        end
+    end
+    return runs
+end
+
 -- Paint a QR matrix (Lua table of tables, value > 0 = black, < 0 = white) into
 -- the frame using row-based run-length encoding. For each row we walk left→right
 -- and merge consecutive black modules into a single horizontal rectangle texture.
 -- Typical QR has ~10-15 runs per row → ~10-15 textures × N rows; far below the
 -- one-texture-per-module count which would crash WoW's renderer.
 --
--- Returns true on success, false on overflow (script-safe render budget
--- exceeded — payload needs a smaller QR version or lower-density encode mode).
-local function PaintQR(matrix)
+-- Texture creation/show calls are chunked across frames; otherwise a legal
+-- 3k-run QR can still hitch the WoW UI for a visible moment on slower systems.
+-- Returns true when a paint job was started, false on synchronous overflow.
+local function PaintQR(matrix, onComplete)
     local rows = #matrix
     local cols = #matrix[1]
     local total_modules = rows + 2 * QR_QUIET_ZONE   -- assume square QR
@@ -3823,64 +3893,62 @@ local function PaintQR(matrix)
     qrCurrentSize = frame_px
     _ApplyQRFramePosition()
 
-    -- Reset texture usage counter — texture references in qrTexturePool stay,
-    -- they just get :Show() or :Hide() per frame.
-    local prev_used = qrTextureUsed
-    qrTextureUsed = 0
-
     local quiet_offset = QR_QUIET_ZONE * QR_MODULE_PX
-    -- Overflow tracking: _AcquireQRTexture returns nil when the render budget
-    -- is hit. We observe the return so we can warn at end + tell caller this QR
-    -- couldn't be fully rendered.
-    local overflow = false
+    local runs = _BuildQRBlackRuns(matrix, quiet_offset)
 
-    for y = 1, rows do
-        if overflow then break end
-        local row = matrix[y]
-        local x_start = nil  -- start col of current black run, nil = no run
-        for x = 1, cols do
-            if overflow then break end
-            local is_black = (row[x] or 0) > 0
-            if is_black then
-                if x_start == nil then x_start = x end
-            elseif x_start ~= nil then
-                -- run ended at column x; render run [x_start .. x-1]
-                local run_len = x - x_start
-                local px_x = quiet_offset + (x_start - 1) * QR_MODULE_PX
-                local px_y = quiet_offset + (y - 1) * QR_MODULE_PX
-                if not _AcquireQRTexture(px_x, px_y, run_len * QR_MODULE_PX, QR_MODULE_PX) then
-                    overflow = true
-                    break
-                end
-                x_start = nil
-            end
-        end
-        -- Trailing run (extends to row end)
-        if not overflow and x_start ~= nil then
-            local run_len = cols - x_start + 1
-            local px_x = quiet_offset + (x_start - 1) * QR_MODULE_PX
-            local px_y = quiet_offset + (y - 1) * QR_MODULE_PX
-            if not _AcquireQRTexture(px_x, px_y, run_len * QR_MODULE_PX, QR_MODULE_PX) then
-                overflow = true
-            end
-        end
-    end
-
-    -- Hide leftover textures from previous (larger) QRs — they remain in pool
-    -- for reuse on next render.
-    for i = qrTextureUsed + 1, prev_used do
-        local t = qrTexturePool[i]
-        if t then t:Hide() end
-    end
-
-    if overflow then
+    if #runs > entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then
         if APSPrint then
             APSPrint("WARN: QR render exceeded script-safe texture budget " ..
                      entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET .. " — rendered QR is INCOMPLETE; companion will fail to decode")
         end
-        return false  -- caller treats as render failure (skip Screenshot, retry on next data change)
+        return false
     end
 
+    local prev_used = qrTextureUsed
+    qrTextureUsed = 0
+    local jobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
+    entryCreationKeyState.qrPaintJobGen = jobGen
+    entryCreationKeyState.qrPaintInProgress = true
+    local runIndex = 1
+
+    local function FinishPaint(success)
+        if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
+        entryCreationKeyState.qrPaintInProgress = false
+        -- Hide leftover textures from previous (larger) QRs — they remain in
+        -- pool for reuse on next render.
+        for i = qrTextureUsed + 1, prev_used do
+            local t = qrTexturePool[i]
+            if t then t:Hide() end
+        end
+        if not success and APSPrint then
+            APSPrint("WARN: QR render exceeded script-safe texture budget " ..
+                     entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET .. " — rendered QR is INCOMPLETE; companion will fail to decode")
+        end
+        if onComplete then onComplete(success) end
+    end
+
+    local function ContinuePaint()
+        if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
+        local chunkEnd = math.min(
+            #runs,
+            runIndex + entryCreationKeyState.QR_TEXTURE_PAINT_CHUNK - 1
+        )
+        while runIndex <= chunkEnd do
+            local run = runs[runIndex]
+            if not _AcquireQRTexture(run[1], run[2], run[3], run[4]) then
+                FinishPaint(false)
+                return
+            end
+            runIndex = runIndex + 1
+        end
+        if runIndex > #runs then
+            FinishPaint(true)
+            return
+        end
+        C_Timer.After(0, ContinuePaint)
+    end
+
+    ContinuePaint()
     return true
 end
 
@@ -4080,6 +4148,22 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         pendingShotDirty = true
         return
     end
+
+    if entryCreationKeyState.qrPaintInProgress and not force then
+        pendingShotDirty = true
+        entryCreationKeyState.qrPaintDirtyDuringPaint = true
+        return
+    end
+    if force then
+        entryCreationKeyState.qrPaintDirtyDuringPaint = false
+    end
+
+    local now = GetTime()
+    if not force and now - lastShotTime < SHOT_THROTTLE_S then
+        pendingShotDirty = true
+        return
+    end
+
     local entry = nil
     if isSessionActive then
         -- Reuse caller's pre-fetched entry when available (scan-tick path);
@@ -4107,6 +4191,8 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     end
 
     local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
+    local payloadDirtyGeneration =
+        entryCreationKeyState.transportDirtyGeneration or 0
 
     local h = HashSnapshot(payload)
     if not force and h == lastSnapshotHash then
@@ -4124,11 +4210,6 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         return
     end
 
-    local now = GetTime()
-    if not force and now - lastShotTime < SHOT_THROTTLE_S then
-        pendingShotDirty = true
-        return
-    end
     local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature
     if not force and quietSignature then
         if entryCreationKeyState.lastQuietFullPartySignature == quietSignature then
@@ -4153,64 +4234,89 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         pendingShotDirty = false
         return
     end
-    if not PaintQR(matrix) then
-        -- Same retry-suppression rationale as above.
-        lastSnapshotHash = h
-        pendingShotDirty = false
-        return
-    end
-
-    if not force and quietSignature then
-        entryCreationKeyState.lastQuietFullPartySignature = quietSignature
-    end
-    local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()
     -- WHY: terminal clears are delayed until the QR paints. If a new session
     -- starts before that callback, the stale clear must not wipe the companion
     -- state for the fresh listing.
     local terminalClearSessionGen = terminalClear and sessionGen or nil
 
-    entryCreationKeyState.lastEmittedApplicantCount =
-        entryCreationKeyState.lastPayloadApplicantCount
-    entryCreationKeyState.ClearRosterCompositionChanged()
-    lastSnapshotHash = h
-    lastShotTime = now
-    pendingShotDirty = false
-    if not force and entryCreationKeyState.lastPayloadRosterIncomplete then
-        if entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S) then
-            pendingShotDirty = false
-        else
-            pendingShotDirty = true
-        end
-    else
-        entryCreationKeyState.ClearRosterLoadRetryState()
-    end
-
-    -- PaintQR above just updated the textures. If the frame was hidden, the
-    -- visibility lease waits QR_RENDER_SETTLE_S so Show()+texture updates reach
-    -- the GPU framebuffer before capture. If it was already visible (debug/move
-    -- mode or overlapping shot lease), C_Timer.After(0) still gives the fresh
-    -- texture set one render pass before Screenshot().
-    C_Timer.After(forceVisibleShotDelay, function()
-        if terminalClearSessionGen
-           and (sessionGen ~= terminalClearSessionGen or isSessionActive) then
-            _ReleaseForceVisibleShotLease(forceVisibleShotGen)
+    local function OnQRPaintComplete(paintOK)
+        local dirtyDuringPaint = entryCreationKeyState.qrPaintDirtyDuringPaint and not force
+        entryCreationKeyState.qrPaintDirtyDuringPaint = false
+        local dirtySincePaintStarted =
+            dirtyDuringPaint
+            or (entryCreationKeyState.transportDirtyGeneration or 0) ~= payloadDirtyGeneration
+        if not paintOK then
+            -- Same retry-suppression rationale as above.
+            lastSnapshotHash = h
+            pendingShotDirty = dirtySincePaintStarted and true or false
             return
         end
-        if ApplicantScoutDB and ApplicantScoutDB.debug then
-            print(string.format("|cff999999[APS-debug]|r CAP qr_size=%dpx hash=%x t=%.2f",
-                  qrCurrentSize, h, GetTime()))
-        end
-        Screenshot()
-        if forceVisibleShotGen then
-            C_Timer.After(0.05, function()
-                _ReleaseForceVisibleShotLease(forceVisibleShotGen)
-            end)
-        end
-    end)
 
-    if ApplicantScoutDB and ApplicantScoutDB.debug then
-        print(string.format("|cff999999[APS-debug]|r SHOT bytes=%d apps=%d hash=%x",
-              #payload, #applicantIDs, h))
+        local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()
+        local completedPaintGen = entryCreationKeyState.qrPaintJobGen
+        local payloadApplicantCount = entryCreationKeyState.lastPayloadApplicantCount
+        local payloadRosterIncomplete = entryCreationKeyState.lastPayloadRosterIncomplete
+
+        -- PaintQR above just updated the textures. If the frame was hidden, the
+        -- visibility lease waits QR_RENDER_SETTLE_S so Show()+texture updates reach
+        -- the GPU framebuffer before capture. If it was already visible (debug/move
+        -- mode or overlapping shot lease), C_Timer.After(0) still gives the fresh
+        -- texture set one render pass before Screenshot().
+        C_Timer.After(forceVisibleShotDelay, function()
+            if terminalClearSessionGen
+               and (sessionGen ~= terminalClearSessionGen or isSessionActive) then
+                _ReleaseForceVisibleShotLease(forceVisibleShotGen)
+                return
+            end
+            if entryCreationKeyState.qrPaintJobGen ~= completedPaintGen then
+                _ReleaseForceVisibleShotLease(forceVisibleShotGen)
+                return
+            end
+            local dirtySincePayload =
+                dirtySincePaintStarted
+                or (entryCreationKeyState.transportDirtyGeneration or 0) ~= payloadDirtyGeneration
+            if not force and quietSignature then
+                entryCreationKeyState.lastQuietFullPartySignature = quietSignature
+            end
+            entryCreationKeyState.lastEmittedApplicantCount = payloadApplicantCount
+            if not dirtySincePayload then
+                entryCreationKeyState.ClearRosterCompositionChanged()
+            end
+            lastSnapshotHash = h
+            pendingShotDirty = false
+            if not force and payloadRosterIncomplete then
+                local retryScheduled =
+                    entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S)
+                pendingShotDirty = dirtySincePayload or not retryScheduled
+            elseif dirtySincePayload then
+                pendingShotDirty = true
+            else
+                entryCreationKeyState.ClearRosterLoadRetryState()
+            end
+            if ApplicantScoutDB and ApplicantScoutDB.debug then
+                print(string.format("|cff999999[APS-debug]|r CAP qr_size=%dpx hash=%x t=%.2f",
+                      qrCurrentSize, h, GetTime()))
+            end
+            lastShotTime = GetTime()
+            Screenshot()
+            if forceVisibleShotGen then
+                C_Timer.After(0.05, function()
+                    _ReleaseForceVisibleShotLease(forceVisibleShotGen)
+                end)
+            end
+        end)
+
+        if ApplicantScoutDB and ApplicantScoutDB.debug then
+            print(string.format("|cff999999[APS-debug]|r SHOT bytes=%d apps=%d hash=%x",
+                  #payload, #applicantIDs, h))
+        end
+    end
+
+    if not PaintQR(matrix, OnQRPaintComplete) then
+        -- Same retry-suppression rationale as above.
+        lastSnapshotHash = h
+        pendingShotDirty = false
+        return
     end
 end
 

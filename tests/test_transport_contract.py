@@ -82,11 +82,12 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
     )
     hash_idx = body.index("local h = HashSnapshot(payload)")
     matrix_idx = body.index("local matrix = BuildQRMatrix(payload)")
-    paint_idx = body.index("if not PaintQR(matrix) then")
-    lease_idx = body.index("local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()")
+    callback_idx = body.index("local function OnQRPaintComplete(paintOK)")
+    lease_idx = body.index("local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()", callback_idx)
     screenshot_idx = body.index("        Screenshot()")
+    paint_idx = body.index("if not PaintQR(matrix, OnQRPaintComplete) then")
 
-    assert payload_idx < hash_idx < matrix_idx < paint_idx < lease_idx < screenshot_idx
+    assert payload_idx < hash_idx < matrix_idx < callback_idx < lease_idx < screenshot_idx < paint_idx
     assert "_ReleaseForceVisibleShotLease(forceVisibleShotGen)" in body[screenshot_idx:]
 
 
@@ -121,6 +122,184 @@ def test_interaction_suppression_defers_non_force_payloads_before_dedup():
     assert suppression_idx < payload_idx
     assert "pendingShotDirty = true" in suppression_block
     assert "return" in suppression_block
+
+
+def test_non_force_snapshot_waits_for_active_qr_paint_before_lfg_reads():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    active_idx = screenshot_body.index(
+        "entryCreationKeyState.qrPaintInProgress and not force"
+    )
+    entry_idx = screenshot_body.index("local entry = nil")
+    payload_idx = screenshot_body.index("local payload = BuildPayload")
+    active_block = screenshot_body[
+        active_idx : screenshot_body.index("\n    end", active_idx)
+    ]
+
+    assert active_idx < entry_idx < payload_idx
+    assert "pendingShotDirty = true" in active_block
+    assert "entryCreationKeyState.qrPaintDirtyDuringPaint = true" in active_block
+    assert "return" in active_block
+
+
+def test_qr_capture_is_guarded_by_completed_paint_generation():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    completed_gen_idx = screenshot_body.index(
+        "local completedPaintGen = entryCreationKeyState.qrPaintJobGen"
+    )
+    schedule_idx = screenshot_body.index(
+        "C_Timer.After(forceVisibleShotDelay, function()",
+        completed_gen_idx,
+    )
+    guard_idx = screenshot_body.index(
+        "entryCreationKeyState.qrPaintJobGen ~= completedPaintGen",
+        schedule_idx,
+    )
+    shot_time_idx = screenshot_body.index("lastShotTime = GetTime()", guard_idx)
+    screenshot_idx = screenshot_body.index("Screenshot()", guard_idx)
+
+    assert completed_gen_idx < schedule_idx < guard_idx < shot_time_idx < screenshot_idx
+    assert "lastShotTime = now" not in screenshot_body
+
+
+def test_qr_paint_completion_preserves_dirty_snapshot_during_paint():
+    source = _lua_source()
+    state_body = _slice_between(
+        source,
+        "local entryCreationKeyState = {",
+        "local ENTRY_CREATION_KEY_CACHE_TTL",
+    )
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    assert "qrPaintDirtyDuringPaint = false" in state_body
+    dirty_idx = screenshot_body.index(
+        "local dirtyDuringPaint = entryCreationKeyState.qrPaintDirtyDuringPaint and not force"
+    )
+    clear_idx = screenshot_body.index(
+        "entryCreationKeyState.qrPaintDirtyDuringPaint = false",
+        dirty_idx,
+    )
+    pending_false_idx = screenshot_body.index("pendingShotDirty = false", clear_idx)
+    dirty_branch_idx = screenshot_body.index("elseif dirtySincePayload then", pending_false_idx)
+    dirty_pending_idx = screenshot_body.index("pendingShotDirty = true", dirty_branch_idx)
+
+    assert dirty_idx < clear_idx < pending_false_idx < dirty_branch_idx < dirty_pending_idx
+
+
+def test_dirty_event_during_qr_settle_lease_preserves_pending_and_roster_preflight():
+    source = _lua_source()
+    state_body = _slice_between(
+        source,
+        "local entryCreationKeyState = {",
+        "local ENTRY_CREATION_KEY_CACHE_TTL",
+    )
+    mark_dirty_body = _slice_between(
+        source,
+        "MarkDirty = function(reason)",
+        "-- QR frame setup",
+    )
+    roster_change_body = _slice_between(
+        source,
+        "entryCreationKeyState.MarkRosterCompositionChanged = function()",
+        "entryCreationKeyState.ShouldDeferRosterChangeForPreflight = function()",
+    )
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    assert "transportDirtyGeneration = 0" in state_body
+    assert "entryCreationKeyState.transportDirtyGeneration =" in mark_dirty_body
+    assert "entryCreationKeyState.transportDirtyGeneration =" in roster_change_body
+
+    payload_idx = screenshot_body.index(
+        "local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
+    )
+    payload_gen_idx = screenshot_body.index(
+        "local payloadDirtyGeneration =",
+        payload_idx,
+    )
+    schedule_idx = screenshot_body.index(
+        "C_Timer.After(forceVisibleShotDelay, function()",
+        payload_gen_idx,
+    )
+    dirty_since_idx = screenshot_body.index(
+        "local dirtySincePayload =",
+        schedule_idx,
+    )
+    gen_compare_idx = screenshot_body.index(
+        "(entryCreationKeyState.transportDirtyGeneration or 0) ~= payloadDirtyGeneration",
+        dirty_since_idx,
+    )
+    clear_guard_idx = screenshot_body.index("if not dirtySincePayload then", gen_compare_idx)
+    clear_idx = screenshot_body.index(
+        "entryCreationKeyState.ClearRosterCompositionChanged()",
+        clear_guard_idx,
+    )
+    pending_guard_idx = screenshot_body.index("elseif dirtySincePayload then", clear_idx)
+    pending_idx = screenshot_body.index("pendingShotDirty = true", pending_guard_idx)
+    screenshot_idx = screenshot_body.index("Screenshot()", pending_idx)
+
+    assert payload_idx < payload_gen_idx < schedule_idx < dirty_since_idx
+    assert dirty_since_idx < gen_compare_idx < clear_guard_idx < clear_idx
+    assert clear_idx < pending_guard_idx < pending_idx < screenshot_idx
+
+
+def test_dirty_snapshot_during_qr_paint_preserves_roster_preflight_state():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        "-- LFG entry creation",
+    )
+
+    dirty_idx = screenshot_body.index(
+        "local dirtyDuringPaint = entryCreationKeyState.qrPaintDirtyDuringPaint and not force"
+    )
+    clear_guard_idx = screenshot_body.index("if not dirtySincePayload then", dirty_idx)
+    clear_idx = screenshot_body.index(
+        "entryCreationKeyState.ClearRosterCompositionChanged()",
+        clear_guard_idx,
+    )
+    hash_idx = screenshot_body.index("lastSnapshotHash = h", clear_idx)
+
+    assert dirty_idx < clear_guard_idx < clear_idx < hash_idx
+
+
+def test_end_session_cancels_stale_qr_paint_before_terminal_clear_shot():
+    source = _lua_source()
+    end_body = _slice_between(
+        source,
+        "EndSession = function()",
+        "local function _HasGroupRosterForTransport()",
+    )
+
+    first_clear_idx = end_body.index("MaybeTriggerScreenshot(true, nil, true)")
+    cancel_idx = end_body.index(
+        "entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1"
+    )
+    cleanup_after_first_clear = end_body[
+        first_clear_idx : end_body.index("-- Schedule deferred Hide", first_clear_idx)
+    ]
+
+    assert cancel_idx < first_clear_idx
+    assert "entryCreationKeyState.qrPaintJobGen =" not in cleanup_after_first_clear
 
 
 def test_qr_shot_lease_shows_hidden_qr_and_releases_after_capture():
@@ -365,13 +544,14 @@ def test_roster_composition_change_waits_for_inspect_until_fallback_deadline():
     payload_idx = screenshot_body.index("local payload = BuildPayload", preflight_idx)
     assert empty_guard_idx < deadline_guard_idx < preflight_idx < payload_idx
 
-    paint_idx = screenshot_body.index("if not PaintQR(matrix) then")
+    callback_idx = screenshot_body.index("local function OnQRPaintComplete(paintOK)")
     clear_idx = screenshot_body.index(
         "entryCreationKeyState.ClearRosterCompositionChanged()",
-        paint_idx,
+        callback_idx,
     )
     commit_idx = screenshot_body.index("lastSnapshotHash = h", clear_idx)
-    assert paint_idx < clear_idx < commit_idx
+    paint_idx = screenshot_body.index("if not PaintQR(matrix, OnQRPaintComplete) then")
+    assert callback_idx < clear_idx < commit_idx < paint_idx
 
 
 def test_transport_poll_does_not_force_unchanged_snapshots():
@@ -782,6 +962,7 @@ def test_repeat_full_party_quiet_snapshot_is_suppressed_before_qr_paint():
         "-- LFG entry creation",
     )
 
+    payload_idx = screenshot_body.index("local payload = BuildPayload")
     hash_idx = screenshot_body.index("local h = HashSnapshot(payload)")
     quiet_idx = screenshot_body.index(
         "local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature"
@@ -792,7 +973,7 @@ def test_repeat_full_party_quiet_snapshot_is_suppressed_before_qr_paint():
         quiet_idx : screenshot_body.index("\n    -- Encode payload", quiet_idx)
     ]
 
-    assert hash_idx < throttle_idx < quiet_idx < matrix_idx
+    assert throttle_idx < payload_idx < hash_idx < quiet_idx < matrix_idx
     assert "entryCreationKeyState.lastQuietFullPartySignature == quietSignature" in quiet_block
     assert "lastSnapshotHash = h" in quiet_block
     assert "pendingShotDirty = false" in quiet_block
@@ -812,17 +993,27 @@ def test_quiet_signature_is_committed_only_after_successful_qr_paint():
         "local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature"
     )
     matrix_idx = screenshot_body.index("local matrix = BuildQRMatrix(payload)")
-    paint_failure_idx = screenshot_body.index("if not PaintQR(matrix) then")
+    callback_idx = screenshot_body.index("local function OnQRPaintComplete(paintOK)")
     lease_idx = screenshot_body.index(
         "local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()"
     )
+    completed_gen_idx = screenshot_body.index(
+        "local completedPaintGen = entryCreationKeyState.qrPaintJobGen",
+        callback_idx,
+    )
+    guard_idx = screenshot_body.index(
+        "entryCreationKeyState.qrPaintJobGen ~= completedPaintGen",
+        completed_gen_idx,
+    )
     commit_idx = screenshot_body.index(
         "entryCreationKeyState.lastQuietFullPartySignature = quietSignature",
-        paint_failure_idx,
+        callback_idx,
     )
     pre_paint_quiet_block = screenshot_body[quiet_idx:matrix_idx]
+    paint_idx = screenshot_body.index("if not PaintQR(matrix, OnQRPaintComplete) then")
 
-    assert quiet_idx < matrix_idx < paint_failure_idx < commit_idx < lease_idx
+    assert quiet_idx < matrix_idx < callback_idx < lease_idx
+    assert lease_idx < completed_gen_idx < guard_idx < commit_idx < paint_idx
     assert "entryCreationKeyState.lastQuietFullPartySignature == quietSignature" in (
         pre_paint_quiet_block
     )
@@ -1281,9 +1472,9 @@ def test_incomplete_roster_payload_retries_even_when_hash_is_unchanged():
     return_idx = screenshot_body.index("return", retry_idx)
     throttle_idx = screenshot_body.index("local now = GetTime()")
 
+    assert throttle_idx < same_hash_idx
     assert same_hash_idx < incomplete_idx < retry_idx < clear_pending_idx < fallback_pending_idx
     assert fallback_pending_idx < return_idx
-    assert return_idx < throttle_idx
 
 
 def test_incomplete_roster_payload_schedules_retry_after_successful_qr_paint():
@@ -1297,25 +1488,32 @@ def test_incomplete_roster_payload_schedules_retry_after_successful_qr_paint():
     paint_success_idx = screenshot_body.index(
         "local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()"
     )
-    clear_pending_idx = screenshot_body.index("pendingShotDirty = false", paint_success_idx)
-    incomplete_idx = screenshot_body.index(
-        "entryCreationKeyState.lastPayloadRosterIncomplete",
-        clear_pending_idx,
-    )
-    retry_idx = screenshot_body.index(
-        "entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S)",
-        incomplete_idx,
-    )
-    retry_clear_pending_idx = screenshot_body.index("pendingShotDirty = false", retry_idx)
-    fallback_pending_idx = screenshot_body.index("pendingShotDirty = true", retry_idx)
     screenshot_schedule_idx = screenshot_body.index(
         "C_Timer.After(forceVisibleShotDelay, function()",
+        paint_success_idx,
+    )
+    clear_pending_idx = screenshot_body.index("pendingShotDirty = false", paint_success_idx)
+    incomplete_idx = screenshot_body.index(
+        "payloadRosterIncomplete",
+        clear_pending_idx,
+    )
+    retry_result_idx = screenshot_body.index("local retryScheduled =", incomplete_idx)
+    retry_idx = screenshot_body.index(
+        "entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S)",
+        retry_result_idx,
+    )
+    pending_from_retry_idx = screenshot_body.index(
+        "pendingShotDirty = dirtySincePayload or not retryScheduled",
+        retry_result_idx,
+    )
+    screenshot_idx = screenshot_body.index(
+        "Screenshot()",
         retry_idx,
     )
 
-    assert paint_success_idx < clear_pending_idx < incomplete_idx < retry_idx
-    assert retry_idx < retry_clear_pending_idx < fallback_pending_idx
-    assert fallback_pending_idx < screenshot_schedule_idx
+    assert paint_success_idx < screenshot_schedule_idx < clear_pending_idx < incomplete_idx
+    assert incomplete_idx < retry_result_idx < retry_idx < pending_from_retry_idx
+    assert pending_from_retry_idx < screenshot_idx
 
 
 def test_roster_load_retry_callback_requires_current_token_and_session():
@@ -2005,19 +2203,20 @@ def test_successful_snapshot_commits_emitted_applicant_count_for_clear_priority(
     payload_count_idx = payload_body.index(
         "entryCreationKeyState.lastPayloadApplicantCount = emittedCount"
     )
-    paint_idx = screenshot_body.index("if not PaintQR(matrix) then")
+    callback_idx = screenshot_body.index("local function OnQRPaintComplete(paintOK)")
     commit_idx = screenshot_body.index(
         "entryCreationKeyState.lastEmittedApplicantCount =",
-        paint_idx,
+        callback_idx,
     )
     committed_value_idx = screenshot_body.index(
-        "entryCreationKeyState.lastPayloadApplicantCount",
+        "payloadApplicantCount",
         commit_idx,
     )
-    shot_idx = screenshot_body.index("lastShotTime = now", commit_idx)
+    shot_idx = screenshot_body.index("lastShotTime = GetTime()", commit_idx)
+    paint_idx = screenshot_body.index("if not PaintQR(matrix, OnQRPaintComplete) then")
 
     assert emit_count_idx < payload_count_idx
-    assert paint_idx < commit_idx < committed_value_idx < shot_idx
+    assert callback_idx < commit_idx < committed_value_idx < shot_idx < paint_idx
 
 
 def test_roster_batch_clears_pending_guid_when_unit_leaves():
@@ -2198,6 +2397,7 @@ def test_qr_render_uses_script_safe_budget_before_texture_hard_cap():
     )
 
     budget_idx = qr_body.index("entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET = 3500")
+    chunk_idx = qr_body.index("entryCreationKeyState.QR_TEXTURE_PAINT_CHUNK = 450")
     hard_cap_idx = qr_body.index("local QR_TEXTURE_HARD_CAP = 10000")
     count_idx = qr_body.index(
         "_CountQRBlackRuns(matrix, entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET)"
@@ -2205,10 +2405,17 @@ def test_qr_render_uses_script_safe_budget_before_texture_hard_cap():
     paint_budget_idx = qr_body.index(
         "if qrTextureUsed >= entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then"
     )
+    runs_idx = qr_body.index("local runs = _BuildQRBlackRuns(matrix, quiet_offset)")
+    sync_budget_idx = qr_body.index(
+        "if #runs > entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then"
+    )
+    finish_failure_idx = qr_body.index("FinishPaint(false)", paint_budget_idx)
 
-    assert budget_idx < hard_cap_idx
+    assert budget_idx < chunk_idx < hard_cap_idx
     assert count_idx < qr_body.index("return matrix")
-    assert paint_budget_idx < qr_body.index("if overflow then")
+    assert runs_idx < sync_budget_idx < qr_body.index("entryCreationKeyState.qrPaintInProgress = true")
+    assert paint_budget_idx < finish_failure_idx
+    assert "C_Timer.After(0, ContinuePaint)" in qr_body
 
 
 def test_large_qr_payloads_try_raw_low_correction_before_hex_modes():
@@ -2219,6 +2426,7 @@ def test_large_qr_payloads_try_raw_low_correction_before_hex_modes():
         "-- State for trigger throttling + dedup",
     )
 
+    assert "QR_RAW_FIRST_PAYLOAD_BYTES = 512" in source
     threshold_idx = build_body.index(
         "if #payload > entryCreationKeyState.QR_RAW_FIRST_PAYLOAD_BYTES then"
     )
@@ -2721,6 +2929,9 @@ def test_raiderio_summary_reuses_one_profile_lookup_per_member():
     )
 
     assert summary_body.count("pcall(rio.GetProfile") == 1
+    assert "entryCreationKeyState.rioMPlusSummaryCache" in summary_body
+    assert "local cachedSummary = rioSummaryCache[cacheKey]" in summary_body
+    assert "rioSummaryCache[cacheKey] = summary" in summary_body
     assert payload_body.count("_GetRaiderIOMPlusSummary(") == 1
     assert "_RaiderIODungeonMatchesActivity" in summary_body
 
