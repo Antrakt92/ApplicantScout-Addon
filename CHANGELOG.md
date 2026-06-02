@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.4.6 - 02-Jun-2026 - Companion 0.8.3 performance release train
+## 0.4.7 - 02-Jun-2026 - Companion 0.8.4 performance release train
 
 This paired addon + companion release keeps the compact v8 QR wire format
 unchanged while making the in-game QR screenshot transport and Windows overlay
@@ -29,20 +29,20 @@ startup, screenshot-path changes, RaiderIO preload, and WCL cache writes.
   RaiderIO profile parsing.
 - Sanitized RaiderIO lookup names before optional RaiderIO addon calls, keeping
   the hot path away from secret-tagged or placeholder applicant strings.
-- Companion `0.8.3` reduces overlay open/collapse and Alt-Tab hitches by
+- Companion `0.8.4` reduces overlay open/collapse and Alt-Tab hitches by
   debouncing foreground polling, preserving interaction grace while the cursor
   is over the overlay, repainting only changed hover/pinned rows, and skipping
   unchanged table-row rewrites when row order is stable.
-- Companion `0.8.3` reuses package-fit results during sorting/rendering instead
+- Companion `0.8.4` reuses package-fit results during sorting/rendering instead
   of recomputing grouped-applicant package scores for the same snapshot.
-- Companion `0.8.3` moves QR decoder import, startup shortcut changes,
+- Companion `0.8.4` moves QR decoder import, startup shortcut changes,
   screenshot watcher cleanup, RaiderIO fingerprint/decode/realm hydration, and
   WCL character-cache JSON/disk work off the Qt UI path where those operations
   could pause overlay clicks, tab changes, or startup for seconds.
-- Companion `0.8.3` debounces Screenshots path health checks in Settings and
+- Companion `0.8.4` debounces Screenshots path health checks in Settings and
   reuses the current warning state during autosave, avoiding slow path probes
   while the user is typing or saving.
-- Companion `0.8.3` caches Windows private ACL setup for local config/cache
+- Companion `0.8.4` caches Windows private ACL setup for local config/cache
   writes, reducing repeated `icacls` overhead during settings and cache writes.
 
 ### Fixed
@@ -62,19 +62,19 @@ startup, screenshot-path changes, RaiderIO preload, and WCL cache writes.
   throttle time, and roster-composition clears only after a successful QR paint
   and scheduled capture, reducing stale-state edge cases after failed or
   cancelled paints.
-- Companion `0.8.3` keeps stale screenshot watchers from decoding/deleting new
+- Companion `0.8.4` keeps stale screenshot watchers from decoding/deleting new
   marker screenshots after path changes by marking old watchers stopped before
   asynchronous cleanup finishes.
-- Companion `0.8.3` reports lazy pyzbar/zbar load failures as decode health
+- Companion `0.8.4` reports lazy pyzbar/zbar load failures as decode health
   failures and preserves screenshots in that failure state instead of silently
   treating them as unrelated no-QR images.
-- Companion `0.8.3` distinguishes rapid reused WoW screenshot filenames by
+- Companion `0.8.4` distinguishes rapid reused WoW screenshot filenames by
   precise stat metadata, preventing same-second screenshot bursts from being
   dropped by event dedupe.
-- Companion `0.8.3` fixes WCL character-cache write races, stale snapshot
+- Companion `0.8.4` fixes WCL character-cache write races, stale snapshot
   overwrites, and same-target/cache-hit completion edge cases that could leave
   rows waiting or lose newer cache updates during slow disk writes.
-- Companion `0.8.3` avoids duplicate current-session WoW lifecycle watcher
+- Companion `0.8.4` avoids duplicate current-session WoW lifecycle watcher
   launches and reports startup-shortcut update failures back in Settings without
   blocking the saved runtime setting.
 - Release-prep contract tests now derive the current addon and paired companion
@@ -83,7 +83,7 @@ startup, screenshot-path changes, RaiderIO preload, and WCL cache writes.
 
 ### Notes
 
-- This addon release is paired with ApplicantScout Companion `0.8.3`.
+- This addon release is paired with ApplicantScout Companion `0.8.4`.
 - No wire-format change; wire payloads remain compact v8 for temporary
   LFG-lockdown handling.
 
