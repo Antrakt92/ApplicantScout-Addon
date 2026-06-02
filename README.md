@@ -183,11 +183,10 @@ contains a top-level `ApplicantScout\` addon folder, and refuses dirty release
 inputs by default. Marketplace releases are produced by the BigWigs packager
 from `.pkgmeta`; use the local ZIP only for smoke testing.
 
-For workspace-wide Lua syntax and LuaLS diagnostics, run this from the private
-WOW coordination repo:
+For a local Lua syntax check, run:
 
 ```powershell
-.\scripts\check-wow-lua.ps1 -Project ApplicantScout
+luac5.1 -p ApplicantScout.lua
 ```
 
 ## Support
