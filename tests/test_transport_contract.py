@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,21 @@ LUA_GOLDEN_CASES = (
     (None, "aps1_v8_lua_golden.hex"),
     ("leader-key", "aps1_v8_lua_leader_key_golden.hex"),
 )
+MAYBE_TRIGGER_SCREENSHOT_ANCHOR = (
+    "MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllowed)"
+)
+BUILD_PAYLOAD_ANCHOR = (
+    "local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
+)
+CHECK_SESSION_TRANSITION_ANCHOR = "CheckSessionTransition = function(lfgReadsAllowed)"
+STALE_FUNCTION_ANCHORS = {
+    "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+    "MaybeTriggerScreenshot = function(force, entryHint, terminalClear",
+    "local function BuildPayload(entry, applicantIDs, terminalClear)",
+    "local function BuildPayload(entry, applicantIDs, terminalClear",
+    "CheckSessionTransition = function()",
+    "CheckSessionTransition = function(",
+}
 
 
 def _lua51_path(pytestconfig):
@@ -47,33 +63,57 @@ def _lua_source() -> str:
     return (REPO_ROOT / "ApplicantScout.lua").read_text(encoding="utf-8")
 
 
+def _companion_payload_parser(pytestconfig):
+    raw_companion_root = pytestconfig.getoption("--companion-root")
+    companion_root = Path(raw_companion_root) if raw_companion_root else DEFAULT_COMPANION_ROOT
+    assert companion_root.exists(), (
+        "ApplicantScout-Companion checkout is required for payload parser tests; "
+        "pass --companion-root <path> when using a non-sibling checkout"
+    )
+    companion_src = companion_root / "src"
+    if str(companion_src) not in sys.path:
+        sys.path.insert(0, str(companion_src))
+    from applicant_scout.screenshot import _try_parse_appscout_payload
+
+    return _try_parse_appscout_payload
+
+
 def _slice_between(text: str, start: str, end: str) -> str:
-    start_fallbacks = {
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)":
-            "MaybeTriggerScreenshot = function(force, entryHint, terminalClear",
-        "CheckSessionTransition = function()": "CheckSessionTransition = function(",
-        "local function BuildPayload(entry, applicantIDs, terminalClear)":
-            "local function BuildPayload(entry, applicantIDs, terminalClear",
-    }
-    end_fallbacks = {
-        "CheckSessionTransition = function()": "CheckSessionTransition = function(",
-    }
-    try:
-        start_idx = text.index(start)
-    except ValueError:
-        start_idx = text.index(start_fallbacks[start])
-    try:
-        end_idx = text.index(end, start_idx)
-    except ValueError:
-        end_idx = text.index(end_fallbacks[end], start_idx)
+    assert start not in STALE_FUNCTION_ANCHORS
+    assert end not in STALE_FUNCTION_ANCHORS
+    start_idx = text.index(start)
+    end_idx = text.index(end, start_idx)
     return text[start_idx:end_idx]
+
+
+def test_slice_between_rejects_stale_function_anchors():
+    source = _lua_source()
+
+    with pytest.raises(AssertionError):
+        _slice_between(
+            source,
+            "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+            "-- LFG entry creation",
+        )
+    with pytest.raises(AssertionError):
+        _slice_between(
+            source,
+            "local function BuildPayload(entry, applicantIDs, terminalClear)",
+            "local function HashSnapshot(payload)",
+        )
+    with pytest.raises(AssertionError):
+        _slice_between(
+            source,
+            "CheckSessionTransition = function()",
+            "-- Single transition logger",
+        )
 
 
 def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
     source = _lua_source()
     body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -107,7 +147,7 @@ def test_interaction_suppression_defers_non_force_payloads_before_dedup():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -128,7 +168,7 @@ def test_non_force_snapshot_waits_for_active_qr_paint_before_lfg_reads():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -151,7 +191,7 @@ def test_qr_capture_is_guarded_by_completed_paint_generation():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -182,7 +222,7 @@ def test_qr_paint_completion_preserves_dirty_snapshot_during_paint():
     )
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -220,7 +260,7 @@ def test_dirty_event_during_qr_settle_lease_preserves_pending_and_roster_preflig
     )
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -265,7 +305,7 @@ def test_dirty_snapshot_during_qr_paint_preserves_roster_preflight_state():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -332,12 +372,12 @@ def test_party_roster_starts_transport_without_lfg_listing():
     source = _lua_source()
     transition_body = _slice_between(
         source,
-        "CheckSessionTransition = function(",
+        CHECK_SESSION_TRANSITION_ANCHOR,
         "-- Single transition logger",
     )
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -352,12 +392,12 @@ def test_party_roster_transport_can_run_during_chat_messaging_lockdown():
     source = _lua_source()
     transition_body = _slice_between(
         source,
-        "CheckSessionTransition = function(",
+        CHECK_SESSION_TRANSITION_ANCHOR,
         "-- Single transition logger",
     )
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
     ticker_body = _slice_between(
@@ -391,7 +431,7 @@ def test_entry_creation_cache_clears_when_grouped_listing_ends_without_ending_tr
     source = _lua_source()
     transition_body = _slice_between(
         source,
-        "CheckSessionTransition = function(",
+        CHECK_SESSION_TRANSITION_ANCHOR,
         "-- Single transition logger",
     )
 
@@ -463,7 +503,7 @@ def test_non_force_screenshot_waits_for_roster_inspect_batch_before_payload():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -506,7 +546,7 @@ def test_roster_composition_change_waits_for_inspect_until_fallback_deadline():
     )
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
     events_body = _slice_between(
@@ -728,7 +768,7 @@ def test_payload_still_includes_raiderio_completion_summary():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
 
@@ -742,7 +782,7 @@ def test_payload_v6_appends_current_group_roster_after_applicants():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
 
@@ -758,7 +798,7 @@ def test_payload_v7_appends_leader_keystone_before_applicants():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
 
@@ -929,7 +969,7 @@ def test_full_party_quiet_signature_requires_empty_resolved_non_raid_roster():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
     roster_body = _slice_between(
@@ -958,7 +998,7 @@ def test_repeat_full_party_quiet_snapshot_is_suppressed_before_qr_paint():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -985,7 +1025,7 @@ def test_quiet_signature_is_committed_only_after_successful_qr_paint():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -1027,7 +1067,7 @@ def test_quiet_full_party_signature_uses_collision_safe_encoding():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
     roster_body = _slice_between(
@@ -1125,7 +1165,7 @@ def test_terminal_clear_screenshot_callback_is_session_generation_guarded():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -1181,7 +1221,7 @@ def test_terminal_clear_callback_guard_does_not_gate_manual_force_snapshots():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -1238,7 +1278,7 @@ def test_disable_cleanup_invalidates_pending_auto_hi_generations_and_retries():
     auto_hi_body = _slice_between(
         source,
         "entryCreationKeyState.AutoHiGroupMemberCount = function()",
-        "CheckSessionTransition = function()",
+        CHECK_SESSION_TRANSITION_ANCHOR,
     )
     cleanup_body = _slice_between(
         source,
@@ -1272,7 +1312,7 @@ def test_applicant_payload_skips_secret_placeholder_names():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
 
@@ -1284,12 +1324,12 @@ def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
 
@@ -1311,7 +1351,7 @@ def test_payload_v8_header_flags_distinguish_terminal_and_lfg_unavailable():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
 
@@ -1329,7 +1369,7 @@ def test_terminal_clear_payload_suppresses_leader_key_block():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
 
@@ -1346,7 +1386,7 @@ def test_terminal_clear_payload_forces_empty_listing_and_applicants():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
 
@@ -1363,7 +1403,7 @@ def test_lockdown_active_roster_snapshot_marks_lfg_unavailable_not_terminal():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -1393,7 +1433,7 @@ def test_roster_payload_marks_group_snapshot_incomplete_when_expected_rows_are_m
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
     roster_body = _slice_between(
@@ -1454,7 +1494,7 @@ def test_incomplete_roster_payload_retries_even_when_hash_is_unchanged():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -1481,7 +1521,7 @@ def test_incomplete_roster_payload_schedules_retry_after_successful_qr_paint():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -1738,7 +1778,7 @@ def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():
     auto_hi_body = _slice_between(
         source,
         "entryCreationKeyState.AutoHiGroupMemberCount = function()",
-        "CheckSessionTransition = function()",
+        CHECK_SESSION_TRANSITION_ANCHOR,
     )
     events_body = _slice_between(
         source,
@@ -1769,7 +1809,7 @@ def test_auto_hi_group_send_retries_bounded_when_lockdown_blocks_send():
     auto_hi_body = _slice_between(
         source,
         "entryCreationKeyState.AutoHiGroupMemberCount = function()",
-        "CheckSessionTransition = function()",
+        CHECK_SESSION_TRANSITION_ANCHOR,
     )
     group_body = _slice_between(
         source,
@@ -1819,7 +1859,7 @@ def test_auto_hi_new_party_members_is_opt_in_party_only_and_guid_tracked():
     auto_hi_body = _slice_between(
         source,
         "entryCreationKeyState.AutoHiGroupMemberCount = function()",
-        "CheckSessionTransition = function()",
+        CHECK_SESSION_TRANSITION_ANCHOR,
     )
     events_body = _slice_between(
         source,
@@ -1833,7 +1873,7 @@ def test_auto_hi_new_party_members_is_opt_in_party_only_and_guid_tracked():
     assert "entryCreationKeyState.CollectAutoHiPartyMemberGUIDs = function()" in auto_hi_body
     assert "if entryCreationKeyState.AutoHiGroupMemberCount() <= 0 then return guids end" in auto_hi_body
     assert "for i = 1, 4 do" in auto_hi_body
-    assert 'UnitGUID("party" .. i)' in auto_hi_body
+    assert 'local guid = entryCreationKeyState.UnitGUIDForRoster("party" .. i)' in auto_hi_body
     assert "entryCreationKeyState.autoHiKnownPartyGUIDs" in auto_hi_body
     assert "entryCreationKeyState.PrimeAutoHiPartyMembers()" in auto_hi_body
     assert "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()" in auto_hi_body
@@ -1853,12 +1893,12 @@ def test_auto_hi_new_party_member_send_retries_bounded_when_lockdown_blocks_send
     auto_hi_body = _slice_between(
         source,
         "entryCreationKeyState.AutoHiGroupMemberCount = function()",
-        "CheckSessionTransition = function()",
+        CHECK_SESSION_TRANSITION_ANCHOR,
     )
     new_party_body = _slice_between(
         source,
         "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()",
-        "CheckSessionTransition = function()",
+        CHECK_SESSION_TRANSITION_ANCHOR,
     )
 
     assert "autoHiNewPartyRetryToken" in source
@@ -1912,6 +1952,62 @@ def test_roster_inspect_batch_unit_exists_helper_is_in_local_scope():
     first_batch_use_idx = source.index("if not _UnitExistsForRoster(unit) then return false end")
 
     assert helper_idx < first_batch_use_idx
+
+
+def test_unit_api_clean_adapters_reject_secret_values_without_coercion():
+    source = _lua_source()
+    helper_body = _slice_between(
+        source,
+        "entryCreationKeyState.CleanUnitAPIBoolean = function(api, ...)",
+        "SafeStr = function(v, secretFallback)",
+    )
+
+    assert "local ok, value = pcall(api, ...)" in helper_body
+    assert "local okSecret, isSecret = pcall(IsSecretValue, value)" in helper_body
+    assert "if not okSecret or isSecret then return nil end" in helper_body
+    assert "pcall(function() return value == true end)" in helper_body
+    assert "pcall(function() return value == false end)" in helper_body
+    assert "entryCreationKeyState.UnitGUIDForRoster = function(unit)" in helper_body
+    assert "pcall(UnitGUID, unit)" in helper_body
+    assert "pcall(IsSecretValue, guid)" in helper_body
+    assert 'type(guid) ~= "string"' in helper_body
+    assert "SafeStr(guid" not in helper_body
+
+
+def test_roster_and_auto_hi_unit_apis_do_not_branch_on_raw_secret_results():
+    source = _lua_source()
+    auto_hi_body = _slice_between(
+        source,
+        "entryCreationKeyState.CollectAutoHiPartyMemberGUIDs = function()",
+        "entryCreationKeyState.ResetAutoHiPartyMembers = function()",
+    )
+    request_body = _slice_between(
+        source,
+        "local function _MaybeRequestRosterInspect(unit, guid)",
+        "entryCreationKeyState.ClearRosterInspectBatchState = function()",
+    )
+
+    assert 'UnitGUID("party" .. i)' not in auto_hi_body
+    assert 'local guid = entryCreationKeyState.UnitGUIDForRoster("party" .. i)' in auto_hi_body
+    assert "UnitExists and UnitExists(unit)" not in source
+    assert 'UnitIsUnit and UnitIsUnit(unit, "player")' not in source
+    assert "pcall(CanInspect, unit)" not in source
+    assert "entryCreationKeyState.CleanUnitAPIBoolean(CanInspect, unit) ~= true" in request_body
+
+
+def test_roster_self_detection_uses_literal_player_before_unit_is_unit():
+    source = _lua_source()
+    self_body = _slice_between(
+        source,
+        "local function _UnitIsSelfForRoster(unit)",
+        "local function _BuildRosterRow(unit, unitIndex, subgroup, isRaid)",
+    )
+
+    literal_idx = self_body.index('if unit == "player" then return true end')
+    api_idx = self_body.index(
+        'entryCreationKeyState.CleanUnitAPIBoolean(UnitIsUnit, unit, "player")'
+    )
+    assert literal_idx < api_idx
 
 
 def test_roster_inspect_batch_skips_timed_out_guid_before_requesting_next():
@@ -2055,7 +2151,7 @@ def test_combat_deferred_roster_preflight_allows_partial_snapshot():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -2103,7 +2199,7 @@ def test_initial_unknown_roster_spec_preflight_defers_only_when_inspect_starts()
     )
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -2139,7 +2235,7 @@ def test_initial_roster_spec_preflight_does_not_hold_applicant_snapshots():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -2159,7 +2255,7 @@ def test_empty_applicant_clear_after_emitted_applicants_bypasses_roster_prefligh
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -2190,12 +2286,12 @@ def test_successful_snapshot_commits_emitted_applicant_count_for_clear_priority(
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
 
@@ -2443,7 +2539,7 @@ def test_terminal_clear_force_path_bypasses_roster_inspect_batch_gate():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
-        "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
     end_body = _slice_between(
@@ -2504,7 +2600,7 @@ def test_roster_spec_cache_invalidation_clears_pending_inspect_for_changed_guid(
         "local function _MaybeRequestRosterInspect(unit, guid)",
     )
 
-    assert "local guid = _UnitGUIDForRoster(unit)" in helper_body
+    assert "local guid = entryCreationKeyState.UnitGUIDForRoster(unit)" in helper_body
     assert "rosterInspectSpecByGUID[guid] = nil" in helper_body
     assert "if rosterInspectPendingGUID == guid then" in helper_body
     assert "rosterInspectPendingGUID = nil" in helper_body
@@ -2575,6 +2671,28 @@ def test_lua_producer_omits_placeholder_applicant_member_but_keeps_valid_group_m
     assert b"Mageone-Realm" in payload
 
 
+@pytest.mark.requires_companion
+def test_lua_producer_survives_secret_tagged_unit_reads(pytestconfig):
+    generated = "".join(
+        _run_lua_fixture(pytestconfig, "secret-unit-apis").split()
+    )
+    payload = bytes.fromhex(generated)
+    parse_payload = _companion_payload_parser(pytestconfig)
+    snapshot, error = parse_payload(payload)
+
+    assert b"Host-Realm" in payload
+    assert b"Friend-Realm" not in payload
+    assert b"Healer-Realm" in payload
+    assert error is None
+    assert snapshot is not None
+    assert [member.name for member in snapshot.roster] == [
+        "Host-Realm",
+        "Healer-Realm",
+        "Feral-Realm",
+        "Ret-Realm",
+    ]
+
+
 def test_lua_libkeystone_transport_respects_disabled_kill_switch(pytestconfig):
     assert (
         _run_lua_script(pytestconfig, LUA_LIBKEYSTONE_DISABLED_CHECK).strip()
@@ -2591,7 +2709,7 @@ def test_listing_key_level_uses_owned_keystone_only_after_listing_match_guard():
     )
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
     status_body = _slice_between(
@@ -2625,7 +2743,7 @@ def test_owned_keystone_fallback_is_disabled_for_non_leader_party_context():
     )
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
     status_body = _slice_between(
@@ -2687,7 +2805,7 @@ def test_listing_key_level_uses_active_creation_form_cache():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
     creation_body = source[
@@ -2891,7 +3009,7 @@ def test_listing_key_level_is_derived_before_owned_keystone_activity_fallback():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
 
@@ -2905,7 +3023,7 @@ def test_payload_does_not_pack_raiderio_dungeon_rows_into_qr():
     source = _lua_source()
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
 
@@ -2924,7 +3042,7 @@ def test_raiderio_summary_reuses_one_profile_lookup_per_member():
     )
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
 
@@ -2958,7 +3076,7 @@ def test_raiderio_lookup_qualifies_same_realm_bare_applicant_names():
     )
     payload_body = _slice_between(
         source,
-        "local function BuildPayload(entry, applicantIDs, terminalClear)",
+        BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
 

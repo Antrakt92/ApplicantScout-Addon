@@ -285,6 +285,29 @@ local function IsSecretValue(v)
     return issv and issv(v) or false
 end
 
+entryCreationKeyState.CleanUnitAPIBoolean = function(api, ...)
+    if type(api) ~= "function" then return nil end
+    local ok, value = pcall(api, ...)
+    if not ok then return nil end
+    local okSecret, isSecret = pcall(IsSecretValue, value)
+    if not okSecret or isSecret then return nil end
+    local okTrue, isTrue = pcall(function() return value == true end)
+    if okTrue and isTrue then return true end
+    local okFalse, isFalse = pcall(function() return value == false end)
+    if okFalse and isFalse then return false end
+    return nil
+end
+
+entryCreationKeyState.UnitGUIDForRoster = function(unit)
+    if not UnitGUID then return "" end
+    local ok, guid = pcall(UnitGUID, unit)
+    if not ok then return "" end
+    local okSecret, isSecret = pcall(IsSecretValue, guid)
+    if not okSecret or isSecret then return "" end
+    if type(guid) ~= "string" or guid == "" then return "" end
+    return guid
+end
+
 SafeStr = function(v, secretFallback)
     -- Boundary cleanse for C_LFGList field reads. Secret detection must be
     -- the first operation on potential API values: even tostring(secret), type
@@ -777,10 +800,9 @@ entryCreationKeyState.CollectAutoHiPartyMemberGUIDs = function()
     local guids = {}
     if entryCreationKeyState.AutoHiGroupMemberCount() <= 0 then return guids end
     if IsInRaid and IsInRaid() then return guids end
-    if not UnitGUID then return guids end
     for i = 1, 4 do
-        local guid = UnitGUID("party" .. i)
-        if type(guid) == "string" and guid ~= "" then
+        local guid = entryCreationKeyState.UnitGUIDForRoster("party" .. i)
+        if guid ~= "" then
             guids[guid] = true
         end
     end
@@ -2390,15 +2412,14 @@ local rosterInspectLastRequestTime = 0
 local ROSTER_INSPECT_THROTTLE_S = 1.0
 local ROSTER_INSPECT_TIMEOUT_S = 4.0
 
-local function _UnitGUIDForRoster(unit)
-    if not UnitGUID then return "" end
-    local ok, guid = pcall(UnitGUID, unit)
-    if not ok then return "" end
-    return SafeStr(guid, "")
+local function _UnitExistsForRoster(unit)
+    if unit == "player" then return true end
+    return entryCreationKeyState.CleanUnitAPIBoolean(UnitExists, unit) == true
 end
 
-local function _UnitExistsForRoster(unit)
-    return UnitExists and UnitExists(unit) or false
+local function _UnitIsSelfForRoster(unit)
+    if unit == "player" then return true end
+    return entryCreationKeyState.CleanUnitAPIBoolean(UnitIsUnit, unit, "player") == true
 end
 
 local function _ForEachRosterUnit(callback)
@@ -2417,7 +2438,7 @@ local function _ForEachRosterUnit(callback)
     if callback("player") then return end
     for i = 1, 4 do
         local unit = "party" .. i
-        if UnitExists and UnitExists(unit) and callback(unit) then return end
+        if _UnitExistsForRoster(unit) and callback(unit) then return end
     end
 end
 
@@ -2426,7 +2447,7 @@ local function _FindRosterUnitByGUID(guid)
     if guid == "" then return nil end
     local found = nil
     _ForEachRosterUnit(function(unit)
-        if _UnitGUIDForRoster(unit) == guid then
+        if entryCreationKeyState.UnitGUIDForRoster(unit) == guid then
             found = unit
             return true
         end
@@ -2436,7 +2457,7 @@ local function _FindRosterUnitByGUID(guid)
 end
 
 local function _InvalidateRosterSpecCacheForUnit(unit)
-    local guid = _UnitGUIDForRoster(unit)
+    local guid = entryCreationKeyState.UnitGUIDForRoster(unit)
     if guid ~= "" then
         rosterInspectSpecByGUID[guid] = nil
         entryCreationKeyState.rosterInspectIlvlByGUID[guid] = nil
@@ -2452,7 +2473,7 @@ end
 
 local function _MaybeRequestRosterInspect(unit, guid)
     if not (NotifyInspect and CanInspect) then return false, "api" end
-    if UnitIsUnit and UnitIsUnit(unit, "player") then return false, "self" end
+    if _UnitIsSelfForRoster(unit) then return false, "self" end
     guid = SafeStr(guid, "")
     if guid == "" then return false, "guid" end
     if entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid) then
@@ -2474,8 +2495,9 @@ local function _MaybeRequestRosterInspect(unit, guid)
     end
     if InCombatLockdown and InCombatLockdown() then return false, "combat" end
 
-    local okCan, canInspect = pcall(CanInspect, unit)
-    if not (okCan and canInspect) then return false, "uninspectable" end
+    if entryCreationKeyState.CleanUnitAPIBoolean(CanInspect, unit) ~= true then
+        return false, "uninspectable"
+    end
     local ok = pcall(NotifyInspect, unit)
     if ok then
         rosterInspectPendingGUID = guid
@@ -2508,7 +2530,7 @@ entryCreationKeyState.ReadRosterInspectItemLevel = function(unit)
     return _ClampUInt16(SafeRoundedNumber(ilvl, 0))
 end
 entryCreationKeyState.RosterUnitHasResolvedInspectData = function(unit, guid)
-    if UnitIsUnit and UnitIsUnit(unit, "player") then return true end
+    if _UnitIsSelfForRoster(unit) then return true end
     guid = SafeStr(guid, "")
     if guid == "" then return false end
 
@@ -2706,7 +2728,7 @@ entryCreationKeyState.ScheduleRosterLoadRetry = function(delay)
 end
 
 entryCreationKeyState.RosterUnitHasResolvedSpec = function(unit, guid)
-    if UnitIsUnit and UnitIsUnit(unit, "player") then return true end
+    if _UnitIsSelfForRoster(unit) then return true end
     if guid ~= "" then
         local cachedSpecID = _ClampUInt16(SafeNumber(rosterInspectSpecByGUID[guid], 0))
         if cachedSpecID > 0 then return true end
@@ -2758,7 +2780,7 @@ entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()
     local requestReason = nil
     _ForEachRosterUnit(function(unit)
         if not _UnitExistsForRoster(unit) then return false end
-        local guid = _UnitGUIDForRoster(unit)
+        local guid = entryCreationKeyState.UnitGUIDForRoster(unit)
         if guid == ""
            or (entryCreationKeyState.rosterInspectBatchSkippedGUIDs
                and entryCreationKeyState.rosterInspectBatchSkippedGUIDs[guid])
@@ -2793,7 +2815,7 @@ entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot = function()
         local seeded = false
         _ForEachRosterUnit(function(unit)
             if not _UnitExistsForRoster(unit) then return false end
-            local guid = _UnitGUIDForRoster(unit)
+            local guid = entryCreationKeyState.UnitGUIDForRoster(unit)
             if guid ~= ""
                and not entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid) then
                 entryCreationKeyState.rosterInspectBatchDirtyPending = true
@@ -2860,13 +2882,13 @@ local function _OnRosterInspectReady(guid)
 end
 
 local function _UnitSpecIDForRoster(unit)
-    local guid = _UnitGUIDForRoster(unit)
+    local guid = entryCreationKeyState.UnitGUIDForRoster(unit)
     if guid ~= "" then
         local cachedSpecID = _ClampUInt16(SafeNumber(rosterInspectSpecByGUID[guid], 0))
         if cachedSpecID > 0 then return cachedSpecID end
     end
 
-    if UnitIsUnit and UnitIsUnit(unit, "player") then
+    if _UnitIsSelfForRoster(unit) then
         if GetSpecialization and GetSpecializationInfo then
             local okSpec, specIndex = pcall(GetSpecialization)
             specIndex = okSpec and math.floor(SafeNumber(specIndex, 0)) or 0
@@ -2889,8 +2911,8 @@ local function _UnitSpecIDForRoster(unit)
 end
 
 local function _UnitItemLevelForRoster(unit)
-    if not (UnitIsUnit and UnitIsUnit(unit, "player")) then
-        local guid = _UnitGUIDForRoster(unit)
+    if not _UnitIsSelfForRoster(unit) then
+        local guid = entryCreationKeyState.UnitGUIDForRoster(unit)
         if guid ~= "" then
             local cachedIlvl = entryCreationKeyState.CachedRosterInspectItemLevel(guid)
             if cachedIlvl > 0 then return cachedIlvl end
@@ -2927,10 +2949,6 @@ local function _UnitRoleTokenForRoster(unit, specID)
         return roleToken
     end
     return "DAMAGER"
-end
-
-local function _UnitIsSelfForRoster(unit)
-    return UnitIsUnit and UnitIsUnit(unit, "player") or false
 end
 
 local function _BuildRosterRow(unit, unitIndex, subgroup, isRaid)
@@ -3780,6 +3798,9 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
         entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry
     _G.ApplicantScoutFixtureHarness.ResolveLeaderKeystoneContext =
         entryCreationKeyState.ResolveLeaderKeystoneContext
+    _G.ApplicantScoutFixtureHarness.LastPayloadRosterIncomplete = function()
+        return entryCreationKeyState.lastPayloadRosterIncomplete == true
+    end
 end
 
 -- Resolve QR encoder reference (set by libs/qrencode.lua via addon namespace).

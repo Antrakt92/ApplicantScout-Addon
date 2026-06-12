@@ -1,11 +1,13 @@
 local fixture_mode = arg and arg[1] or ""
 if fixture_mode ~= "" and fixture_mode ~= "leader-key"
    and fixture_mode ~= "placeholder-roster"
-   and fixture_mode ~= "placeholder-applicant" then
+   and fixture_mode ~= "placeholder-applicant"
+   and fixture_mode ~= "secret-unit-apis" then
     error("unsupported fixture mode: " .. tostring(fixture_mode))
 end
 
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
+local notifyInspectCalled = false
 
 if fixture_mode == "placeholder-roster" then
     env.unit_data.party1.unitFullName = { "", "" }
@@ -19,6 +21,43 @@ if fixture_mode == "placeholder-applicant" then
                 "TANK", nil, 3210, nil, nil, nil, 73
         end
         return originalGetApplicantMemberInfo(id, memberIndex)
+    end
+end
+if fixture_mode == "secret-unit-apis" then
+    local secretBool = {}
+    local secretGUID = {}
+    local originalIsSecretValue = issecretvalue
+    issecretvalue = function(value)
+        if value == secretGUID then error("secret GUID probe failed") end
+        if value == secretBool then return true end
+        return originalIsSecretValue and originalIsSecretValue(value) or false
+    end
+
+    local originalUnitExists = UnitExists
+    UnitExists = function(unit)
+        if unit == "party1" then return secretBool end
+        return originalUnitExists(unit)
+    end
+
+    local originalUnitIsUnit = UnitIsUnit
+    UnitIsUnit = function(left, right)
+        if left == "player" and right == "player" then return secretBool end
+        return originalUnitIsUnit(left, right)
+    end
+
+    local originalUnitGUID = UnitGUID
+    UnitGUID = function(unit)
+        if unit == "party2" then return secretGUID end
+        return originalUnitGUID(unit)
+    end
+
+    env.unit_data.party3.specID = 0
+    CanInspect = function(unit)
+        if unit == "party3" then return secretBool end
+        return true
+    end
+    NotifyInspect = function()
+        notifyInspectCalled = true
     end
 end
 
@@ -47,6 +86,14 @@ if fixture_mode == "leader-key" then
     )
 end
 local payload = assert(harness.BuildPayload)(entry, { 42 }, false)
+if fixture_mode == "secret-unit-apis" and notifyInspectCalled then
+    error("NotifyInspect called for secret CanInspect")
+end
+if fixture_mode == "secret-unit-apis" then
+    if not (harness.LastPayloadRosterIncomplete and harness.LastPayloadRosterIncomplete()) then
+        error("secret UnitExists did not mark roster payload incomplete")
+    end
+end
 for i = 1, #payload do
     io.write(string.format("%02x", string.byte(payload, i)))
 end
