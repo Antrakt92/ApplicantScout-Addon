@@ -1415,6 +1415,31 @@ def test_lockdown_active_roster_snapshot_marks_lfg_unavailable_not_terminal():
     assert "BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)" in screenshot_body
 
 
+def test_solo_active_listing_heartbeat_runs_during_lockdown_without_lfg_reads():
+    source = _lua_source()
+    ticker_body = _slice_between(
+        source,
+        "C_Timer.NewTicker(0.25, function()",
+        "-- Settings panel:",
+    )
+
+    transport_ready = (
+        "local transportReady = "
+        "lfgReadsAllowed or _HasGroupRosterForTransport() or isSessionActive"
+    )
+    assert ticker_body.count(transport_ready) >= 2
+    assert (
+        transport_ready
+        + "\n                if transportReady then\n"
+        + "                    MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)"
+    ) in ticker_body
+    assert (
+        transport_ready
+        + "\n    if transportReady then\n"
+        + "        MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)"
+    ) in ticker_body
+
+
 def test_shotnow_uses_lockdown_guard_without_terminal_clear():
     source = _lua_source()
     shotnow_body = _slice_between(

@@ -862,6 +862,28 @@ def test_pkgmeta_excludes_tests_and_dev_only_release_inputs_from_marketplace_zip
     assert re.search(r'(?m)^\s*-\s+"?\*\.private/"?\s*$', pkgmeta)
 
 
+def test_public_repo_does_not_track_developer_only_root_files():
+    tracked = subprocess.run(
+        ["git", "ls-files", "--"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    forbidden = {
+        "AGENTS.md",
+        "AUDIT.md",
+        "PLAN.md",
+        "NOTES.md",
+        "TODO.md",
+        "CLAUDE.md",
+    }
+
+    leaked = sorted(path for path in tracked if path in forbidden)
+
+    assert leaked == []
+
+
 def test_package_script_dirty_inputs_include_release_shaping_metadata():
     package_script = _read_repo_text("scripts/package-addon.ps1")
 

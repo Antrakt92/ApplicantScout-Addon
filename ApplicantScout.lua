@@ -4695,7 +4695,8 @@ C_Timer.NewTicker(0.25, function()
         -- window (pendingShotDirty=true), but no new events fired since.
         -- Without this drain: shot never goes out for sustained state.
         if pendingShotDirty and (now - lastShotTime) >= SHOT_THROTTLE_S then
-            if lfgReadsAllowed or _HasGroupRosterForTransport() then
+            local transportReady = lfgReadsAllowed or _HasGroupRosterForTransport() or isSessionActive
+            if transportReady then
                 MaybeTriggerScreenshot(false, nil, nil, lfgReadsAllowed)
             end
         end
@@ -4714,7 +4715,8 @@ C_Timer.NewTicker(0.25, function()
                     lastSnapshotHash = nil
                     entryCreationKeyState.lastTransportHeartbeatAttemptTime = now
                 end
-                if lfgReadsAllowed or _HasGroupRosterForTransport() then
+                local transportReady = lfgReadsAllowed or _HasGroupRosterForTransport() or isSessionActive
+                if transportReady then
                     MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)
                 end
             end
@@ -4727,7 +4729,8 @@ C_Timer.NewTicker(0.25, function()
     -- live entry; pass it to MaybeTriggerScreenshot so we don't re-call
     -- C_LFGList.GetActiveEntryInfo a second time in the same tick.
     local entry = CheckSessionTransition(lfgReadsAllowed)
-    if lfgReadsAllowed or _HasGroupRosterForTransport() then
+    local transportReady = lfgReadsAllowed or _HasGroupRosterForTransport() or isSessionActive
+    if transportReady then
         MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)
     end
 end)
