@@ -720,6 +720,16 @@ def test_release_preflight_runs_python_through_companion_constraints():
     assert "python -m pip install pytest" not in workflow
 
 
+def test_workflows_do_not_upgrade_bootstrap_pip():
+    for workflow_path in (
+        ".github/workflows/check.yml",
+        ".github/workflows/release.yml",
+    ):
+        workflow = _read_repo_text(workflow_path)
+
+        assert "--upgrade pip" not in workflow
+
+
 def test_release_workflow_pins_external_actions_to_commit_shas():
     workflow = _workflow_source()
     action_refs = _workflow_action_refs(workflow)
