@@ -204,7 +204,8 @@ function Test-GitHubReleaseAssets {
         [object]$Release,
         [string]$Repo,
         [string]$ReleaseTag,
-        [string[]]$ExpectedAssets
+        [string[]]$ExpectedAssets,
+        [string[]]$ProtectedAssetPatterns = @()
     )
 
     if ($null -eq $Release) {
@@ -224,6 +225,16 @@ function Test-GitHubReleaseAssets {
             throw "GitHub Release $ReleaseTag in $Repo is missing asset: $AssetName"
         }
     }
+    foreach ($AssetName in $AssetNames) {
+        if ($ExpectedAssets -contains $AssetName) {
+            continue
+        }
+        foreach ($Pattern in $ProtectedAssetPatterns) {
+            if ($AssetName -match $Pattern) {
+                throw "GitHub Release $ReleaseTag in $Repo has unexpected asset: $AssetName"
+            }
+        }
+    }
 }
 
 function Wait-GitHubReleaseAssets {
@@ -232,6 +243,7 @@ function Wait-GitHubReleaseAssets {
         [string]$Repo,
         [string]$ReleaseTag,
         [string[]]$ExpectedAssets,
+        [string[]]$ProtectedAssetPatterns = @(),
         [int]$WaitSeconds,
         [int]$PollSeconds
     )
@@ -252,7 +264,8 @@ function Wait-GitHubReleaseAssets {
                 -Release $Release `
                 -Repo $Repo `
                 -ReleaseTag $ReleaseTag `
-                -ExpectedAssets $ExpectedAssets
+                -ExpectedAssets $ExpectedAssets `
+                -ProtectedAssetPatterns $ProtectedAssetPatterns
             return
         }
         catch {
@@ -357,11 +370,17 @@ if ($RequirePublishedPairedCompanionAssets) {
         "ApplicantScoutCompanionSetup-$PairedCompanionVersion.exe.sha256",
         "ApplicantScoutCompanion-$PairedCompanionVersion-portable.zip"
     )
+    $ProtectedCompanionAssetPatterns = @(
+        '^ApplicantScoutCompanionSetup-\d+\.\d+\.\d+\.exe$',
+        '^ApplicantScoutCompanionSetup-\d+\.\d+\.\d+\.exe\.sha256$',
+        '^ApplicantScoutCompanion-\d+\.\d+\.\d+-portable\.zip$'
+    )
     Wait-GitHubReleaseAssets `
         -CliPath $GitHubCliPath `
         -Repo "Antrakt92/ApplicantScout-Companion" `
         -ReleaseTag $PairedCompanionTag `
         -ExpectedAssets $ExpectedCompanionAssets `
+        -ProtectedAssetPatterns $ProtectedCompanionAssetPatterns `
         -WaitSeconds $PublishedReleaseWaitSeconds `
         -PollSeconds $PublishedReleasePollSeconds
 }

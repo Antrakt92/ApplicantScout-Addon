@@ -1997,6 +1997,8 @@ def test_unit_api_clean_adapters_reject_secret_values_without_coercion():
     assert "pcall(IsSecretValue, guid)" in helper_body
     assert 'type(guid) ~= "string"' in helper_body
     assert "SafeStr(guid" not in helper_body
+    assert "entryCreationKeyState.CleanUnitIsGroupLeader = function(unit)" in helper_body
+    assert "entryCreationKeyState.CleanUnitAPIBoolean(UnitIsGroupLeader, unit)" in helper_body
 
 
 def test_roster_and_auto_hi_unit_apis_do_not_branch_on_raw_secret_results():
@@ -2016,6 +2018,8 @@ def test_roster_and_auto_hi_unit_apis_do_not_branch_on_raw_secret_results():
     assert 'local guid = entryCreationKeyState.UnitGUIDForRoster("party" .. i)' in auto_hi_body
     assert "UnitExists and UnitExists(unit)" not in source
     assert 'UnitIsUnit and UnitIsUnit(unit, "player")' not in source
+    assert "UnitIsGroupLeader and UnitIsGroupLeader" not in source
+    assert " and UnitIsGroupLeader(unit)" not in source
     assert "pcall(CanInspect, unit)" not in source
     assert "entryCreationKeyState.CleanUnitAPIBoolean(CanInspect, unit) ~= true" in request_body
 
@@ -2718,6 +2722,38 @@ def test_lua_producer_survives_secret_tagged_unit_reads(pytestconfig):
     ]
 
 
+@pytest.mark.requires_companion
+def test_lua_producer_rejects_secret_group_leader_for_owned_key_fallback(pytestconfig):
+    generated = "".join(
+        _run_lua_fixture(pytestconfig, "secret-leader-owned-key").split()
+    )
+    payload = bytes.fromhex(generated)
+    parse_payload = _companion_payload_parser(pytestconfig)
+    snapshot, error = parse_payload(payload)
+
+    assert error is None
+    assert snapshot is not None
+    assert snapshot.listing is not None
+    assert snapshot.listing.key_level == 0
+    assert snapshot.leader_key is None
+
+
+@pytest.mark.requires_companion
+def test_lua_producer_rejects_secret_group_leader_for_leader_keystone(pytestconfig):
+    generated = "".join(
+        _run_lua_fixture(pytestconfig, "secret-leader-keystone").split()
+    )
+    payload = bytes.fromhex(generated)
+    parse_payload = _companion_payload_parser(pytestconfig)
+    snapshot, error = parse_payload(payload)
+
+    assert error is None
+    assert snapshot is not None
+    assert snapshot.listing is not None
+    assert snapshot.listing.key_level == 16
+    assert snapshot.leader_key is None
+
+
 def test_lua_libkeystone_transport_respects_disabled_kill_switch(pytestconfig):
     assert (
         _run_lua_script(pytestconfig, LUA_LIBKEYSTONE_DISABLED_CHECK).strip()
@@ -2778,7 +2814,8 @@ def test_owned_keystone_fallback_is_disabled_for_non_leader_party_context():
     )
 
     assert "IsInGroup" in guard_body
-    assert 'UnitIsGroupLeader("player")' in guard_body
+    assert "entryCreationKeyState.CleanUnitIsGroupLeader(\"player\") == true" in guard_body
+    assert "UnitIsGroupLeader and UnitIsGroupLeader" not in guard_body
     assert "return true" in guard_body
     assert "return false" in guard_body
     assert "entryCreationKeyState.CanUseOwnedKeystoneForListingFallback()" in payload_body

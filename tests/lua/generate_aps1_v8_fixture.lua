@@ -2,12 +2,29 @@ local fixture_mode = arg and arg[1] or ""
 if fixture_mode ~= "" and fixture_mode ~= "leader-key"
    and fixture_mode ~= "placeholder-roster"
    and fixture_mode ~= "placeholder-applicant"
-   and fixture_mode ~= "secret-unit-apis" then
+   and fixture_mode ~= "secret-unit-apis"
+   and fixture_mode ~= "secret-leader-owned-key"
+   and fixture_mode ~= "secret-leader-keystone" then
     error("unsupported fixture mode: " .. tostring(fixture_mode))
 end
 
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 local notifyInspectCalled = false
+local secretBool = nil
+local secretGUID = nil
+local originalIsSecretValue = issecretvalue
+
+local function InstallSecretFixtures()
+    if secretBool then return secretBool, secretGUID end
+    secretBool = {}
+    secretGUID = {}
+    issecretvalue = function(value)
+        if value == secretGUID then error("secret GUID probe failed") end
+        if value == secretBool then return true end
+        return originalIsSecretValue and originalIsSecretValue(value) or false
+    end
+    return secretBool, secretGUID
+end
 
 if fixture_mode == "placeholder-roster" then
     env.unit_data.party1.unitFullName = { "", "" }
@@ -24,44 +41,51 @@ if fixture_mode == "placeholder-applicant" then
     end
 end
 if fixture_mode == "secret-unit-apis" then
-    local secretBool = {}
-    local secretGUID = {}
-    local originalIsSecretValue = issecretvalue
-    issecretvalue = function(value)
-        if value == secretGUID then error("secret GUID probe failed") end
-        if value == secretBool then return true end
-        return originalIsSecretValue and originalIsSecretValue(value) or false
-    end
+    local secretBoolValue, secretGUIDValue = InstallSecretFixtures()
 
     local originalUnitExists = UnitExists
     UnitExists = function(unit)
-        if unit == "party1" then return secretBool end
+        if unit == "party1" then return secretBoolValue end
         return originalUnitExists(unit)
     end
 
     local originalUnitIsUnit = UnitIsUnit
     UnitIsUnit = function(left, right)
-        if left == "player" and right == "player" then return secretBool end
+        if left == "player" and right == "player" then return secretBoolValue end
         return originalUnitIsUnit(left, right)
     end
 
     local originalUnitGUID = UnitGUID
     UnitGUID = function(unit)
-        if unit == "party2" then return secretGUID end
+        if unit == "party2" then return secretGUIDValue end
         return originalUnitGUID(unit)
     end
 
     env.unit_data.party3.specID = 0
     CanInspect = function(unit)
-        if unit == "party3" then return secretBool end
+        if unit == "party3" then return secretBoolValue end
         return true
     end
     NotifyInspect = function()
         notifyInspectCalled = true
     end
 end
+if fixture_mode == "secret-leader-owned-key"
+   or fixture_mode == "secret-leader-keystone" then
+    local secretBoolValue = InstallSecretFixtures()
+    IsInGroup = function() return true end
+    UnitIsGroupLeader = function(unit)
+        if unit == "player" then return secretBoolValue end
+        return false
+    end
+end
+if fixture_mode == "secret-leader-owned-key" then
+    C_LFGList.GetOwnedKeystoneActivityAndGroupAndLevel = function()
+        return 401, 399, 18
+    end
+end
 
-if fixture_mode == "leader-key" then
+if fixture_mode == "leader-key" or fixture_mode == "secret-leader-keystone" then
     ApplicantScoutDB = {
         enabled = true,
         debug = false,
@@ -76,10 +100,22 @@ local entry = {
     name = "+16 Fixture Halls",
     comment = "bring kicks",
 }
+if fixture_mode == "secret-leader-owned-key" then
+    entry.name = "Fixture Halls"
+end
 if fixture_mode == "leader-key" then
     assert(harness.OnLeaderKeystoneData)(
         17,
         503,
+        0,
+        "Host-Realm",
+        "PARTY"
+    )
+end
+if fixture_mode == "secret-leader-keystone" then
+    assert(harness.OnLeaderKeystoneData)(
+        17,
+        556,
         0,
         "Host-Realm",
         "PARTY"

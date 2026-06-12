@@ -298,6 +298,10 @@ entryCreationKeyState.CleanUnitAPIBoolean = function(api, ...)
     return nil
 end
 
+entryCreationKeyState.CleanUnitIsGroupLeader = function(unit)
+    return entryCreationKeyState.CleanUnitAPIBoolean(UnitIsGroupLeader, unit)
+end
+
 entryCreationKeyState.UnitGUIDForRoster = function(unit)
     if not UnitGUID then return "" end
     local ok, guid = pcall(UnitGUID, unit)
@@ -2173,7 +2177,7 @@ end
 
 entryCreationKeyState.CanUseOwnedKeystoneForListingFallback = function()
     if not (IsInGroup and IsInGroup()) then return true end
-    if UnitIsGroupLeader and UnitIsGroupLeader("player") then return true end
+    if entryCreationKeyState.CleanUnitIsGroupLeader("player") == true then return true end
     return false
 end
 
@@ -3208,11 +3212,14 @@ entryCreationKeyState.PlayerNamesMatch = function(leftName, rightName)
 end
 
 entryCreationKeyState.CurrentPartyLeaderName = function()
-    if not (UnitIsGroupLeader and _UnitExistsForRoster("player")) then return "" end
-    if UnitIsGroupLeader("player") then return _UnitFullNameForTransport("player") end
+    if not _UnitExistsForRoster("player") then return "" end
+    if entryCreationKeyState.CleanUnitIsGroupLeader("player") == true then
+        return _UnitFullNameForTransport("player")
+    end
     for i = 1, 4 do
         local unit = "party" .. i
-        if _UnitExistsForRoster(unit) and UnitIsGroupLeader(unit) then
+        if _UnitExistsForRoster(unit)
+           and entryCreationKeyState.CleanUnitIsGroupLeader(unit) == true then
             return _UnitFullNameForTransport(unit)
         end
     end

@@ -51,6 +51,17 @@ def _next_patch_version(version: str) -> str:
     return f"{major}.{minor}.{patch + 1}"
 
 
+def _previous_patch_version(version: str) -> str:
+    major, minor, patch = (int(part) for part in version.split("."))
+    if patch > 0:
+        return f"{major}.{minor}.{patch - 1}"
+    if minor > 0:
+        return f"{major}.{minor - 1}.0"
+    if major > 0:
+        return f"{major - 1}.0.0"
+    raise AssertionError("Cannot derive a prior stale version before 0.0.0")
+
+
 CURRENT_ADDON_VERSION = _current_addon_version()
 CURRENT_ADDON_TAG = f"v{CURRENT_ADDON_VERSION}"
 CURRENT_COMPANION_VERSION = _current_paired_companion_version()
@@ -581,6 +592,53 @@ def test_release_version_check_accepts_published_paired_companion_assets(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_release_version_check_rejects_unexpected_paired_companion_release_asset(
+    tmp_path: Path,
+):
+    stale_version = _previous_patch_version(CURRENT_COMPANION_VERSION)
+    gh = _fake_gh_release_view(
+        tmp_path,
+        expected_tag=CURRENT_COMPANION_TAG,
+        release_json={
+            "tagName": CURRENT_COMPANION_TAG,
+            "isDraft": False,
+            "isPrerelease": False,
+            "assets": [
+                {"name": f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}.exe"},
+                {
+                    "name": (
+                        f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}"
+                        ".exe.sha256"
+                    )
+                },
+                {
+                    "name": (
+                        f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}"
+                        "-portable.zip"
+                    )
+                },
+                {"name": f"ApplicantScoutCompanionSetup-{stale_version}.exe"},
+            ],
+        },
+    )
+
+    result = _run_release_check(
+        "-Tag",
+        CURRENT_ADDON_TAG,
+        "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath",
+        str(gh),
+        "-PublishedReleaseWaitSeconds",
+        "0",
+    )
+
+    assert result.returncode != 0
+    output = re.sub(r"\s+", "", result.stdout + result.stderr)
+    assert (
+        f"unexpectedasset:ApplicantScoutCompanionSetup-{stale_version}.exe" in output
+    )
 
 
 def test_release_version_check_rejects_missing_paired_companion_checksum(
