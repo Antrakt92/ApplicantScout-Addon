@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+## 0.4.8 - 12-Jun-2026 - Companion 0.8.5 hardening release train
+
+This paired addon + companion patch keeps the compact v8 QR wire format
+unchanged while hardening Midnight unit API boundaries, lockdown transport
+recovery, public release checks, and the companion's live snapshot, WCL,
+RaiderIO, and lifecycle caches.
+
+### Improved
+
+- Refreshed public overlay screenshots for the current raid, M+, and Party
+  views.
+- Companion `0.8.5` restores the latest decoded live snapshot after companion
+  restart, making the overlay recover useful applicant or Party context while it
+  waits for the next in-game QR snapshot.
+- Companion `0.8.5` improves raid boss detail caching, WCL quota/status
+  handling, malformed OAuth response handling, and unknown-spec WCL behavior.
+- Companion `0.8.5` hardens local RaiderIO profile reads, WoW lifecycle watcher
+  cleanup, dependency-license collection, optional installer signing, seasonal
+  challenge-map validation, and paired release asset checks.
+
+### Fixed
+
+- Guarded roster, inspect, leader, Auto Hi, and owned-keystone decision paths
+  against secret-tagged Midnight unit API values instead of branching on raw
+  `Unit*`/`CanInspect` results.
+- Kept active listing and heartbeat transport paths alive during temporary LFG
+  read or chat-messaging lockdown when an ApplicantScout session is still
+  active, reducing stale overlay windows after protected Blizzard state gates.
+- Tightened paired release checks so stale or mismatched companion/addon assets
+  cannot satisfy the release train by accident.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.8.5`.
+- No wire-format change; wire payloads remain compact v8 for temporary
+  LFG-lockdown handling.
+
 ## 0.4.7 - 02-Jun-2026 - Companion 0.8.4 performance release train
 
 This paired addon + companion release keeps the compact v8 QR wire format
