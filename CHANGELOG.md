@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 0.4.9 - 17-Jun-2026 - Companion 0.8.5 transport reliability patch
+
+This addon-only patch keeps the compact v8 QR wire format unchanged while
+making large applicant QR screenshots more reliable on Retail 12.0.7.
+
+### Fixed
+
+- Large applicant QR payloads now try the hex/lower-error-correction path before
+  raw byte mode, reducing corrupt APS1 decodes and trailing-byte failures seen
+  in live WoW screenshots while keeping raw mode as a fallback.
+- QR captures now wait the render-settle window after every successful repaint,
+  even when the QR frame was already visible, so screenshots are less likely to
+  catch a mixed old/new texture frame.
+- Applicant snapshots now get one short redundant resend before the normal
+  heartbeat, making a single malformed screenshot less likely to leave the
+  companion overlay stale during active applicant review.
+
+### Improved
+
+- `/apscout status` now includes applicant-snapshot resend diagnostics, making
+  QR transport issues easier to confirm from in-game output.
+- Retail metadata now targets the current 12.0.7 client.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.8.5`.
+- No companion update is required; wire payloads remain compact v8.
+
 ## 0.4.8 - 12-Jun-2026 - Companion 0.8.5 hardening release train
 
 This paired addon + companion patch keeps the compact v8 QR wire format
