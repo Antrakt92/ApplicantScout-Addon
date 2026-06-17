@@ -357,6 +357,19 @@ def test_qr_shot_lease_shows_hidden_qr_and_releases_after_capture():
     assert "qrForceVisibleForShot = false" in source
 
 
+def test_qr_capture_waits_for_render_settle_after_every_paint():
+    source = _lua_source()
+    lease_body = _slice_between(
+        source,
+        "local function _AcquireQRShotLease()",
+        "-- Build payload, dedup vs last hash, throttle, paint QR, trigger Screenshot.",
+    )
+
+    assert "wasVisible and 0 or QR_RENDER_SETTLE_S" not in lease_body
+    assert "return nil, QR_RENDER_SETTLE_S" in lease_body
+    assert "return forceVisibleShotGen, QR_RENDER_SETTLE_S" in lease_body
+
+
 def test_qr_library_resolution_is_nil_safe_before_missing_lib_diagnostic():
     source = _lua_source()
     qr_init_idx = source.index("local _qrencode =")
@@ -640,6 +653,70 @@ def test_transport_poll_heartbeats_active_state_without_force():
 
     assert active_idx < heartbeat_idx < hash_reset_idx < screenshot_idx
     assert active_idx < heartbeat_idx < attempt_idx < screenshot_idx
+
+
+def test_applicant_snapshots_get_short_redundant_resend_before_heartbeat():
+    source = _lua_source()
+    state_body = _slice_between(
+        source,
+        "local entryCreationKeyState = {",
+        "local ENTRY_CREATION_KEY_CACHE_TTL = 3600",
+    )
+    start_body = _slice_between(
+        source,
+        "StartSession = function()",
+        "EndSession = function()",
+    )
+    screenshot_body = _slice_between(
+        source,
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
+        "-- LFG entry creation",
+    )
+
+    assert "APPLICANT_SNAPSHOT_MIN_SENDS = 2" in state_body
+    assert "lastApplicantSnapshotHash = nil" in state_body
+    assert "lastApplicantSnapshotSendCount = 0" in state_body
+    assert "entryCreationKeyState.lastApplicantSnapshotHash = nil" in start_body
+    assert "entryCreationKeyState.lastApplicantSnapshotSendCount = 0" in start_body
+
+    resend_idx = screenshot_body.index("local resendSameApplicantSnapshot =")
+    applicant_idx = screenshot_body.index(
+        "entryCreationKeyState.lastPayloadApplicantCount > 0",
+        resend_idx,
+    )
+    send_count_idx = screenshot_body.index(
+        "< entryCreationKeyState.APPLICANT_SNAPSHOT_MIN_SENDS",
+        applicant_idx,
+    )
+    same_hash_guard_idx = screenshot_body.index(
+        "if not force and h == lastSnapshotHash and not resendSameApplicantSnapshot then",
+        send_count_idx,
+    )
+    commit_idx = screenshot_body.index("lastSnapshotHash = h", same_hash_guard_idx)
+    track_idx = screenshot_body.index("if payloadApplicantCount > 0 then", commit_idx)
+    redundant_pending_idx = screenshot_body.index(
+        "pendingShotDirty = true",
+        track_idx,
+    )
+
+    assert resend_idx < applicant_idx < send_count_idx < same_hash_guard_idx
+    assert commit_idx < track_idx < redundant_pending_idx
+
+
+def test_status_reports_applicant_resend_diagnostics():
+    source = _lua_source()
+    status_body = _slice_between(
+        source,
+        'elseif msg == "status" then',
+        "-- raw API diagnostics",
+    )
+
+    hash_idx = status_body.index("last snapshot hash:")
+    applicant_hash_idx = status_body.index("last applicant snapshot hash:", hash_idx)
+    applicant_count_idx = status_body.index("last applicant snapshot sends:", applicant_hash_idx)
+    pending_idx = status_body.index("pending throttled shot:", applicant_count_idx)
+
+    assert hash_idx < applicant_hash_idx < applicant_count_idx < pending_idx
 
 
 def test_roster_payload_rows_skip_solo_player_when_not_grouped():
@@ -1523,7 +1600,9 @@ def test_incomplete_roster_payload_retries_even_when_hash_is_unchanged():
         "-- LFG entry creation",
     )
 
-    same_hash_idx = screenshot_body.index("if not force and h == lastSnapshotHash then")
+    same_hash_idx = screenshot_body.index(
+        "if not force and h == lastSnapshotHash and not resendSameApplicantSnapshot then"
+    )
     incomplete_idx = screenshot_body.index(
         "entryCreationKeyState.lastPayloadRosterIncomplete",
         same_hash_idx,
@@ -2543,7 +2622,7 @@ def test_qr_render_uses_script_safe_budget_before_texture_hard_cap():
     assert "C_Timer.After(0, ContinuePaint)" in qr_body
 
 
-def test_large_qr_payloads_try_raw_low_correction_before_hex_modes():
+def test_large_qr_payloads_try_hex_low_correction_before_raw_byte_mode():
     source = _lua_source()
     build_body = _slice_between(
         source,
@@ -2551,17 +2630,21 @@ def test_large_qr_payloads_try_raw_low_correction_before_hex_modes():
         "-- State for trigger throttling + dedup",
     )
 
-    assert "QR_RAW_FIRST_PAYLOAD_BYTES = 512" in source
+    assert "QR_LARGE_PAYLOAD_BYTES = 512" in source
     threshold_idx = build_body.index(
-        "if #payload > entryCreationKeyState.QR_RAW_FIRST_PAYLOAD_BYTES then"
+        "if #payload > entryCreationKeyState.QR_LARGE_PAYLOAD_BYTES then"
+    )
+    hex_idx = build_body.index("local hex = _HexEncode(payload)")
+    hex_l_idx = build_body.index(
+        '{ kind = "hex", data = hex, ec_level = 1, size = #hex, unit = "hex" }',
+        threshold_idx,
     )
     raw_l_idx = build_body.index(
         '{ kind = "raw", data = payload, ec_level = 1, size = #payload, unit = "bytes" }',
-        threshold_idx,
+        hex_l_idx,
     )
-    hex_idx = build_body.index("local hex = _HexEncode(payload)")
 
-    assert threshold_idx < raw_l_idx < hex_idx
+    assert hex_idx < threshold_idx < hex_l_idx < raw_l_idx
 
 
 def test_terminal_clear_force_path_bypasses_roster_inspect_batch_gate():

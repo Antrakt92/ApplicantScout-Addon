@@ -102,8 +102,8 @@ local scanDirty = false
 -- run-length encoding folds adjacent black modules into single rectangle
 -- textures. Large QR versions with high-entropy byte payloads can still reach
 -- several thousand runs, so BuildQRMatrix rejects encode modes whose rendered
--- run count would exceed QR_TEXTURE_RENDER_BUDGET and falls through to
--- raw/lower-EC alternatives instead of tripping WoW's script watchdog.
+-- run count would exceed QR_TEXTURE_RENDER_BUDGET and falls through to lower-EC
+-- or alternate-mode attempts instead of tripping WoW's script watchdog.
 --
 -- WHY transient QR uses a settle lease, not alpha-flicker: Screenshot() in the
 -- After(0) callback empirically fired before SetAlpha(1) reached the GPU
@@ -223,7 +223,10 @@ local entryCreationKeyState = {
     rosterChangePreflightToken = 0,
     pendingTtl = 10,
     TRANSPORT_HEARTBEAT_S = 15.0,
+    APPLICANT_SNAPSHOT_MIN_SENDS = 2,
     lastTransportHeartbeatAttemptTime = 0,
+    lastApplicantSnapshotHash = nil,
+    lastApplicantSnapshotSendCount = 0,
     groupTransportGen = 0,
     rioMPlusSummaryCache = {},
     qrPaintJobGen = 0,
@@ -526,6 +529,8 @@ StartSession = function()
     lastSnapshotHash = nil
     lastShotTime = 0
     entryCreationKeyState.lastEmittedApplicantCount = 0
+    entryCreationKeyState.lastApplicantSnapshotHash = nil
+    entryCreationKeyState.lastApplicantSnapshotSendCount = 0
     pendingShotDirty = false
     lastQREncodeMode = "never"
     lastQREncodeBytes = 0
@@ -584,14 +589,15 @@ EndSession = function()
     -- across sessions and trigger empty drains in the scan ticker. Clear here.
     pendingShotDirty = false
     entryCreationKeyState.lastEmittedApplicantCount = 0
+    entryCreationKeyState.lastApplicantSnapshotHash = nil
+    entryCreationKeyState.lastApplicantSnapshotSendCount = 0
     entryCreationKeyState.entryCreationKeyLevelCache = nil
     entryCreationKeyState.rioMPlusSummaryCache = {}
 
     -- Schedule deferred Hide AFTER the final clear-shot has had a chance to
-    -- fire. The screenshot path inside MaybeTriggerScreenshot uses
-    -- C_Timer.After(forceVisibleShotDelay, Screenshot()), so hidden QR frames
-    -- may wait QR_RENDER_SETTLE_S before the capture. Hiding synchronously
-    -- here would make the screenshot capture an empty screen (no QR),
+    -- fire. The screenshot path inside MaybeTriggerScreenshot waits the render
+    -- settle window before capture after every successful QR repaint. Hiding
+    -- synchronously here would make the screenshot capture an empty screen (no QR),
     -- companion never sees the clear signal, overlay stuck showing pre-end
     -- applicants.
     -- All gating (qrAlwaysVisible, new-session-started) re-checked at fire
@@ -3823,7 +3829,7 @@ local _qrencode = _addonNS.QR and _addonNS.QR.qrcode
 entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET = 3500  -- script-watchdog budget; above this, skip/fallback
 entryCreationKeyState.QR_TEXTURE_PAINT_CHUNK = 450     -- max texture ops per frame while painting one QR
 local QR_TEXTURE_HARD_CAP = 10000                      -- safety against runaway texture creation
-entryCreationKeyState.QR_RAW_FIRST_PAYLOAD_BYTES = 512 -- avoid expensive hex/M for medium applicant bursts
+entryCreationKeyState.QR_LARGE_PAYLOAD_BYTES = 512 -- prefer hex/L before raw byte mode for applicant bursts
 local function _AcquireQRTexture(x, y, w, h)
     if qrTextureUsed >= entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then
         return nil
@@ -4009,9 +4015,9 @@ end
 -- Builds QR matrix from payload bytes via embedded lua-qrcode library. The
 -- transport ladder keeps the historical hex/M path first for small payloads so
 -- already-working snapshots keep backward compatibility with legacy companions.
--- Large payloads go raw/L immediately: raw byte-mode produces smaller QRs, and
--- skipping hex/M avoids spending the whole script budget on an encode we would
--- reject for too many render runs anyway.
+-- Large payloads skip hex/M but try hex/L before raw/L. Live WoW screenshots
+-- have shown raw byte-mode APS1 payloads decoding as corrupt once applicant
+-- bursts grow, while hex remains stable for the same transport.
 -- WHY pcall: qrencode.lua's get_version_eclevel uses assert() (real Lua error)
 -- on capacity overflow at line 214, NOT the documented (false, errmsg) tuple
 -- return. Plain `local ok, result = _qrencode(...)` lets that error propagate
@@ -4035,10 +4041,11 @@ local function BuildQRMatrix(payload)
     end
     local attempts = {
     }
-    if #payload > entryCreationKeyState.QR_RAW_FIRST_PAYLOAD_BYTES then
+    local hex = _HexEncode(payload)
+    if #payload > entryCreationKeyState.QR_LARGE_PAYLOAD_BYTES then
+        table.insert(attempts, { kind = "hex", data = hex, ec_level = 1, size = #hex, unit = "hex" })
         table.insert(attempts, { kind = "raw", data = payload, ec_level = 1, size = #payload, unit = "bytes" })
     else
-        local hex = _HexEncode(payload)
         table.insert(attempts, { kind = "hex", data = hex, ec_level = QR_EC_LEVEL, size = #hex, unit = "hex" })
         table.insert(attempts, { kind = "raw", data = payload, ec_level = QR_EC_LEVEL, size = #payload, unit = "bytes" })
         if QR_EC_LEVEL ~= 1 then
@@ -4114,16 +4121,18 @@ local function _ReleaseForceVisibleShotLease(forceVisibleShotGen)
 end
 
 local function _AcquireQRShotLease()
-    local wasVisible = _IsQRVisibleForScreenshot()
+    -- WHY: every QR repaint needs a framebuffer settle delay, even when the
+    -- frame was already visible; otherwise captures can decode APS1 magic with
+    -- corrupt payload bytes from an old-new texture mix.
     if qrAlwaysVisible or qrMoveMode then
         _RefreshQRVisibility()
-        return nil, wasVisible and 0 or QR_RENDER_SETTLE_S
+        return nil, QR_RENDER_SETTLE_S
     end
     qrForceVisibleForShot = true
     qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
     local forceVisibleShotGen = qrForceVisibleShotGen
     _RefreshQRVisibility()
-    return forceVisibleShotGen, wasVisible and 0 or QR_RENDER_SETTLE_S
+    return forceVisibleShotGen, QR_RENDER_SETTLE_S
 end
 
 -- Build payload, dedup vs last hash, throttle, paint QR, trigger Screenshot.
@@ -4223,7 +4232,17 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         entryCreationKeyState.transportDirtyGeneration or 0
 
     local h = HashSnapshot(payload)
-    if not force and h == lastSnapshotHash then
+    -- WHY: companion cannot ACK successful decode. One malformed screenshot can
+    -- otherwise suppress a short-lived applicant snapshot until the heartbeat.
+    local resendSameApplicantSnapshot =
+        not force
+        and h == lastSnapshotHash
+        and not entryCreationKeyState.lastPayloadRosterIncomplete
+        and entryCreationKeyState.lastPayloadApplicantCount > 0
+        and entryCreationKeyState.lastApplicantSnapshotHash == h
+        and ((entryCreationKeyState.lastApplicantSnapshotSendCount or 0)
+             < entryCreationKeyState.APPLICANT_SNAPSHOT_MIN_SENDS)
+    if not force and h == lastSnapshotHash and not resendSameApplicantSnapshot then
         if entryCreationKeyState.lastPayloadRosterIncomplete then
             if entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S) then
                 pendingShotDirty = false
@@ -4285,11 +4304,9 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         local payloadApplicantCount = entryCreationKeyState.lastPayloadApplicantCount
         local payloadRosterIncomplete = entryCreationKeyState.lastPayloadRosterIncomplete
 
-        -- PaintQR above just updated the textures. If the frame was hidden, the
-        -- visibility lease waits QR_RENDER_SETTLE_S so Show()+texture updates reach
-        -- the GPU framebuffer before capture. If it was already visible (debug/move
-        -- mode or overlapping shot lease), C_Timer.After(0) still gives the fresh
-        -- texture set one render pass before Screenshot().
+        -- PaintQR above just updated the textures. Always wait the settle window
+        -- after a successful repaint so texture updates reach the GPU framebuffer
+        -- before Screenshot(), even when the frame was already visible.
         C_Timer.After(forceVisibleShotDelay, function()
             if terminalClearSessionGen
                and (sessionGen ~= terminalClearSessionGen or isSessionActive) then
@@ -4311,12 +4328,29 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 entryCreationKeyState.ClearRosterCompositionChanged()
             end
             lastSnapshotHash = h
+            if payloadApplicantCount > 0 then
+                if entryCreationKeyState.lastApplicantSnapshotHash == h then
+                    entryCreationKeyState.lastApplicantSnapshotSendCount =
+                        (entryCreationKeyState.lastApplicantSnapshotSendCount or 0) + 1
+                else
+                    entryCreationKeyState.lastApplicantSnapshotHash = h
+                    entryCreationKeyState.lastApplicantSnapshotSendCount = 1
+                end
+            else
+                entryCreationKeyState.lastApplicantSnapshotHash = nil
+                entryCreationKeyState.lastApplicantSnapshotSendCount = 0
+            end
             pendingShotDirty = false
             if not force and payloadRosterIncomplete then
                 local retryScheduled =
                     entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S)
                 pendingShotDirty = dirtySincePayload or not retryScheduled
             elseif dirtySincePayload then
+                pendingShotDirty = true
+            elseif not force
+               and payloadApplicantCount > 0
+               and ((entryCreationKeyState.lastApplicantSnapshotSendCount or 0)
+                    < entryCreationKeyState.APPLICANT_SNAPSHOT_MIN_SENDS) then
                 pendingShotDirty = true
             else
                 entryCreationKeyState.ClearRosterLoadRetryState()
@@ -5268,6 +5302,11 @@ SlashCmdList.APSCOUT = function(msg)
         print("  QR force-visible shot lease: " .. tostring(qrForceVisibleForShot or false))
         print("  texture pool: " .. #qrTexturePool .. " (used last paint: " .. qrTextureUsed .. ")")
         print("  last snapshot hash: " .. tostring(lastSnapshotHash))
+        print("  last applicant snapshot hash: "
+              .. tostring(entryCreationKeyState.lastApplicantSnapshotHash))
+        print("  last applicant snapshot sends: "
+              .. tostring(entryCreationKeyState.lastApplicantSnapshotSendCount or 0)
+              .. "/" .. tostring(entryCreationKeyState.APPLICANT_SNAPSHOT_MIN_SENDS))
         print("  last shot time: " .. (lastShotTime > 0
               and string.format("%.1fs ago", GetTime() - lastShotTime) or "never"))
         print("  pending throttled shot: " .. tostring(pendingShotDirty))
