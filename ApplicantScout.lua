@@ -1678,6 +1678,29 @@ local function _GetApplicantApplicationStatus(info)
     return status
 end
 
+entryCreationKeyState.GetApplicantInfoForTransport = function(rawID)
+    if not (C_LFGList and type(C_LFGList.GetApplicantInfo) == "function") then
+        return nil, nil, nil
+    end
+    -- WHY: in Midnight applicant IDs can be secret/opaque tokens. Passing the
+    -- token back to Blizzard APIs is safe, but arithmetic/comparison on it is
+    -- not. Read the info table first, then use its clean applicantID for our
+    -- own wire identity.
+    local ok, info = pcall(C_LFGList.GetApplicantInfo, rawID)
+    if not ok then return nil, nil, nil end
+    info = SafeTable(info)
+    if not info then return nil, nil, nil end
+
+    local cleanID = math.floor(SafeNumber(info.applicantID, 0))
+    local apiID = info.applicantID
+    if cleanID <= 0 then
+        cleanID = math.floor(SafeNumber(rawID, 0))
+        apiID = rawID
+    end
+    if cleanID <= 0 then return nil, nil, nil end
+    return cleanID, info, apiID
+end
+
 -- Big-endian uint packing
 local function _Uint32BE(n)
     n = math.floor(SafeNumber(n, 0)) % 4294967296
@@ -3670,17 +3693,13 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
     local validApps = {}
     local cleanApplicantIDs = SafeTable(applicantIDs) or {}
     for _, rawID in ipairs(cleanApplicantIDs) do
-        local id = math.floor(SafeNumber(rawID, 0))
-        if id > 0 then
-            local info = C_LFGList.GetApplicantInfo(id)
-            info = SafeTable(info)
-            if info then
-                local status = _GetApplicantApplicationStatus(info)
-                local memberCount = math.floor(SafeNumber(info.numMembers, 0))
-                if memberCount > 5 then memberCount = 5 end
-                if memberCount > 0 and not APP_DEAD_STATUSES[status] then
-                    table.insert(validApps, { id = id, members = memberCount })
-                end
+        local id, info, apiID = entryCreationKeyState.GetApplicantInfoForTransport(rawID)
+        if id and info then
+            local status = _GetApplicantApplicationStatus(info)
+            local memberCount = math.floor(SafeNumber(info.numMembers, 0))
+            if memberCount > 5 then memberCount = 5 end
+            if memberCount > 0 and not APP_DEAD_STATUSES[status] then
+                table.insert(validApps, { id = id, apiID = apiID or id, members = memberCount })
             end
         end
     end
@@ -3707,7 +3726,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
     for _, app in ipairs(validApps) do
         for m = 1, app.members do
             local name, class, _, _, ilvl, _, _, _, _, role, _, score, _, _, _, specID
-                = C_LFGList.GetApplicantMemberInfo(app.id, m)
+                = C_LFGList.GetApplicantMemberInfo(app.apiID, m)
             local memberName = SafeStr(name, "")
             if not _IsPlaceholderUnitName(memberName) then
                 local classToken = SafeEnumKey(class, "")
@@ -5405,11 +5424,10 @@ SlashCmdList.APSCOUT = function(msg)
         print("  GetApplicants count: " .. #applicants)
         for i = 1, math.min(3, #applicants) do
             local rawID = applicants[i]
-            local id = math.floor(SafeNumber(rawID, 0))
-            local info = (id > 0) and SafeTable(C_LFGList.GetApplicantInfo(id)) or nil
+            local id, info = entryCreationKeyState.GetApplicantInfoForTransport(rawID)
             if info then
                 print(string.format("    #%d id=%s status=%s numMembers=%s",
-                      i, SafeDiag(rawID), SafeDiag(_GetApplicantApplicationStatus(info)),
+                      i, SafeDiag(id), SafeDiag(_GetApplicantApplicationStatus(info)),
                       SafeDiag(info.numMembers)))
             else
                 print(string.format("    #%d id=%s status=n/a numMembers=n/a",
@@ -5471,15 +5489,14 @@ SlashCmdList.APSCOUT = function(msg)
         print("  applicants: " .. #applicants)
         for i = 1, math.min(3, #applicants) do
             local rawID = applicants[i]
-            local id = math.floor(SafeNumber(rawID, 0))
-            local info = (id > 0) and SafeTable(C_LFGList.GetApplicantInfo(id)) or nil
+            local id, info, apiID = entryCreationKeyState.GetApplicantInfoForTransport(rawID)
             local name, class, ilvl, role, score, specID
-            if id > 0 then
+            if id and id > 0 then
                 name, class, _, _, ilvl, _, _, _, _, role, _, score, _, _, _, specID
-                    = C_LFGList.GetApplicantMemberInfo(id, 1)
+                    = C_LFGList.GetApplicantMemberInfo(apiID or id, 1)
             end
             print(string.format("  #%d id=%s (id_secret=%s) status=%s",
-                  i, SafeDiag(rawID), tostring(IsSecretValue(rawID)),
+                  i, SafeDiag(id), tostring(IsSecretValue(rawID)),
                   info and SafeDiag(_GetApplicantApplicationStatus(info)) or "n/a"))
             print(string.format("    name=%s(s=%s) class=%s(s=%s) specID=%s(s=%s)",
                   SafeDiag(name), tostring(IsSecretValue(name)),

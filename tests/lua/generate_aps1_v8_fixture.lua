@@ -2,6 +2,7 @@ local fixture_mode = arg and arg[1] or ""
 if fixture_mode ~= "" and fixture_mode ~= "leader-key"
    and fixture_mode ~= "placeholder-roster"
    and fixture_mode ~= "placeholder-applicant"
+   and fixture_mode ~= "secret-applicant-token"
    and fixture_mode ~= "secret-unit-apis"
    and fixture_mode ~= "secret-leader-owned-key"
    and fixture_mode ~= "secret-leader-keystone" then
@@ -12,6 +13,7 @@ local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 local notifyInspectCalled = false
 local secretBool = nil
 local secretGUID = nil
+local secretApplicantToken = nil
 local originalIsSecretValue = issecretvalue
 
 local function InstallSecretFixtures()
@@ -39,6 +41,15 @@ if fixture_mode == "placeholder-applicant" then
         end
         return originalGetApplicantMemberInfo(id, memberIndex)
     end
+end
+if fixture_mode == "secret-applicant-token" then
+    secretApplicantToken = {}
+    local originalIsSecret = issecretvalue
+    issecretvalue = function(value)
+        if value == secretApplicantToken then return true end
+        return originalIsSecret and originalIsSecret(value) or false
+    end
+    env.secret_applicant_token = secretApplicantToken
 end
 if fixture_mode == "secret-unit-apis" then
     local secretBoolValue, secretGUIDValue = InstallSecretFixtures()
@@ -121,7 +132,8 @@ if fixture_mode == "secret-leader-keystone" then
         "PARTY"
     )
 end
-local payload = assert(harness.BuildPayload)(entry, { 42 }, false)
+local applicantIDs = secretApplicantToken and { secretApplicantToken } or { 42 }
+local payload = assert(harness.BuildPayload)(entry, applicantIDs, false)
 if fixture_mode == "secret-unit-apis" and notifyInspectCalled then
     error("NotifyInspect called for secret CanInspect")
 end

@@ -235,6 +235,16 @@ RaiderIO = {
     end,
 }
 
+local env = {
+    unit_data = unit_data,
+    profiles = profiles,
+    secret_applicant_token = nil,
+}
+
+local function is_fixture_applicant_id(id)
+    return id == 42 or (env.secret_applicant_token ~= nil and id == env.secret_applicant_token)
+end
+
 C_LFGList = {
     GetActivityInfoTable = function()
         return {
@@ -248,8 +258,8 @@ C_LFGList = {
         return 0, 0, 0
     end,
     GetApplicantInfo = function(id)
-        if id == 42 then
-            return { applicationStatus = "applied", numMembers = 2 }
+        if is_fixture_applicant_id(id) then
+            return { applicantID = 42, applicationStatus = "applied", numMembers = 2 }
         end
         return nil
     end,
@@ -265,11 +275,6 @@ C_LFGList = {
         end
         return nil
     end,
-}
-
-local env = {
-    unit_data = unit_data,
-    profiles = profiles,
 }
 
 env.load_addon = function()

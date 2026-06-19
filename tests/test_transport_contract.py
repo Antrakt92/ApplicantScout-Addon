@@ -2521,7 +2521,7 @@ def test_taintcheck_support_command_skips_lfg_reads_during_chat_lockdown():
     skip_idx = taint_body.index("LFG applicant reads skipped during ChatMessagingLockdown")
     return_idx = taint_body.index("return", skip_idx)
     applicants_idx = taint_body.index("C_LFGList.GetApplicants()")
-    info_idx = taint_body.index("C_LFGList.GetApplicantInfo")
+    info_idx = taint_body.index("entryCreationKeyState.GetApplicantInfoForTransport(rawID)")
     member_idx = taint_body.index("C_LFGList.GetApplicantMemberInfo")
 
     assert guard_idx < skip_idx < return_idx < applicants_idx < info_idx < member_idx
@@ -2780,6 +2780,16 @@ def test_lua_producer_omits_placeholder_applicant_member_but_keeps_valid_group_m
     payload = bytes.fromhex(generated)
 
     assert b"Unknown-Realm" not in payload
+    assert b"Mageone-Realm" in payload
+
+
+def test_lua_producer_uses_clean_applicant_id_from_secret_token(pytestconfig):
+    generated = "".join(
+        _run_lua_fixture(pytestconfig, "secret-applicant-token").split()
+    )
+    payload = bytes.fromhex(generated)
+
+    assert b"Tankone-Realm" in payload
     assert b"Mageone-Realm" in payload
 
 
