@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 0.4.10 - 19-Jun-2026 - Companion 0.8.6 applicant-token hotfix
+
+This addon-only patch restores applicant rows on Retail 12.0.7 when Blizzard
+returns secret or opaque applicant tokens from Group Finder.
+
+### Fixed
+
+- Applicant rows no longer disappear from the companion overlay when
+  `C_LFGList.GetApplicants()` returns non-numeric applicant tokens. The addon
+  now reads the clean applicant ID from `GetApplicantInfo()` for its own QR
+  identity while passing the original token back to Blizzard member-info APIs.
+- `/apscout status` and `/apscout taintcheck` now use the same clean applicant
+  ID path as the QR transport, so support output reflects applicants that the
+  companion can receive.
+
+### Improved
+
+- Added transport contract coverage for secret applicant tokens so future
+  addon changes cannot silently drop visible Group Finder applicants.
+- Public compatibility copy now lists the current Retail Midnight Interface
+  `120007` metadata without the retired `120005` client.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.8.6`.
+- No companion update is required if you are already on Companion `0.8.6`.
+- No wire-format change; wire payloads remain compact v8.
+
 ## 0.4.9 - 17-Jun-2026 - Companion 0.8.5 transport reliability patch
 
 This addon-only patch keeps the compact v8 QR wire format unchanged while
