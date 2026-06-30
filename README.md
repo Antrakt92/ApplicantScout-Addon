@@ -152,7 +152,7 @@ the wrong folder, or the Screenshots folder is synced/shared before cleanup.
 
 ## Compatibility
 
-- WoW Retail Midnight: Interface `120007`.
+- WoW Retail Midnight: Interface `120007, 120100`.
 - Latest ApplicantScout addon release.
 - Latest ApplicantScout Companion release.
 - Wire payload: compact v8 (`APS1`) with optional RaiderIO, raid/M+ roster,

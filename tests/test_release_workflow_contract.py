@@ -995,6 +995,17 @@ def test_toc_loads_qr_library_before_addon_runtime():
     assert toc.index("libs\\qrencode.lua") < toc.index("ApplicantScout.lua")
 
 
+def test_toc_and_readme_document_current_retail_interfaces():
+    toc = _read_repo_text("ApplicantScout.toc")
+    readme = _read_repo_text("README.md")
+    match = re.search(r"(?m)^##\s+Interface:\s*(.+?)\s*$", toc)
+
+    assert match is not None, "ApplicantScout.toc is missing ## Interface"
+    interfaces = match.group(1)
+    assert "120100" in [part.strip() for part in interfaces.split(",")]
+    assert f"WoW Retail Midnight: Interface `{interfaces}`." in readme
+
+
 def test_toc_orders_optional_key_providers_before_applicantscout():
     toc = _read_repo_text("ApplicantScout.toc")
 

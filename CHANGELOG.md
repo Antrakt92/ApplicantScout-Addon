@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.4.11 - 30-Jun-2026 - Retail 12.1.0 compatibility metadata
+
+This addon-only patch adds Retail 12.1.0 compatibility metadata while keeping
+the in-game runtime and QR wire payload unchanged.
+
+### Changed
+
+- Retail metadata now targets both Midnight 12.0.7 and 12.1.0 clients through
+  Interface `120007, 120100`.
+- Public compatibility copy now lists both supported Retail Midnight Interface
+  values.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.8.6`.
+- No companion update is required if you are already on Companion `0.8.6`.
+- No Lua runtime or wire-format change; wire payloads remain compact v8.
+
 ## 0.4.10 - 19-Jun-2026 - Companion 0.8.6 applicant-token hotfix
 
 This addon-only patch restores applicant rows on Retail 12.0.7 when Blizzard
