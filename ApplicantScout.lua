@@ -215,7 +215,9 @@ local entryCreationKeyState = {
     lfgDefaultPlaystyleUserTouched = false,
     entryCreationKeyLevelCacheDecision = "none",
     lastPayloadApplicantCount = 0,
+    lastPayloadRosterCount = 0,
     lastPayloadRosterIncomplete = false,
+    lastPayloadRosterUnavailable = false,
     lastEmittedApplicantCount = 0,
     rosterChangedSinceLastPayload = false,
     ROSTER_CHANGE_PREFLIGHT_DEADLINE_S = 2.0,
@@ -3535,12 +3537,16 @@ end
 
 -- Builds binary payload from current LFG state. entry may be nil (no listing).
 -- applicantIDs is array from C_LFGList.GetApplicants(). Returns string of bytes.
-local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
+local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, rosterUnavailable)
     local out = {}
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadApplicantCount = 0
+    entryCreationKeyState.lastPayloadRosterCount = 0
     entryCreationKeyState.lastPayloadRosterIncomplete = false
+    entryCreationKeyState.lastPayloadRosterUnavailable = false
     if terminalClear then lfgUnavailable = false end
+    rosterUnavailable = (not terminalClear) and rosterUnavailable == true
+    entryCreationKeyState.lastPayloadRosterUnavailable = rosterUnavailable == true
     local headerFlags = 0
     if terminalClear then
         headerFlags = headerFlags + 0x01
@@ -3548,10 +3554,13 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
     if lfgUnavailable then
         headerFlags = headerFlags + 0x02
     end
+    if rosterUnavailable then
+        headerFlags = headerFlags + 0x04
+    end
 
     -- Header (length patched after we know body size)
     table.insert(out, "APS1")
-    table.insert(out, string.char(0x08))    -- protocol version (v8: partial/terminal flags)
+    table.insert(out, string.char(0x09))    -- v9: partial flags include roster omission
     table.insert(out, "\0\0")                -- length placeholder (uint16 BE)
     table.insert(out, string.char(headerFlags))
     table.insert(out, "\0")                  -- reserved
@@ -3677,7 +3686,11 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
     local fullName = playerName .. ((playerRealm ~= "") and ("-" .. playerRealm) or "")
     _PackLenStr(out, fullName)
 
+    local leaderQuietOut = {}
     if leaderKeystone and leaderKeystone.level > 0 then
+        table.insert(leaderQuietOut, string.char(_ClampUInt8(leaderKeystone.level)))
+        table.insert(leaderQuietOut, _Uint16BE(leaderKeystone.challengeMapID))
+        _PackLenStr(leaderQuietOut, leaderKeystone.playerName)
         if listingKeyLevelForRio <= 0 then
             listingKeyLevelForRio = leaderKeystone.level
         end
@@ -3688,6 +3701,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
     else
         table.insert(out, string.char(0))
     end
+    local leaderQuietSignature = table.concat(leaderQuietOut)
 
     -- Applicants — filter out DEAD_STATUSES + sort by ID for hash stability
     local validApps = {}
@@ -3768,7 +3782,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
     local rosterIncomplete = false
     local rosterQuietSignature, rosterQuietHasUnknownSpec, rosterQuietInRaid =
         nil, false, false
-    if not terminalClear then
+    if not terminalClear and not rosterUnavailable then
         rosterOut, rosterCount, rosterQuietSignature,
         rosterQuietHasUnknownSpec, rosterQuietInRaid, rosterIncomplete =
             BuildRosterPayloadRows(
@@ -3776,6 +3790,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
                 listingKeyLevelForRio
             )
     end
+    entryCreationKeyState.lastPayloadRosterCount = rosterCount
     entryCreationKeyState.lastPayloadRosterIncomplete = rosterIncomplete
     if cleanEntry and #validApps == 0
        and rosterCount == 5
@@ -3786,6 +3801,8 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
         local listingSig = listingQuietSignature or ""
         table.insert(quietOut, _Uint16BE(#listingSig))
         table.insert(quietOut, listingSig)
+        table.insert(quietOut, _Uint16BE(#leaderQuietSignature))
+        table.insert(quietOut, leaderQuietSignature)
         table.insert(quietOut, _Uint16BE(#rosterQuietSignature))
         table.insert(quietOut, rosterQuietSignature)
         entryCreationKeyState.lastPayloadQuietFullPartySignature = table.concat(quietOut)
@@ -4050,7 +4067,7 @@ local function _TryQrEncode(data, ec_level)
     return result, nil
 end
 
-local function BuildQRMatrix(payload)
+local function BuildQRMatrix(payload, suppressFailurePrint)
     if not _qrencode then
         _SetLastQREncodeDiag("missing-lib", #payload, "QR library not loaded")
         if APSPrint then
@@ -4110,7 +4127,7 @@ local function BuildQRMatrix(payload)
     -- caller dedupes via lastSnapshotHash unless force=true).
     local err = table.concat(failure_parts, " | ")
     _SetLastQREncodeDiag("failed", #payload, err)
-    if APSPrint then
+    if APSPrint and not suppressFailurePrint then
         APSPrint("QR build failed (payload too large or too dense to render): "
                  .. tostring(err) .. " — payload=" .. #payload .. " bytes")
     end
@@ -4290,7 +4307,29 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     end
 
     -- Encode payload as QR matrix, render via row-RLE.
-    local matrix = BuildQRMatrix(payload)
+    local canTryRosterUnavailableFallback =
+       not force
+       and not terminalClear
+       and not lfgUnavailable
+       and not entryCreationKeyState.lastPayloadRosterUnavailable
+       and entryCreationKeyState.lastPayloadApplicantCount > 0
+       and entryCreationKeyState.lastPayloadRosterCount > 0
+    local matrix = BuildQRMatrix(payload, canTryRosterUnavailableFallback)
+    if not matrix and canTryRosterUnavailableFallback then
+        local fallbackPayload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, true)
+        local fallbackHash = HashSnapshot(fallbackPayload)
+        local fallbackMatrix = BuildQRMatrix(fallbackPayload)
+        if fallbackMatrix then
+            payload = fallbackPayload
+            matrix = fallbackMatrix
+            quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature
+            if ApplicantScoutDB and ApplicantScoutDB.debug then
+                print(string.format(
+                    "|cff999999[APS-debug]|r QR roster fallback full_hash=%x fallback_hash=%x",
+                    h, fallbackHash))
+            end
+        end
+    end
     if not matrix then
         -- Stamp the failed hash so identical-payload re-scans don't re-spam the
         -- BuildQRMatrix error. Real data change → fresh hash → retry path opens.
@@ -4773,6 +4812,7 @@ C_Timer.NewTicker(0.25, function()
                    and (lastShotTime <= 0
                         or (now - lastShotTime) >= entryCreationKeyState.TRANSPORT_HEARTBEAT_S) then
                     lastSnapshotHash = nil
+                    entryCreationKeyState.lastQuietFullPartySignature = nil
                     entryCreationKeyState.lastTransportHeartbeatAttemptTime = now
                 end
                 local transportReady = lfgReadsAllowed or _HasGroupRosterForTransport() or isSessionActive

@@ -155,8 +155,8 @@ the wrong folder, or the Screenshots folder is synced/shared before cleanup.
 - WoW Retail Midnight: Interface `120007, 120100`.
 - Latest ApplicantScout addon release.
 - Latest ApplicantScout Companion release.
-- Wire payload: compact v8 (`APS1`) with optional RaiderIO, raid/M+ roster,
-  leader-keystone context, and temporary LFG-lockdown handling.
+- Wire payload: compact v9 (`APS1`) with optional RaiderIO, raid/M+ roster,
+  leader-keystone context, and partial snapshot handling.
 - Classic-era clients are not supported.
 
 ## Troubleshooting

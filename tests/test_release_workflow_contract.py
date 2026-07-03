@@ -1029,7 +1029,7 @@ def test_package_script_rejects_private_directories_and_legacy_claude_docs():
 def test_readme_documents_current_wire_version_and_transient_qr_visibility():
     readme = _read_repo_text("README.md")
 
-    assert "Wire payload: compact v8" in readme
+    assert "Wire payload: compact v9" in readme
     assert "Wire payload: compact v5" not in readme
     assert "stays visible during an\nactive capture session" not in readme
     assert "screenshot capture window" in readme

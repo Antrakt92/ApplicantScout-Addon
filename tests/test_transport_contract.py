@@ -22,7 +22,7 @@ MAYBE_TRIGGER_SCREENSHOT_ANCHOR = (
     "MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllowed)"
 )
 BUILD_PAYLOAD_ANCHOR = (
-    "local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
+    "local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, rosterUnavailable)"
 )
 CHECK_SESSION_TRANSITION_ANCHOR = "CheckSessionTransition = function(lfgReadsAllowed)"
 STALE_FUNCTION_ANCHORS = {
@@ -121,7 +121,9 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
         "local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
     )
     hash_idx = body.index("local h = HashSnapshot(payload)")
-    matrix_idx = body.index("local matrix = BuildQRMatrix(payload)")
+    matrix_idx = body.index(
+        "local matrix = BuildQRMatrix(payload, canTryRosterUnavailableFallback)"
+    )
     callback_idx = body.index("local function OnQRPaintComplete(paintOK)")
     lease_idx = body.index("local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()", callback_idx)
     screenshot_idx = body.index("        Screenshot()")
@@ -373,7 +375,7 @@ def test_qr_capture_waits_for_render_settle_after_every_paint():
 def test_qr_library_resolution_is_nil_safe_before_missing_lib_diagnostic():
     source = _lua_source()
     qr_init_idx = source.index("local _qrencode =")
-    build_idx = source.index("local function BuildQRMatrix(payload)")
+    build_idx = source.index("local function BuildQRMatrix(payload, suppressFailurePrint)")
     init_line = source[qr_init_idx : source.index("\n", qr_init_idx)]
 
     assert qr_init_idx < build_idx
@@ -642,6 +644,10 @@ def test_transport_poll_heartbeats_active_state_without_force():
     active_idx = ticker_body.index("if isSessionActive then", transition_idx)
     heartbeat_idx = ticker_body.index("TRANSPORT_HEARTBEAT_S", active_idx)
     hash_reset_idx = ticker_body.index("lastSnapshotHash = nil", heartbeat_idx)
+    quiet_reset_idx = ticker_body.index(
+        "entryCreationKeyState.lastQuietFullPartySignature = nil",
+        hash_reset_idx,
+    )
     attempt_idx = ticker_body.index(
         "entryCreationKeyState.lastTransportHeartbeatAttemptTime = now",
         heartbeat_idx,
@@ -651,7 +657,7 @@ def test_transport_poll_heartbeats_active_state_without_force():
         active_idx,
     )
 
-    assert active_idx < heartbeat_idx < hash_reset_idx < screenshot_idx
+    assert active_idx < heartbeat_idx < hash_reset_idx < quiet_reset_idx < screenshot_idx
     assert active_idx < heartbeat_idx < attempt_idx < screenshot_idx
 
 
@@ -849,7 +855,7 @@ def test_payload_still_includes_raiderio_completion_summary():
         "local function HashSnapshot(payload)",
     )
 
-    assert "string.char(0x08)" in payload_body
+    assert "string.char(0x09)" in payload_body
     assert "_GetRaiderIOMPlusSummary(" in source
     assert "rioSummary.hasProfile" in payload_body
     assert "rioSummary.bestDungeonKey" in payload_body
@@ -863,7 +869,7 @@ def test_payload_v6_appends_current_group_roster_after_applicants():
         "local function HashSnapshot(payload)",
     )
 
-    assert "string.char(0x08)" in payload_body
+    assert "string.char(0x09)" in payload_body
     assert "BuildRosterPayloadRows(" in payload_body
     applicants_idx = payload_body.index("for _, chunk in ipairs(memberOut) do")
     roster_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
@@ -1085,7 +1091,9 @@ def test_repeat_full_party_quiet_snapshot_is_suppressed_before_qr_paint():
         "local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature"
     )
     throttle_idx = screenshot_body.index("if not force and now - lastShotTime < SHOT_THROTTLE_S")
-    matrix_idx = screenshot_body.index("local matrix = BuildQRMatrix(payload)")
+    matrix_idx = screenshot_body.index(
+        "local matrix = BuildQRMatrix(payload, canTryRosterUnavailableFallback)"
+    )
     quiet_block = screenshot_body[
         quiet_idx : screenshot_body.index("\n    -- Encode payload", quiet_idx)
     ]
@@ -1109,7 +1117,9 @@ def test_quiet_signature_is_committed_only_after_successful_qr_paint():
     quiet_idx = screenshot_body.index(
         "local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature"
     )
-    matrix_idx = screenshot_body.index("local matrix = BuildQRMatrix(payload)")
+    matrix_idx = screenshot_body.index(
+        "local matrix = BuildQRMatrix(payload, canTryRosterUnavailableFallback)"
+    )
     callback_idx = screenshot_body.index("local function OnQRPaintComplete(paintOK)")
     lease_idx = screenshot_body.index(
         "local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()"
@@ -1194,6 +1204,29 @@ def test_quiet_full_party_signature_covers_companion_visible_roster_fields():
     for field in expected_fields:
         assert field in roster_body[quiet_idx:]
     assert roster_body.count("_GetRaiderIOMPlusSummary(") == 1
+
+
+def test_quiet_full_party_signature_covers_leader_keystone_block():
+    source = _lua_source()
+    payload_body = _slice_between(
+        source,
+        BUILD_PAYLOAD_ANCHOR,
+        "local function HashSnapshot(payload)",
+    )
+    leader_idx = payload_body.index("local leaderQuietOut = {}")
+    signature_idx = payload_body.index(
+        "local leaderQuietSignature = table.concat(leaderQuietOut)",
+        leader_idx,
+    )
+    quiet_idx = payload_body.index("local quietOut = {}", signature_idx)
+
+    assert "leaderKeystone.level" in payload_body[leader_idx:signature_idx]
+    assert "leaderKeystone.challengeMapID" in payload_body[leader_idx:signature_idx]
+    assert "leaderKeystone.playerName" in payload_body[leader_idx:signature_idx]
+    assert "table.insert(quietOut, _Uint16BE(#leaderQuietSignature))" in payload_body[
+        quiet_idx:
+    ]
+    assert "table.insert(quietOut, leaderQuietSignature)" in payload_body[quiet_idx:]
 
 
 def test_terminal_clear_is_only_passed_by_end_session():
@@ -1416,15 +1449,17 @@ def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
     )
     assert "local rosterOut, rosterCount = {}, 0" in payload_body
     assert "local rosterIncomplete = false" in payload_body
-    assert "if not terminalClear then" in payload_body
+    assert "if not terminalClear and not rosterUnavailable then" in payload_body
     roster_call_idx = payload_body.index("BuildRosterPayloadRows(")
-    terminal_guard_idx = payload_body.index("if not terminalClear then")
+    terminal_guard_idx = payload_body.index(
+        "if not terminalClear and not rosterUnavailable then"
+    )
     count_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
     assert terminal_guard_idx < roster_call_idx < count_idx
     assert "for _, chunk in ipairs(rosterOut) do" in payload_body
 
 
-def test_payload_v8_header_flags_distinguish_terminal_and_lfg_unavailable():
+def test_payload_v9_header_flags_distinguish_terminal_and_lfg_unavailable():
     source = _lua_source()
     payload_body = _slice_between(
         source,
@@ -1432,7 +1467,7 @@ def test_payload_v8_header_flags_distinguish_terminal_and_lfg_unavailable():
         "local function HashSnapshot(payload)",
     )
 
-    assert "string.char(0x08)" in payload_body
+    assert "string.char(0x09)" in payload_body
     assert "local headerFlags = 0" in payload_body
     assert "if terminalClear then" in payload_body
     assert "0x01" in payload_body
@@ -1440,6 +1475,57 @@ def test_payload_v8_header_flags_distinguish_terminal_and_lfg_unavailable():
     assert "0x02" in payload_body
     assert "table.insert(out, string.char(headerFlags))" in payload_body
     assert 'table.insert(out, "\\0")' in payload_body
+
+
+def test_payload_v9_can_omit_roster_with_explicit_flag():
+    source = _lua_source()
+    payload_body = _slice_between(
+        source,
+        BUILD_PAYLOAD_ANCHOR,
+        "local function HashSnapshot(payload)",
+    )
+
+    assert "string.char(0x09)" in payload_body
+    assert "rosterUnavailable" in payload_body
+    assert "if rosterUnavailable then" in payload_body
+    assert "headerFlags = headerFlags + 0x04" in payload_body
+    assert "if not terminalClear and not rosterUnavailable then" in payload_body
+    assert "entryCreationKeyState.lastPayloadRosterUnavailable = rosterUnavailable == true" in payload_body
+
+
+def test_qr_build_failure_falls_back_to_roster_unavailable_payload():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
+        "-- LFG entry creation",
+    )
+
+    fallback_gate_idx = screenshot_body.index("local canTryRosterUnavailableFallback =")
+    full_matrix_idx = screenshot_body.index(
+        "local matrix = BuildQRMatrix(payload, canTryRosterUnavailableFallback)",
+        fallback_gate_idx,
+    )
+    fallback_idx = screenshot_body.index(
+        "BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, true)",
+        full_matrix_idx,
+    )
+    fallback_hash_idx = screenshot_body.index(
+        "local fallbackHash = HashSnapshot(fallbackPayload)",
+        fallback_idx,
+    )
+    fallback_matrix_idx = screenshot_body.index(
+        "local fallbackMatrix = BuildQRMatrix(fallbackPayload)",
+        fallback_hash_idx,
+    )
+    failed_hash_idx = screenshot_body.index("lastSnapshotHash = h", fallback_matrix_idx)
+
+    assert fallback_gate_idx < full_matrix_idx < fallback_idx
+    assert full_matrix_idx < fallback_hash_idx < fallback_matrix_idx
+    assert fallback_matrix_idx < failed_hash_idx
+    assert "entryCreationKeyState.lastPayloadRosterCount > 0" in screenshot_body[
+        fallback_gate_idx:full_matrix_idx
+    ]
 
 
 def test_terminal_clear_payload_suppresses_leader_key_block():
@@ -2626,7 +2712,7 @@ def test_large_qr_payloads_try_hex_low_correction_before_raw_byte_mode():
     source = _lua_source()
     build_body = _slice_between(
         source,
-        "local function BuildQRMatrix(payload)",
+        "local function BuildQRMatrix(payload, suppressFailurePrint)",
         "-- State for trigger throttling + dedup",
     )
 

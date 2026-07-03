@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 0.5.0 - 03-Jul-2026 - Companion 0.9.0 APS1 v9 release train
+
+This paired addon + companion release advances QR transport to compact APS1 v9
+for large applicant bursts and ships ApplicantScout Companion `0.9.0` with
+Rotmire raid-detail support for Sporefall.
+
+### Added
+
+- Added an APS1 v9 roster-omitted fallback for very large applicant snapshots.
+  When the full applicant + Party payload is too dense to render safely, the
+  addon can still send the applicant update while telling the companion to keep
+  its current Party roster instead of clearing it.
+- Included leader-keystone context in the quiet full-Party dedupe signature so
+  heartbeat resends refresh when the host key changes.
+
+### Fixed
+
+- Heartbeat full-Party snapshots no longer get suppressed by the previous quiet
+  full-party dedupe marker after the normal snapshot hash is reset.
+- Large applicant bursts are less likely to leave the companion overlay showing
+  stale applicants when WoW hits the QR texture/render budget.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.9.0`.
+- Wire payloads advance to compact APS1 v9. Keep the addon and companion paired
+  for roster-omitted applicant snapshots.
+
 ## 0.4.11 - 30-Jun-2026 - Retail 12.1.0 compatibility metadata
 
 This addon-only patch adds Retail 12.1.0 compatibility metadata while keeping
