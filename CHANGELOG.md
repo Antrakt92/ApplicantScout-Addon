@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+## 0.5.1 - 08-Jul-2026 - Companion 0.9.1 token control and quieter QR transport
+
+This paired addon + companion patch keeps APS1 v9 wire payloads unchanged while
+reducing unnecessary QR flashes and making companion Warcraft Logs token use
+more user-controlled.
+
+### Changed
+
+- Removed stable 15-second QR heartbeat resends. The addon still polls state
+  and emits QR snapshots for real listing, applicant, roster, inspect, manual
+  sync, retry, and terminal-clear changes, but no longer shows QR just because
+  a stable session timer elapsed.
+- Companion `0.9.1` now loads raid boss-by-boss Warcraft Logs details only from
+  the row action instead of automatically spending tokens during hover, tab
+  changes, stale responses, or retry timers.
+- Companion `0.9.1` no longer blocks all WCL fetches from the local near-quota
+  soft guard. Real Warcraft Logs rate-limit responses still pause fetches
+  normally.
+
+### Fixed
+
+- Companion `0.9.1` counts manual raid boss-detail fetches in the footer while
+  quota data is pending.
+- Companion `0.9.1` clarifies role-filter copy around the default unfiltered
+  state.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.9.1`.
+- No QR wire-format change; wire payloads remain compact APS1 v9.
+
 ## 0.5.0 - 03-Jul-2026 - Companion 0.9.0 APS1 v9 release train
 
 This paired addon + companion release advances QR transport to compact APS1 v9
