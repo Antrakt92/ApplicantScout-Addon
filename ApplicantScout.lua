@@ -224,9 +224,7 @@ local entryCreationKeyState = {
     rosterChangePreflightDeadline = nil,
     rosterChangePreflightToken = 0,
     pendingTtl = 10,
-    TRANSPORT_HEARTBEAT_S = 15.0,
     APPLICANT_SNAPSHOT_MIN_SENDS = 2,
-    lastTransportHeartbeatAttemptTime = 0,
     lastApplicantSnapshotHash = nil,
     lastApplicantSnapshotSendCount = 0,
     groupTransportGen = 0,
@@ -4269,7 +4267,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
 
     local h = HashSnapshot(payload)
     -- WHY: companion cannot ACK successful decode. One malformed screenshot can
-    -- otherwise suppress a short-lived applicant snapshot until the heartbeat.
+    -- otherwise suppress a short-lived applicant snapshot until another event.
     local resendSameApplicantSnapshot =
         not force
         and h == lastSnapshotHash
@@ -4804,17 +4802,6 @@ C_Timer.NewTicker(0.25, function()
             lastTransportPollTime = now
             local entry = CheckSessionTransition(lfgReadsAllowed)
             if isSessionActive then
-                -- WHY: QR screenshots can be missed by the companion, and a
-                -- hash-identical active party/listing would otherwise never
-                -- resend until the next roster/applicant event.
-                if (now - entryCreationKeyState.lastTransportHeartbeatAttemptTime)
-                       >= entryCreationKeyState.TRANSPORT_HEARTBEAT_S
-                   and (lastShotTime <= 0
-                        or (now - lastShotTime) >= entryCreationKeyState.TRANSPORT_HEARTBEAT_S) then
-                    lastSnapshotHash = nil
-                    entryCreationKeyState.lastQuietFullPartySignature = nil
-                    entryCreationKeyState.lastTransportHeartbeatAttemptTime = now
-                end
                 local transportReady = lfgReadsAllowed or _HasGroupRosterForTransport() or isSessionActive
                 if transportReady then
                     MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)

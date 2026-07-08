@@ -628,7 +628,7 @@ def test_transport_poll_does_not_force_unchanged_snapshots():
     assert transition_idx < non_force_idx
 
 
-def test_transport_poll_heartbeats_active_state_without_force():
+def test_transport_poll_does_not_heartbeat_stable_snapshots():
     source = _lua_source()
     ticker_body = _slice_between(
         source,
@@ -636,32 +636,23 @@ def test_transport_poll_heartbeats_active_state_without_force():
         "-- Settings panel:",
     )
 
-    assert "TRANSPORT_HEARTBEAT_S = 15.0" in source
-    assert "lastTransportHeartbeatAttemptTime = 0" in source
-
     poll_idx = ticker_body.index("TRANSPORT_POLL_S")
     transition_idx = ticker_body.index("local entry = CheckSessionTransition(lfgReadsAllowed)", poll_idx)
     active_idx = ticker_body.index("if isSessionActive then", transition_idx)
-    heartbeat_idx = ticker_body.index("TRANSPORT_HEARTBEAT_S", active_idx)
-    hash_reset_idx = ticker_body.index("lastSnapshotHash = nil", heartbeat_idx)
-    quiet_reset_idx = ticker_body.index(
-        "entryCreationKeyState.lastQuietFullPartySignature = nil",
-        hash_reset_idx,
-    )
-    attempt_idx = ticker_body.index(
-        "entryCreationKeyState.lastTransportHeartbeatAttemptTime = now",
-        heartbeat_idx,
-    )
     screenshot_idx = ticker_body.index(
         "MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)",
         active_idx,
     )
+    stable_poll_block = ticker_body[active_idx:screenshot_idx]
 
-    assert active_idx < heartbeat_idx < hash_reset_idx < quiet_reset_idx < screenshot_idx
-    assert active_idx < heartbeat_idx < attempt_idx < screenshot_idx
+    assert "TRANSPORT_HEARTBEAT_S" not in source
+    assert "lastTransportHeartbeatAttemptTime" not in source
+    assert "lastSnapshotHash = nil" not in stable_poll_block
+    assert "entryCreationKeyState.lastQuietFullPartySignature = nil" not in stable_poll_block
+    assert active_idx < screenshot_idx
 
 
-def test_applicant_snapshots_get_short_redundant_resend_before_heartbeat():
+def test_applicant_snapshots_get_short_redundant_resend_without_periodic_heartbeat():
     source = _lua_source()
     state_body = _slice_between(
         source,
@@ -1578,7 +1569,7 @@ def test_lockdown_active_roster_snapshot_marks_lfg_unavailable_not_terminal():
     assert "BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)" in screenshot_body
 
 
-def test_solo_active_listing_heartbeat_runs_during_lockdown_without_lfg_reads():
+def test_solo_active_listing_poll_runs_during_lockdown_without_lfg_reads():
     source = _lua_source()
     ticker_body = _slice_between(
         source,
