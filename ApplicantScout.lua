@@ -101,9 +101,9 @@ local scanDirty = false
 -- prior 23400-tile pixel-marker design — UI hard-froze on Show). Row-based
 -- run-length encoding folds adjacent black modules into single rectangle
 -- textures. Large QR versions with high-entropy byte payloads can still reach
--- several thousand runs, so BuildQRMatrix rejects encode modes whose rendered
--- run count would exceed QR_TEXTURE_RENDER_BUDGET and falls through to lower-EC
--- or alternate-mode attempts instead of tripping WoW's script watchdog.
+-- several thousand runs. Matrix analysis and texture painting are therefore
+-- chunked across frames; BuildQRMatrix rejects only modes whose total pooled
+-- texture count would exceed QR_TEXTURE_RENDER_BUDGET.
 --
 -- WHY transient QR uses a settle lease, not alpha-flicker: Screenshot() in the
 -- After(0) callback empirically fired before SetAlpha(1) reached the GPU
@@ -3860,8 +3860,10 @@ local _qrencode = _addonNS.QR and _addonNS.QR.qrcode
 -- Returns the texture or nil if pool exhausted (caller logs warning).
 -- Pool grows as needed; never shrinks. Excess textures from prior larger QRs
 -- are hidden, not destroyed (cheap reuse on next render).
-entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET = 3500  -- script-watchdog budget; above this, skip/fallback
+entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET = 6000  -- total pooled textures; per-frame work is chunked below
 entryCreationKeyState.QR_TEXTURE_PAINT_CHUNK = 450     -- max texture ops per frame while painting one QR
+entryCreationKeyState.QR_RUN_SCAN_ROWS_PER_FRAME = 12 -- bound matrix analysis work per frame
+entryCreationKeyState.QR_FAILURE_NOTICE_COOLDOWN_S = 30 -- keep persistent failures out of chat spam
 local QR_TEXTURE_HARD_CAP = 10000                      -- safety against runaway texture creation
 entryCreationKeyState.QR_LARGE_PAYLOAD_BYTES = 512 -- prefer hex/L before raw byte mode for applicant bursts
 local function _AcquireQRTexture(x, y, w, h)
@@ -3886,74 +3888,72 @@ local function _AcquireQRTexture(x, y, w, h)
     return t
 end
 
-local function _CountQRBlackRuns(matrix, limit)
-    local runs = 0
-    for y = 1, #matrix do
-        local row = matrix[y]
-        local inRun = false
-        for x = 1, #row do
-            local isBlack = (row[x] or 0) > 0
-            if isBlack then
-                if not inRun then
-                    runs = runs + 1
-                    if limit and runs > limit then
-                        return runs
-                    end
-                    inRun = true
-                end
-            else
-                inRun = false
-            end
-        end
-    end
-    return runs
-end
-
-local function _BuildQRBlackRuns(matrix, quiet_offset)
+local function _BuildQRBlackRunsAsync(matrix, quiet_offset, limit, jobGen, onComplete)
     local runs = {}
-    for y = 1, #matrix do
-        local row = matrix[y]
-        local x_start = nil
-        for x = 1, #row do
-            local is_black = (row[x] or 0) > 0
-            if is_black then
-                if x_start == nil then x_start = x end
-            elseif x_start ~= nil then
-                local run_len = x - x_start
-                runs[#runs + 1] = {
-                    quiet_offset + (x_start - 1) * QR_MODULE_PX,
-                    quiet_offset + (y - 1) * QR_MODULE_PX,
-                    run_len * QR_MODULE_PX,
-                    QR_MODULE_PX,
-                }
-                x_start = nil
+    local nextRow = 1
+
+    local function AddRun(x_start, y, run_len)
+        runs[#runs + 1] = {
+            quiet_offset + (x_start - 1) * QR_MODULE_PX,
+            quiet_offset + (y - 1) * QR_MODULE_PX,
+            run_len * QR_MODULE_PX,
+            QR_MODULE_PX,
+        }
+        if limit and #runs > limit then
+            onComplete(nil, #runs)
+            return false
+        end
+        return true
+    end
+
+    local function ContinueBuild()
+        if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
+        local chunkEnd = math.min(
+            #matrix,
+            nextRow + entryCreationKeyState.QR_RUN_SCAN_ROWS_PER_FRAME - 1
+        )
+        for y = nextRow, chunkEnd do
+            local row = matrix[y]
+            local x_start = nil
+            for x = 1, #row do
+                local is_black = (row[x] or 0) > 0
+                if is_black then
+                    if x_start == nil then x_start = x end
+                elseif x_start ~= nil then
+                    local run_len = x - x_start
+                    if not AddRun(x_start, y, run_len) then return end
+                    x_start = nil
+                end
+            end
+            if x_start ~= nil then
+                local run_len = #row - x_start + 1
+                if not AddRun(x_start, y, run_len) then return end
             end
         end
-        if x_start ~= nil then
-            local run_len = #row - x_start + 1
-            runs[#runs + 1] = {
-                quiet_offset + (x_start - 1) * QR_MODULE_PX,
-                quiet_offset + (y - 1) * QR_MODULE_PX,
-                run_len * QR_MODULE_PX,
-                QR_MODULE_PX,
-            }
+        nextRow = chunkEnd + 1
+        if nextRow <= #matrix then
+            C_Timer.After(0, ContinueBuild)
+        else
+            onComplete(runs, #runs)
         end
     end
-    return runs
+
+    -- Always yield after QR encoding. Large Version 40 matrices have already
+    -- consumed most of the current script watchdog budget before this scan.
+    C_Timer.After(0, ContinueBuild)
 end
 
--- Paint a QR matrix (Lua table of tables, value > 0 = black, < 0 = white) into
--- the frame using row-based run-length encoding. For each row we walk left→right
--- and merge consecutive black modules into a single horizontal rectangle texture.
--- Typical QR has ~10-15 runs per row → ~10-15 textures × N rows; far below the
--- one-texture-per-module count which would crash WoW's renderer.
---
--- Texture creation/show calls are chunked across frames; otherwise a legal
--- 3k-run QR can still hitch the WoW UI for a visible moment on slower systems.
--- Returns true when a paint job was started, false on synchronous overflow.
-local function PaintQR(matrix, onComplete)
+if type(_G.ApplicantScoutFixtureHarness) == "table" then
+    _G.ApplicantScoutFixtureHarness.BuildQRBlackRunsAsync = _BuildQRBlackRunsAsync
+    _G.ApplicantScoutFixtureHarness.SetQRPaintJobGeneration = function(value)
+        entryCreationKeyState.qrPaintJobGen = value
+    end
+end
+
+-- Paint pre-built row runs into the frame. Matrix analysis and encode-mode
+-- fallback complete asynchronously before this function starts.
+local function PaintQR(matrix, runs, jobGen, onComplete)
     local rows = #matrix
-    local cols = #matrix[1]
     local total_modules = rows + 2 * QR_QUIET_ZONE   -- assume square QR
     local frame_px = total_modules * QR_MODULE_PX
 
@@ -3961,22 +3961,8 @@ local function PaintQR(matrix, onComplete)
     qrCurrentSize = frame_px
     _ApplyQRFramePosition()
 
-    local quiet_offset = QR_QUIET_ZONE * QR_MODULE_PX
-    local runs = _BuildQRBlackRuns(matrix, quiet_offset)
-
-    if #runs > entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then
-        if APSPrint then
-            APSPrint("WARN: QR render exceeded script-safe texture budget " ..
-                     entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET .. " — rendered QR is INCOMPLETE; companion will fail to decode")
-        end
-        return false
-    end
-
     local prev_used = qrTextureUsed
     qrTextureUsed = 0
-    local jobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
-    entryCreationKeyState.qrPaintJobGen = jobGen
-    entryCreationKeyState.qrPaintInProgress = true
     local runIndex = 1
 
     local function FinishPaint(success)
@@ -3989,7 +3975,7 @@ local function PaintQR(matrix, onComplete)
             if t then t:Hide() end
         end
         if not success and APSPrint then
-            APSPrint("WARN: QR render exceeded script-safe texture budget " ..
+            APSPrint("WARN: QR render exceeded pooled texture budget " ..
                      entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET .. " — rendered QR is INCOMPLETE; companion will fail to decode")
         end
         if onComplete then onComplete(success) end
@@ -4016,7 +4002,7 @@ local function PaintQR(matrix, onComplete)
         C_Timer.After(0, ContinuePaint)
     end
 
-    ContinuePaint()
+    C_Timer.After(0, ContinuePaint)
     return true
 end
 
@@ -4044,6 +4030,20 @@ local function _SetLastQREncodeDiag(mode, payload_bytes, err)
     lastQREncodeMode = mode
     lastQREncodeBytes = payload_bytes or 0
     lastQREncodeError = err
+    if not err then
+        entryCreationKeyState.lastQREncodeFailurePrintAt = nil
+    end
+end
+
+entryCreationKeyState.ShouldPrintQREncodeFailure = function()
+    local now = GetTime()
+    local lastPrintAt = entryCreationKeyState.lastQREncodeFailurePrintAt
+    if lastPrintAt
+       and now - lastPrintAt < entryCreationKeyState.QR_FAILURE_NOTICE_COOLDOWN_S then
+        return false
+    end
+    entryCreationKeyState.lastQREncodeFailurePrintAt = now
+    return true
 end
 
 -- Builds QR matrix from payload bytes via embedded lua-qrcode library. The
@@ -4065,71 +4065,119 @@ local function _TryQrEncode(data, ec_level)
     return result, nil
 end
 
-local function BuildQRMatrix(payload, suppressFailurePrint)
+local function BuildQRMatrix(
+    payload,
+    suppressFailurePrint,
+    preferRosterUnavailable,
+    jobGen,
+    onComplete
+)
     if not _qrencode then
         _SetLastQREncodeDiag("missing-lib", #payload, "QR library not loaded")
-        if APSPrint then
+        if APSPrint and entryCreationKeyState.ShouldPrintQREncodeFailure() then
             APSPrint("CRITICAL: QR library not loaded — check libs/qrencode.lua")
         end
-        return nil
-    end
-    local attempts = {
-    }
-    local hex = _HexEncode(payload)
-    if #payload > entryCreationKeyState.QR_LARGE_PAYLOAD_BYTES then
-        table.insert(attempts, { kind = "hex", data = hex, ec_level = 1, size = #hex, unit = "hex" })
-        table.insert(attempts, { kind = "raw", data = payload, ec_level = 1, size = #payload, unit = "bytes" })
-    else
-        table.insert(attempts, { kind = "hex", data = hex, ec_level = QR_EC_LEVEL, size = #hex, unit = "hex" })
-        table.insert(attempts, { kind = "raw", data = payload, ec_level = QR_EC_LEVEL, size = #payload, unit = "bytes" })
-        if QR_EC_LEVEL ~= 1 then
-            table.insert(attempts, { kind = "raw", data = payload, ec_level = 1, size = #payload, unit = "bytes" })
-            table.insert(attempts, { kind = "hex", data = hex, ec_level = 1, size = #hex, unit = "hex" })
-        end
+        onComplete(nil, nil)
+        return
     end
 
-    local first_label = nil
-    local first_size = 0
-    local first_unit = nil
-    local failure_parts = {}
-    for _, attempt in ipairs(attempts) do
-        local label = _QREncodeModeLabel(attempt.kind, attempt.ec_level)
-        if not first_label then
-            first_label = label
-            first_size = attempt.size
-            first_unit = attempt.unit
-        end
-        local matrix, err = _TryQrEncode(attempt.data, attempt.ec_level)
-        if matrix then
-            local renderRuns = _CountQRBlackRuns(matrix, entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET)
-            if renderRuns > entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then
-                failure_parts[#failure_parts + 1] = label .. ": render needs " ..
-                    renderRuns .. " textures > script-safe budget " .. entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET
-            else
-                _SetLastQREncodeDiag(label, #payload, nil)
-                if APSPrint and ApplicantScoutDB and ApplicantScoutDB.debug and label ~= first_label then
-                    APSPrint(string.format(
-                        "[APS-debug] QR fallback %s (%d %s) -> %s (%d bytes payload, %d textures)",
-                        first_label, first_size, first_unit, label, #payload, renderRuns))
-                end
-                return matrix
+    -- Start the encode ladder outside the 0.25s scan ticker callback. A Version
+    -- 40 encode can legitimately consume most of one watchdog slice by itself.
+    C_Timer.After(0, function()
+        if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
+        local attempts = {}
+        local hex = _HexEncode(payload)
+        if #payload > entryCreationKeyState.QR_LARGE_PAYLOAD_BYTES then
+            table.insert(attempts, { kind = "hex", data = hex, ec_level = 1, size = #hex, unit = "hex" })
+            -- Raw byte-mode can fit a smaller matrix but has corrupted large
+            -- APS1 payloads in live JPG captures. When this full snapshot has
+            -- both applicants and roster rows, return failure after hex so the
+            -- caller can build the reliable roster-unavailable hex payload.
+            -- Raw remains the final emergency path for that smaller fallback.
+            if not preferRosterUnavailable then
+                table.insert(attempts, { kind = "raw", data = payload, ec_level = 1, size = #payload, unit = "bytes" })
             end
         else
-            failure_parts[#failure_parts + 1] = label .. ": " .. tostring(err)
+            table.insert(attempts, { kind = "hex", data = hex, ec_level = QR_EC_LEVEL, size = #hex, unit = "hex" })
+            table.insert(attempts, { kind = "raw", data = payload, ec_level = QR_EC_LEVEL, size = #payload, unit = "bytes" })
+            if QR_EC_LEVEL ~= 1 then
+                table.insert(attempts, { kind = "raw", data = payload, ec_level = 1, size = #payload, unit = "bytes" })
+                table.insert(attempts, { kind = "hex", data = hex, ec_level = 1, size = #hex, unit = "hex" })
+            end
         end
-    end
 
-    -- All strategies failed. Caller (MaybeTriggerScreenshot) gets nil → skips
-    -- paint + screenshot for this snapshot. Next scan will rebuild a (hopefully
-    -- smaller) payload and retry. Logged once per failure (not per scan-tick —
-    -- caller dedupes via lastSnapshotHash unless force=true).
-    local err = table.concat(failure_parts, " | ")
-    _SetLastQREncodeDiag("failed", #payload, err)
-    if APSPrint and not suppressFailurePrint then
-        APSPrint("QR build failed (payload too large or too dense to render): "
-                 .. tostring(err) .. " — payload=" .. #payload .. " bytes")
-    end
-    return nil
+        local first_label = nil
+        local first_size = 0
+        local first_unit = nil
+        local failure_parts = {}
+        local attemptIndex = 1
+
+        local function FinishFailure()
+            local err = table.concat(failure_parts, " | ")
+            _SetLastQREncodeDiag("failed", #payload, err)
+            if APSPrint
+               and not suppressFailurePrint
+               and entryCreationKeyState.ShouldPrintQREncodeFailure() then
+                APSPrint("QR build failed (payload too large or too dense to render): "
+                         .. tostring(err) .. " — payload=" .. #payload .. " bytes")
+            end
+            onComplete(nil, nil)
+        end
+
+        local function TryNextAttempt()
+            if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
+            local attempt = attempts[attemptIndex]
+            attemptIndex = attemptIndex + 1
+            if not attempt then
+                FinishFailure()
+                return
+            end
+
+            local label = _QREncodeModeLabel(attempt.kind, attempt.ec_level)
+            if not first_label then
+                first_label = label
+                first_size = attempt.size
+                first_unit = attempt.unit
+            end
+            local matrix, err = _TryQrEncode(attempt.data, attempt.ec_level)
+            if not matrix then
+                failure_parts[#failure_parts + 1] = label .. ": " .. tostring(err)
+                C_Timer.After(0, TryNextAttempt)
+                return
+            end
+
+            _BuildQRBlackRunsAsync(
+                matrix,
+                QR_QUIET_ZONE * QR_MODULE_PX,
+                entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET,
+                jobGen,
+                function(runs, renderRuns)
+                    if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
+                    if not runs then
+                        failure_parts[#failure_parts + 1] = label .. ": render needs " ..
+                            renderRuns .. " textures > pooled budget " ..
+                            entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET
+                        C_Timer.After(0, TryNextAttempt)
+                        return
+                    end
+
+                    _SetLastQREncodeDiag(label, #payload, nil)
+                    if APSPrint and ApplicantScoutDB and ApplicantScoutDB.debug and label ~= first_label then
+                        APSPrint(string.format(
+                            "[APS-debug] QR fallback %s (%d %s) -> %s (%d bytes payload, %d textures)",
+                            first_label, first_size, first_unit, label, #payload, renderRuns))
+                    end
+                    onComplete(matrix, runs)
+                end
+            )
+        end
+
+        TryNextAttempt()
+    end)
+end
+
+if type(_G.ApplicantScoutFixtureHarness) == "table" then
+    _G.ApplicantScoutFixtureHarness.BuildQRMatrixAsync = BuildQRMatrix
 end
 
 -- State for trigger throttling + dedup
@@ -4304,7 +4352,8 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         entryCreationKeyState.lastQuietFullPartySignature = nil
     end
 
-    -- Encode payload as QR matrix, render via row-RLE.
+    -- Encode payload, analyze its row-RLE runs, then paint. The job generation
+    -- cancels stale callbacks while each heavy stage yields to a fresh frame.
     local canTryRosterUnavailableFallback =
        not force
        and not terminalClear
@@ -4312,37 +4361,17 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
        and not entryCreationKeyState.lastPayloadRosterUnavailable
        and entryCreationKeyState.lastPayloadApplicantCount > 0
        and entryCreationKeyState.lastPayloadRosterCount > 0
-    local matrix = BuildQRMatrix(payload, canTryRosterUnavailableFallback)
-    if not matrix and canTryRosterUnavailableFallback then
-        local fallbackPayload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, true)
-        local fallbackHash = HashSnapshot(fallbackPayload)
-        local fallbackMatrix = BuildQRMatrix(fallbackPayload)
-        if fallbackMatrix then
-            payload = fallbackPayload
-            matrix = fallbackMatrix
-            quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature
-            if ApplicantScoutDB and ApplicantScoutDB.debug then
-                print(string.format(
-                    "|cff999999[APS-debug]|r QR roster fallback full_hash=%x fallback_hash=%x",
-                    h, fallbackHash))
-            end
-        end
-    end
-    if not matrix then
-        -- Stamp the failed hash so identical-payload re-scans don't re-spam the
-        -- BuildQRMatrix error. Real data change → fresh hash → retry path opens.
-        -- WHY not stamping lastShotTime: we WANT next non-failing snapshot to
-        -- fire immediately when data changes, not wait out throttle.
-        lastSnapshotHash = h
-        pendingShotDirty = false
-        return
-    end
+    local jobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
+    entryCreationKeyState.qrPaintJobGen = jobGen
+    entryCreationKeyState.qrPaintInProgress = true
+    entryCreationKeyState.qrPaintDirtyDuringPaint = false
     -- WHY: terminal clears are delayed until the QR paints. If a new session
     -- starts before that callback, the stale clear must not wipe the companion
     -- state for the fresh listing.
     local terminalClearSessionGen = terminalClear and sessionGen or nil
 
     local function OnQRPaintComplete(paintOK)
+        if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
         local dirtyDuringPaint = entryCreationKeyState.qrPaintDirtyDuringPaint and not force
         entryCreationKeyState.qrPaintDirtyDuringPaint = false
         local dirtySincePaintStarted =
@@ -4430,12 +4459,52 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         end
     end
 
-    if not PaintQR(matrix, OnQRPaintComplete) then
-        -- Same retry-suppression rationale as above.
-        lastSnapshotHash = h
-        pendingShotDirty = false
-        return
+    local fallbackHash = nil
+    local fallbackInUse = false
+    local OnQRBuildComplete
+    OnQRBuildComplete = function(matrix, runs)
+        if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
+        if not matrix and canTryRosterUnavailableFallback then
+            canTryRosterUnavailableFallback = false
+            payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, true)
+            fallbackHash = HashSnapshot(payload)
+            fallbackInUse = true
+            quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature
+            BuildQRMatrix(payload, false, false, jobGen, OnQRBuildComplete)
+            return
+        end
+        if not matrix then
+            -- Stamp the failed hash so identical-payload re-scans don't re-spam
+            -- the failure. Preserve a change that arrived while this async job
+            -- was running so the ticker drains the newest state next.
+            local dirtySinceBuildStarted =
+                (entryCreationKeyState.qrPaintDirtyDuringPaint and not force)
+                or (entryCreationKeyState.transportDirtyGeneration or 0) ~= payloadDirtyGeneration
+            entryCreationKeyState.qrPaintInProgress = false
+            entryCreationKeyState.qrPaintDirtyDuringPaint = false
+            lastSnapshotHash = h
+            pendingShotDirty = dirtySinceBuildStarted and true or false
+            return
+        end
+        if fallbackInUse and ApplicantScoutDB and ApplicantScoutDB.debug then
+            print(string.format(
+                "|cff999999[APS-debug]|r QR roster fallback full_hash=%x fallback_hash=%x",
+                h, fallbackHash))
+        end
+        if not PaintQR(matrix, runs, jobGen, OnQRPaintComplete) then
+            entryCreationKeyState.qrPaintInProgress = false
+            lastSnapshotHash = h
+            pendingShotDirty = false
+        end
     end
+
+    BuildQRMatrix(
+        payload,
+        canTryRosterUnavailableFallback,
+        canTryRosterUnavailableFallback,
+        jobGen,
+        OnQRBuildComplete
+    )
 end
 
 -- ───────────────────────────────────────────────────────────

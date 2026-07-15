@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,14 @@ DEFAULT_COMPANION_ROOT = REPO_ROOT.parent / "ApplicantScout-Companion"
 LUA_FIXTURE_GENERATOR = REPO_ROOT / "tests" / "lua" / "generate_aps1_v8_fixture.lua"
 LUA_LIBKEYSTONE_DISABLED_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_libkeystone_disabled_transport.lua"
+)
+LUA_QR_RUN_CHUNKING_CHECK = REPO_ROOT / "tests" / "lua" / "check_qr_run_chunking.lua"
+LUA_LARGE_QR_BUDGET_CHECK = REPO_ROOT / "tests" / "lua" / "check_large_qr_budget.lua"
+LUA_LARGE_QR_ROSTER_FALLBACK_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_large_qr_prefers_roster_fallback.lua"
+)
+LUA_RAID19_APPLICANT_QR_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_raid19_applicant_qr.lua"
 )
 LUA_GOLDEN_CASES = (
     (None, "aps1_v8_lua_golden.hex"),
@@ -78,6 +87,33 @@ def _companion_payload_parser(pytestconfig):
     return _try_parse_appscout_payload
 
 
+def _companion_transport_constants(pytestconfig):
+    raw_companion_root = pytestconfig.getoption("--companion-root")
+    companion_root = Path(raw_companion_root) if raw_companion_root else DEFAULT_COMPANION_ROOT
+    assert companion_root.exists(), (
+        "ApplicantScout-Companion checkout is required for transport enum tests; "
+        "pass --companion-root <path> when using a non-sibling checkout"
+    )
+    companion_src = companion_root / "src"
+    if str(companion_src) not in sys.path:
+        sys.path.insert(0, str(companion_src))
+    from applicant_scout.constants import CLASS_ID_TO_NAME, ROLE_BYTE_TO_NAME
+
+    return CLASS_ID_TO_NAME, ROLE_BYTE_TO_NAME
+
+
+def _lua_transport_enum(table_name: str) -> dict[str, int]:
+    match = re.search(
+        rf"(?s)local {re.escape(table_name)}\s*=\s*\{{(?P<body>.*?)\}}",
+        _lua_source(),
+    )
+    assert match is not None, f"missing Lua transport enum: {table_name}"
+    return {
+        token: int(value)
+        for token, value in re.findall(r"([A-Z]+)\s*=\s*(\d+)", match.group("body"))
+    }
+
+
 def _slice_between(text: str, start: str, end: str) -> str:
     assert start not in STALE_FUNCTION_ANCHORS
     assert end not in STALE_FUNCTION_ANCHORS
@@ -121,15 +157,17 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
         "local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
     )
     hash_idx = body.index("local h = HashSnapshot(payload)")
-    matrix_idx = body.index(
-        "local matrix = BuildQRMatrix(payload, canTryRosterUnavailableFallback)"
-    )
+    job_idx = body.index("local jobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1")
     callback_idx = body.index("local function OnQRPaintComplete(paintOK)")
     lease_idx = body.index("local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()", callback_idx)
     screenshot_idx = body.index("        Screenshot()")
-    paint_idx = body.index("if not PaintQR(matrix, OnQRPaintComplete) then")
+    paint_idx = body.index("if not PaintQR(matrix, runs, jobGen, OnQRPaintComplete) then")
+    build_idx = body.index(
+        "BuildQRMatrix(\n        payload,\n        canTryRosterUnavailableFallback,"
+    )
 
-    assert payload_idx < hash_idx < matrix_idx < callback_idx < lease_idx < screenshot_idx < paint_idx
+    assert payload_idx < hash_idx < job_idx < callback_idx < lease_idx < screenshot_idx
+    assert screenshot_idx < paint_idx < build_idx
     assert "_ReleaseForceVisibleShotLease(forceVisibleShotGen)" in body[screenshot_idx:]
 
 
@@ -375,7 +413,9 @@ def test_qr_capture_waits_for_render_settle_after_every_paint():
 def test_qr_library_resolution_is_nil_safe_before_missing_lib_diagnostic():
     source = _lua_source()
     qr_init_idx = source.index("local _qrencode =")
-    build_idx = source.index("local function BuildQRMatrix(payload, suppressFailurePrint)")
+    build_idx = source.index(
+        "local function BuildQRMatrix("
+    )
     init_line = source[qr_init_idx : source.index("\n", qr_init_idx)]
 
     assert qr_init_idx < build_idx
@@ -605,7 +645,9 @@ def test_roster_composition_change_waits_for_inspect_until_fallback_deadline():
         callback_idx,
     )
     commit_idx = screenshot_body.index("lastSnapshotHash = h", clear_idx)
-    paint_idx = screenshot_body.index("if not PaintQR(matrix, OnQRPaintComplete) then")
+    paint_idx = screenshot_body.index(
+        "if not PaintQR(matrix, runs, jobGen, OnQRPaintComplete) then"
+    )
     assert callback_idx < clear_idx < commit_idx < paint_idx
 
 
@@ -1082,14 +1124,14 @@ def test_repeat_full_party_quiet_snapshot_is_suppressed_before_qr_paint():
         "local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature"
     )
     throttle_idx = screenshot_body.index("if not force and now - lastShotTime < SHOT_THROTTLE_S")
-    matrix_idx = screenshot_body.index(
-        "local matrix = BuildQRMatrix(payload, canTryRosterUnavailableFallback)"
+    job_idx = screenshot_body.index(
+        "local jobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1"
     )
     quiet_block = screenshot_body[
         quiet_idx : screenshot_body.index("\n    -- Encode payload", quiet_idx)
     ]
 
-    assert throttle_idx < payload_idx < hash_idx < quiet_idx < matrix_idx
+    assert throttle_idx < payload_idx < hash_idx < quiet_idx < job_idx
     assert "entryCreationKeyState.lastQuietFullPartySignature == quietSignature" in quiet_block
     assert "lastSnapshotHash = h" in quiet_block
     assert "pendingShotDirty = false" in quiet_block
@@ -1108,8 +1150,8 @@ def test_quiet_signature_is_committed_only_after_successful_qr_paint():
     quiet_idx = screenshot_body.index(
         "local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature"
     )
-    matrix_idx = screenshot_body.index(
-        "local matrix = BuildQRMatrix(payload, canTryRosterUnavailableFallback)"
+    job_idx = screenshot_body.index(
+        "local jobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1"
     )
     callback_idx = screenshot_body.index("local function OnQRPaintComplete(paintOK)")
     lease_idx = screenshot_body.index(
@@ -1127,10 +1169,12 @@ def test_quiet_signature_is_committed_only_after_successful_qr_paint():
         "entryCreationKeyState.lastQuietFullPartySignature = quietSignature",
         callback_idx,
     )
-    pre_paint_quiet_block = screenshot_body[quiet_idx:matrix_idx]
-    paint_idx = screenshot_body.index("if not PaintQR(matrix, OnQRPaintComplete) then")
+    pre_paint_quiet_block = screenshot_body[quiet_idx:job_idx]
+    paint_idx = screenshot_body.index(
+        "if not PaintQR(matrix, runs, jobGen, OnQRPaintComplete) then"
+    )
 
-    assert quiet_idx < matrix_idx < callback_idx < lease_idx
+    assert quiet_idx < job_idx < callback_idx < lease_idx
     assert lease_idx < completed_gen_idx < guard_idx < commit_idx < paint_idx
     assert "entryCreationKeyState.lastQuietFullPartySignature == quietSignature" in (
         pre_paint_quiet_block
@@ -1494,25 +1538,25 @@ def test_qr_build_failure_falls_back_to_roster_unavailable_payload():
 
     fallback_gate_idx = screenshot_body.index("local canTryRosterUnavailableFallback =")
     full_matrix_idx = screenshot_body.index(
-        "local matrix = BuildQRMatrix(payload, canTryRosterUnavailableFallback)",
+        "BuildQRMatrix(\n        payload,\n        canTryRosterUnavailableFallback,",
         fallback_gate_idx,
     )
     fallback_idx = screenshot_body.index(
         "BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, true)",
-        full_matrix_idx,
+        fallback_gate_idx,
     )
     fallback_hash_idx = screenshot_body.index(
-        "local fallbackHash = HashSnapshot(fallbackPayload)",
+        "fallbackHash = HashSnapshot(payload)",
         fallback_idx,
     )
     fallback_matrix_idx = screenshot_body.index(
-        "local fallbackMatrix = BuildQRMatrix(fallbackPayload)",
+        "BuildQRMatrix(payload, false, false, jobGen, OnQRBuildComplete)",
         fallback_hash_idx,
     )
     failed_hash_idx = screenshot_body.index("lastSnapshotHash = h", fallback_matrix_idx)
 
-    assert fallback_gate_idx < full_matrix_idx < fallback_idx
-    assert full_matrix_idx < fallback_hash_idx < fallback_matrix_idx
+    assert fallback_gate_idx < fallback_idx < fallback_hash_idx < fallback_matrix_idx
+    assert fallback_matrix_idx < full_matrix_idx
     assert fallback_matrix_idx < failed_hash_idx
     assert "entryCreationKeyState.lastPayloadRosterCount > 0" in screenshot_body[
         fallback_gate_idx:full_matrix_idx
@@ -2494,7 +2538,9 @@ def test_successful_snapshot_commits_emitted_applicant_count_for_clear_priority(
         commit_idx,
     )
     shot_idx = screenshot_body.index("lastShotTime = GetTime()", commit_idx)
-    paint_idx = screenshot_body.index("if not PaintQR(matrix, OnQRPaintComplete) then")
+    paint_idx = screenshot_body.index(
+        "if not PaintQR(matrix, runs, jobGen, OnQRPaintComplete) then"
+    )
 
     assert emit_count_idx < payload_count_idx
     assert callback_idx < commit_idx < committed_value_idx < shot_idx < paint_idx
@@ -2677,33 +2723,56 @@ def test_qr_render_uses_script_safe_budget_before_texture_hard_cap():
         "-- State for trigger throttling + dedup",
     )
 
-    budget_idx = qr_body.index("entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET = 3500")
+    budget_idx = qr_body.index("entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET = 6000")
     chunk_idx = qr_body.index("entryCreationKeyState.QR_TEXTURE_PAINT_CHUNK = 450")
+    scan_chunk_idx = qr_body.index("entryCreationKeyState.QR_RUN_SCAN_ROWS_PER_FRAME = 12")
     hard_cap_idx = qr_body.index("local QR_TEXTURE_HARD_CAP = 10000")
-    count_idx = qr_body.index(
-        "_CountQRBlackRuns(matrix, entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET)"
-    )
+    async_builder_idx = qr_body.index("local function _BuildQRBlackRunsAsync(")
+    scan_timer_idx = qr_body.index("C_Timer.After(0, ContinueBuild)", async_builder_idx)
+    build_call_idx = qr_body.index("_BuildQRBlackRunsAsync(\n                matrix,")
     paint_budget_idx = qr_body.index(
         "if qrTextureUsed >= entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then"
     )
-    runs_idx = qr_body.index("local runs = _BuildQRBlackRuns(matrix, quiet_offset)")
-    sync_budget_idx = qr_body.index(
-        "if #runs > entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then"
-    )
     finish_failure_idx = qr_body.index("FinishPaint(false)", paint_budget_idx)
 
-    assert budget_idx < chunk_idx < hard_cap_idx
-    assert count_idx < qr_body.index("return matrix")
-    assert runs_idx < sync_budget_idx < qr_body.index("entryCreationKeyState.qrPaintInProgress = true")
+    assert budget_idx < chunk_idx < scan_chunk_idx < hard_cap_idx
+    assert async_builder_idx < scan_timer_idx < build_call_idx
+    assert "_CountQRBlackRuns" not in qr_body
+    assert "if limit and #runs > limit then" in qr_body
     assert paint_budget_idx < finish_failure_idx
     assert "C_Timer.After(0, ContinuePaint)" in qr_body
+
+
+def test_large_qr_run_analysis_is_chunked_in_lua51(pytestconfig):
+    assert _run_lua_script(pytestconfig, LUA_QR_RUN_CHUNKING_CHECK).strip() == (
+        "ok qr-run-chunking"
+    )
+
+
+def test_large_qr_budget_accepts_observed_applicant_payload_size(pytestconfig):
+    assert _run_lua_script(pytestconfig, LUA_LARGE_QR_BUDGET_CHECK).strip() == (
+        "ok large-qr-budget"
+    )
+
+
+def test_raid19_with_applicant_keeps_full_roster_inside_qr_budget(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_RAID19_APPLICANT_QR_CHECK).strip()
+
+    assert output.startswith("ok raid19-applicant-qr payload=")
+
+
+def test_large_qr_prefers_reliable_roster_fallback_before_raw(pytestconfig):
+    assert _run_lua_script(
+        pytestconfig,
+        LUA_LARGE_QR_ROSTER_FALLBACK_CHECK,
+    ).strip() == "ok large-qr-prefers-roster-fallback"
 
 
 def test_large_qr_payloads_try_hex_low_correction_before_raw_byte_mode():
     source = _lua_source()
     build_body = _slice_between(
         source,
-        "local function BuildQRMatrix(payload, suppressFailurePrint)",
+        "local function BuildQRMatrix(",
         "-- State for trigger throttling + dedup",
     )
 
@@ -2722,6 +2791,8 @@ def test_large_qr_payloads_try_hex_low_correction_before_raw_byte_mode():
     )
 
     assert hex_idx < threshold_idx < hex_l_idx < raw_l_idx
+    prefer_idx = build_body.index("if not preferRosterUnavailable then", hex_l_idx)
+    assert hex_l_idx < prefer_idx < raw_l_idx
 
 
 def test_terminal_clear_force_path_bypasses_roster_inspect_batch_gate():
@@ -2839,6 +2910,7 @@ def test_lua_producer_generates_committed_aps1_v8_golden_fixture(
     assert generated == expected
 
 
+@pytest.mark.requires_companion
 def test_lua_producer_omits_fallback_placeholder_roster_identity(pytestconfig):
     generated = "".join(
         _run_lua_fixture(pytestconfig, "placeholder-roster").split()
@@ -2848,8 +2920,36 @@ def test_lua_producer_omits_fallback_placeholder_roster_identity(pytestconfig):
     assert b"Unknown-Realm" not in payload
     assert b"Host-Realm" in payload
     assert b"Healer-Realm" in payload
+    parse_payload = _companion_payload_parser(pytestconfig)
+    snapshot, error = parse_payload(payload)
+
+    assert error is None
+    assert snapshot is not None
+    assert [member.name for member in snapshot.roster] == [
+        "Host-Realm",
+        "Healer-Realm",
+        "Feral-Realm",
+        "Ret-Realm",
+    ]
 
 
+@pytest.mark.requires_companion
+def test_lua_producer_emits_raid19_and_applicant_in_same_snapshot(pytestconfig):
+    generated = "".join(
+        _run_lua_fixture(pytestconfig, "raid19-applicant").split()
+    )
+    payload = bytes.fromhex(generated)
+    parse_payload = _companion_payload_parser(pytestconfig)
+    snapshot, error = parse_payload(payload)
+
+    assert error is None
+    assert snapshot is not None
+    assert not snapshot.roster_unavailable
+    assert len(snapshot.roster) == 19
+    assert [applicant.name for applicant in snapshot.applicants] == ["Tankone-Realm"]
+
+
+@pytest.mark.requires_companion
 def test_lua_producer_omits_placeholder_applicant_member_but_keeps_valid_group_member(pytestconfig):
     generated = "".join(
         _run_lua_fixture(pytestconfig, "placeholder-applicant").split()
@@ -2858,6 +2958,30 @@ def test_lua_producer_omits_placeholder_applicant_member_but_keeps_valid_group_m
 
     assert b"Unknown-Realm" not in payload
     assert b"Mageone-Realm" in payload
+    parse_payload = _companion_payload_parser(pytestconfig)
+    snapshot, error = parse_payload(payload)
+
+    assert error is None
+    assert snapshot is not None
+    assert [applicant.name for applicant in snapshot.applicants] == ["Mageone-Realm"]
+
+
+@pytest.mark.requires_companion
+def test_lua_transport_class_and_role_enums_match_companion(pytestconfig):
+    class_id_to_name, role_byte_to_name = _companion_transport_constants(pytestconfig)
+    lua_classes = _lua_transport_enum("CLASS_NAME_TO_ID")
+    lua_roles = _lua_transport_enum("ROLE_NAME_TO_BYTE")
+
+    assert {class_id: token for token, class_id in lua_classes.items()} == {
+        class_id: token
+        for class_id, token in class_id_to_name.items()
+        if class_id > 0
+    }
+    assert {role_byte: token for token, role_byte in lua_roles.items()} == {
+        role_byte: token
+        for role_byte, token in role_byte_to_name.items()
+        if role_byte in {0, 1, 2}
+    }
 
 
 def test_lua_producer_uses_clean_applicant_id_from_secret_token(pytestconfig):

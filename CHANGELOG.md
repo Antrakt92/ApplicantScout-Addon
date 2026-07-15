@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+## 0.5.2 - 15-Jul-2026 - Companion 0.9.2 large-raid transport recovery
+
+This paired addon + companion patch keeps APS1 v9 unchanged while making dense
+raid-and-applicant screenshots reliable and making partial Party state explicit.
+
+### Fixed
+
+- Large QR encoding, row analysis, and texture painting now yield across frames,
+  preventing WoW's script watchdog from aborting dense applicant snapshots.
+- Full snapshots with a 19-player raid and an active applicant now fit the
+  script-safe texture budget instead of leaving the companion on an older Party
+  roster or applicant list.
+- Dense full snapshots prefer the reliable roster-omitted hex fallback before
+  raw byte mode, avoiding the corrupt raw APS1 decodes observed in live JPG
+  screenshots.
+- Repeated QR-build failures no longer flood chat every scan tick.
+
+### Changed
+
+- Companion `0.9.2` marks a roster-omitted snapshot as `Party (count?)` and
+  `shot partial`, so the last known Party count is not presented as fresh data.
+- Companion `0.9.2` keeps Sporefall progress on Rotmire instead of shifting it
+  onto Imperator Averzian when local RaiderIO stores multiple current raids.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.9.2`.
+- No QR wire-format change; wire payloads remain compact APS1 v9.
+
 ## 0.5.1 - 08-Jul-2026 - Companion 0.9.1 token control and quieter QR transport
 
 This paired addon + companion patch keeps APS1 v9 wire payloads unchanged while

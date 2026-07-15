@@ -241,6 +241,36 @@ local env = {
     secret_applicant_token = nil,
 }
 
+env.install_raid_roster = function(count)
+    local archetypes = {
+        { class = "WARRIOR", classID = 1, specID = 73, role = "TANK" },
+        { class = "PALADIN", classID = 2, specID = 66, role = "TANK" },
+        { class = "PRIEST", classID = 5, specID = 256, role = "HEALER" },
+        { class = "SHAMAN", classID = 7, specID = 264, role = "HEALER" },
+        { class = "MONK", classID = 10, specID = 270, role = "HEALER" },
+        { class = "MAGE", classID = 8, specID = 63, role = "DAMAGER" },
+    }
+    for index = 1, count do
+        local archetype = archetypes[index] or archetypes[6]
+        unit_data["raid" .. index] = {
+            name = string.format("Raidmember%02d", index),
+            realm = "DefiasBrotherhood",
+            guid = "Raid-" .. index,
+            class = archetype.class,
+            classID = archetype.classID,
+            specID = archetype.specID,
+            role = archetype.role,
+        }
+    end
+    GetNumGroupMembers = function() return count end
+    IsInRaid = function() return true end
+    GetRaidRosterInfo = function(index)
+        local data = unit_data["raid" .. index]
+        if not data then return nil end
+        return data.name .. "-" .. data.realm, 0, math.floor((index - 1) / 5) + 1
+    end
+end
+
 local function is_fixture_applicant_id(id)
     return id == 42 or (env.secret_applicant_token ~= nil and id == env.secret_applicant_token)
 end
@@ -277,11 +307,20 @@ C_LFGList = {
     end,
 }
 
-env.load_addon = function()
+env.install_single_applicant = function()
+    local originalGetApplicantInfo = C_LFGList.GetApplicantInfo
+    C_LFGList.GetApplicantInfo = function(id)
+        local info = originalGetApplicantInfo(id)
+        if info then info.numMembers = 1 end
+        return info
+    end
+end
+
+env.load_addon = function(qr)
     ApplicantScoutFixtureHarness = {}
     local chunk = assert(loadfile("ApplicantScout.lua"))
     chunk("ApplicantScout", {
-        QR = {},
+        QR = qr or {},
         ApplicantScoutFixtureHarness = ApplicantScoutFixtureHarness,
     })
     return ApplicantScoutFixtureHarness

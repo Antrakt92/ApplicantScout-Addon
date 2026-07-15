@@ -5,7 +5,8 @@ if fixture_mode ~= "" and fixture_mode ~= "leader-key"
    and fixture_mode ~= "secret-applicant-token"
    and fixture_mode ~= "secret-unit-apis"
    and fixture_mode ~= "secret-leader-owned-key"
-   and fixture_mode ~= "secret-leader-keystone" then
+   and fixture_mode ~= "secret-leader-keystone"
+   and fixture_mode ~= "raid19-applicant" then
     error("unsupported fixture mode: " .. tostring(fixture_mode))
 end
 
@@ -15,6 +16,11 @@ local secretBool = nil
 local secretGUID = nil
 local secretApplicantToken = nil
 local originalIsSecretValue = issecretvalue
+
+if fixture_mode == "raid19-applicant" then
+    env.install_raid_roster(19)
+    env.install_single_applicant()
+end
 
 local function InstallSecretFixtures()
     if secretBool then return secretBool, secretGUID end

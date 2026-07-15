@@ -112,6 +112,26 @@ def _lua_print_help_command_lines(source: str) -> list[str]:
     return [line.rstrip() for line in lines]
 
 
+def _help_command_roots(lines: list[str]) -> set[str]:
+    roots = {line.split()[1] for line in lines}
+    if any(line.startswith("/apscout on | off") for line in lines):
+        roots.add("off")
+    return roots
+
+
+def _handler_command_roots(source: str) -> set[str]:
+    match = re.search(
+        r"(?ms)^SlashCmdList\.APSCOUT = function\(msg\)\r?\n(?P<body>.*?)(?=^end\r?$)",
+        source,
+    )
+    assert match is not None, "Missing SlashCmdList.APSCOUT handler"
+    commands = re.findall(
+        r'(?:msg|command)\s*==\s*"(?P<command>[^"]+)"',
+        match.group("body"),
+    )
+    return {command.split()[0] for command in commands}
+
+
 def _markdown_section(markdown: str, heading: str) -> str:
     match = re.search(
         rf"(?ms)^##\s+{re.escape(heading)}\s*\r?\n(?P<body>.*?)(?=^##\s+|\Z)",
@@ -1132,3 +1152,13 @@ def test_readme_slash_command_blocks_match_lua_help_and_companion_readme(
         companion_readme.read_text(encoding="utf-8"),
         "In-Game Commands",
     ) == expected_lines
+
+
+def test_public_slash_help_and_handler_branches_are_symmetric():
+    source = _read_repo_text("ApplicantScout.lua")
+    help_roots = _help_command_roots(_lua_print_help_command_lines(source))
+    handler_roots = _handler_command_roots(source)
+    hidden_aliases = {"settings", "nocompetitive", "nodebug"}
+
+    assert hidden_aliases <= handler_roots
+    assert handler_roots - hidden_aliases == help_roots
