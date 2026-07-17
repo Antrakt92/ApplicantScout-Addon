@@ -145,8 +145,42 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: .\scripts\check-release-version.ps1 -Tag $env:GITHUB_REF_NAME -RequirePublishedPairedCompanionAssets -PublishedReleaseWaitSeconds 180
 
+  marketplace-package:
+    if: ${{ github.event.created == true && github.event.forced == false && github.event.deleted == false }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.marketplace-identity.outputs.commit }}
+    steps:
+      - name: Checkout addon for exact-tag marketplace package
+        # actions/checkout v6 pinned to the upstream tag commit.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Record exact marketplace package commit
+        id: marketplace-identity
+        run: |
+          commit=$(git rev-parse HEAD)
+          if ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || [ "$commit" != "$GITHUB_SHA" ]; then
+            echo "::error::Marketplace dry run checkout $commit does not match tag event SHA $GITHUB_SHA."
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: Build exact-tag marketplace package without uploading
+        # BigWigsMods/packager v2 pinned to the same commit as the upload step.
+        uses: BigWigsMods/packager@6d50adb6e8517eefef63f4afb16a6518166a6b28
+        with:
+          args: -d
+          pandoc: false
+
+      - name: Validate exact-tag marketplace archive contract
+        run: python3 scripts/check_addon_archive.py --release-dir .release
+
   release:
-    needs: preflight
+    needs: [preflight, marketplace-package]
     if: ${{ github.event.created == true && github.event.forced == false && github.event.deleted == false }}
     runs-on: ubuntu-latest
     permissions:
@@ -162,6 +196,11 @@ jobs:
         run: |
           git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
           release_commit=$(git rev-parse HEAD)
+          marketplace_commit="${{ needs.marketplace-package.outputs.commit }}"
+          if ! [[ "$marketplace_commit" =~ ^[0-9a-f]{40}$ ]] || [ "$release_commit" != "$marketplace_commit" ]; then
+            echo "::error::Release checkout $release_commit does not match the verified marketplace dry run $marketplace_commit."
+            exit 1
+          fi
           main_commit=$(git rev-parse refs/remotes/origin/main)
           set +e
           git merge-base --is-ancestor "$release_commit" "$main_commit"
@@ -199,6 +238,8 @@ jobs:
       - name: Package and release
         # BigWigsMods/packager v2 pinned to the peeled commit from the upstream tag.
         uses: BigWigsMods/packager@6d50adb6e8517eefef63f4afb16a6518166a6b28
+        with:
+          pandoc: false
         env:
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
           WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}

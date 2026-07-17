@@ -312,7 +312,10 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     assert "APPLICANT_SCOUT_VISUAL_BASELINE" not in workflow
     assert re.search(r"(?m)^    runs-on: windows-2022\s*$", preflight)
     assert re.search(r"(?m)^    permissions:\n      contents: read\s*$", preflight)
-    assert re.search(r"(?m)^    needs: preflight\s*$", release)
+    assert re.search(
+        r"(?m)^    needs: \[preflight, marketplace-package\]\s*$",
+        release,
+    )
     assert re.search(r"(?m)^    runs-on: ubuntu-latest\s*$", release)
     assert re.search(r"(?m)^    permissions:\n      contents: write\s*$", release)
 
@@ -371,6 +374,70 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     assert "GITHUB_OAUTH" not in preflight
     assert "uses: BigWigsMods/packager@" not in preflight
     assert "uses: BigWigsMods/packager@" in release
+
+
+def test_release_requires_verified_exact_tag_marketplace_package_before_upload():
+    workflow = _workflow_source()
+    marketplace = _job_block(workflow, "marketplace-package")
+    release = _job_block(workflow, "release")
+
+    assert "needs: [preflight, marketplace-package]" in release
+    assert re.search(r"(?m)^    permissions:\n      contents: read\s*$", marketplace)
+    assert "commit: ${{ steps.marketplace-identity.outputs.commit }}" in marketplace
+    checkout = _step_block(
+        marketplace,
+        "Checkout addon for exact-tag marketplace package",
+    )
+    identity = _step_block(marketplace, "Record exact marketplace package commit")
+    dry_run = _step_block(
+        marketplace,
+        "Build exact-tag marketplace package without uploading",
+    )
+    archive_check = _step_block(
+        marketplace,
+        "Validate exact-tag marketplace archive contract",
+    )
+    upload = _step_block(release, "Package and release")
+    release_identity = _step_block(
+        release,
+        "Verify release tag is reachable from origin/main",
+    )
+
+    assert "fetch-depth: 0" in checkout
+    assert "git rev-parse HEAD" in identity
+    assert '"$commit" != "$GITHUB_SHA"' in identity
+    assert 'echo "commit=$commit" >> "$GITHUB_OUTPUT"' in identity
+    assert (
+        "uses: BigWigsMods/packager@6d50adb6e8517eefef63f4afb16a6518166a6b28"
+        in dry_run
+    )
+    assert "args: -d" in dry_run
+    assert "pandoc: false" in dry_run
+    assert "python3 scripts/check_addon_archive.py --release-dir .release" in (
+        archive_check
+    )
+    assert "secrets." not in marketplace
+    assert "CF_API_KEY" not in marketplace
+    assert "WAGO_API_TOKEN" not in marketplace
+    assert 'marketplace_commit="${{ needs.marketplace-package.outputs.commit }}"' in (
+        release_identity
+    )
+    assert '"$release_commit" != "$marketplace_commit"' in release_identity
+    assert "CF_API_KEY: ${{ secrets.CF_API_KEY }}" in upload
+    assert "WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}" in upload
+    assert "pandoc: false" in upload
+    _assert_order(
+        marketplace,
+        "Record exact marketplace package commit",
+        "Build exact-tag marketplace package without uploading",
+        "Validate exact-tag marketplace archive contract",
+    )
+    _assert_order(
+        release,
+        "Verify release tag is reachable from origin/main",
+        "Refuse existing release",
+        "Package and release",
+    )
 
 
 def test_release_preflight_requires_tag_commit_reachable_from_origin_main():
@@ -960,9 +1027,9 @@ def test_release_workflow_pins_external_actions_to_commit_shas():
 
     assert Counter(action for action, _ in action_refs) == Counter(
         {
-            "actions/checkout": 4,
+            "actions/checkout": 5,
             "actions/setup-python": 2,
-            "BigWigsMods/packager": 1,
+            "BigWigsMods/packager": 2,
         }
     )
     for action, ref in action_refs:
