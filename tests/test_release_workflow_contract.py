@@ -8,6 +8,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from scripts.check_addon_archive import (
+    FORBIDDEN_NAMES,
+    FORBIDDEN_PARTS,
+    REQUIRED_ENTRIES,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _ACTION_USES_RE = re.compile(r"(?m)^\s*uses:\s*([^\s#]+)\s*(?:#.*)?$")
@@ -18,6 +24,13 @@ _CHOCO_INSTALL_LINE_RE = re.compile(
 _RELEASE_TOOL_PACKAGES = {
     "lua51": "5.1.5",
 }
+_SHARED_RELEASE_POLICY_FUNCTIONS = (
+    "Assert-PublicInstallLinksUseLatest",
+    "Compare-SemVer",
+)
+_SHARED_RELEASE_POLICY_ARRAYS = (
+    "ProtectedCompanionAssetPatterns",
+)
 
 
 def _current_addon_version() -> str:
@@ -76,6 +89,27 @@ def _workflow_source() -> str:
 
 def _read_repo_text(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def _powershell_function_block(source: str, name: str) -> str:
+    match = re.search(
+        rf"(?ms)^function\s+{re.escape(name)}\s*\{{.*?^\}}",
+        source,
+    )
+    assert match is not None, f"Missing PowerShell function: {name}"
+    return match.group(0).strip()
+
+
+def _powershell_array_block(source: str, name: str) -> str:
+    match = re.search(
+        rf"(?ms)^\s*\${re.escape(name)}\s*=\s*@\(.*?^\s*\)",
+        source,
+    )
+    assert match is not None, f"Missing PowerShell array: ${name}"
+    assignment = match.group(0)
+    return "\n".join(
+        line.strip() for line in assignment[assignment.index("@(") :].splitlines()
+    )
 
 
 def _job_block(workflow: str, job_name: str) -> str:
@@ -414,6 +448,24 @@ def test_release_job_keeps_marketplace_publish_checkout_at_repo_root():
     assert "uses: BigWigsMods/packager@" in release
 
 
+def test_curseforge_verifier_is_separate_read_only_post_release_job():
+    workflow = _workflow_source()
+    release = _job_block(workflow, "release")
+    verifier = _job_block(workflow, "verify-curseforge")
+    verify_step = _step_block(
+        verifier, "Verify CurseForge public release propagation"
+    )
+
+    assert "needs: release" in verifier
+    assert "contents: read" in verifier
+    assert "secrets." not in verifier
+    assert "BigWigsMods/packager@" in release
+    assert "BigWigsMods/packager@" not in verifier
+    assert "scripts/verify_curseforge_release.py" in verify_step
+    assert "--project-id 1541576" in verify_step
+    assert "--wait-seconds 900" in verify_step
+
+
 def test_release_version_script_outputs_paired_companion_ref(tmp_path: Path):
     output_path = tmp_path / "github-output.txt"
 
@@ -571,6 +623,30 @@ def test_release_version_script_does_not_invoke_companion_release_script():
 
     assert "ApplicantScout-Companion\\scripts\\check-release-version.ps1" not in script
     assert "ApplicantScout-Companion/scripts/check-release-version.ps1" not in script
+
+
+def test_shared_paired_release_policy_stays_in_sync(pytestconfig):
+    companion_root = pytestconfig.getoption("--companion-root")
+    if not companion_root:
+        pytest.skip("--companion-root is required for release-policy parity")
+
+    addon_source = _read_repo_text("scripts/check-release-version.ps1")
+    companion_script = Path(companion_root) / "scripts" / "check-release-version.ps1"
+    assert companion_script.is_file(), (
+        f"Missing paired companion release policy: {companion_script}"
+    )
+    companion_source = companion_script.read_text(encoding="utf-8")
+
+    for name in _SHARED_RELEASE_POLICY_FUNCTIONS:
+        assert _powershell_function_block(
+            addon_source, name
+        ) == _powershell_function_block(companion_source, name), (
+            f"Shared release-policy function drifted: {name}"
+        )
+    for name in _SHARED_RELEASE_POLICY_ARRAYS:
+        assert _powershell_array_block(addon_source, name) == _powershell_array_block(
+            companion_source, name
+        ), f"Shared release-policy array drifted: ${name}"
 
 
 def test_release_version_check_accepts_published_paired_companion_assets(
@@ -814,8 +890,8 @@ def test_release_workflow_pins_external_actions_to_commit_shas():
 
     assert Counter(action for action, _ in action_refs) == Counter(
         {
-            "actions/checkout": 3,
-            "actions/setup-python": 1,
+            "actions/checkout": 4,
+            "actions/setup-python": 2,
             "BigWigsMods/packager": 1,
         }
     )
@@ -826,9 +902,12 @@ def test_release_workflow_pins_external_actions_to_commit_shas():
 def test_check_workflow_runs_non_release_preflight_without_publishing():
     workflow = _read_repo_text(".github/workflows/check.yml")
     job = _job_block(workflow, "check")
+    marketplace_job = _job_block(workflow, "marketplace-package")
 
     assert "push:" in workflow
     assert "pull_request:" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "paired_companion_ref:" in workflow
     assert "tags:" not in workflow
     assert re.search(r"(?m)^    runs-on: windows-2022\s*$", job)
     assert "contents: read" in workflow
@@ -836,6 +915,12 @@ def test_check_workflow_runs_non_release_preflight_without_publishing():
     assert "APPLICANT_SCOUT_VISUAL_BASELINE" not in workflow
     assert "python-version: '3.13'" in workflow
     assert "repository: Antrakt92/ApplicantScout-Companion" in workflow
+    companion_checkout = _step_block(job, "Checkout companion")
+    assert "ref: ${{ github.event.inputs.paired_companion_ref || 'main' }}" in (
+        companion_checkout
+    )
+    assert "default: main" in workflow
+    assert "type: string" in workflow
     assert "path: ApplicantScout-Addon" in workflow
     assert "path: ApplicantScout-Companion" in workflow
     assert "python -m pip install pytest" not in workflow
@@ -855,10 +940,38 @@ def test_check_workflow_runs_non_release_preflight_without_publishing():
         "Check companion and addon contracts",
         "Development package smoke",
     )
-    assert "BigWigsMods/packager" not in workflow
+    assert "BigWigsMods/packager" not in job
     assert "CF_API_KEY" not in workflow
     assert "WAGO_API_TOKEN" not in workflow
     assert "gh release" not in workflow
+
+    dry_run = _step_block(marketplace_job, "Build marketplace package without uploading")
+    assert "uses: BigWigsMods/packager@6d50adb6e8517eefef63f4afb16a6518166a6b28" in dry_run
+    assert "args: -d" in dry_run
+    assert "pandoc: false" in dry_run
+    archive_check = _step_block(marketplace_job, "Validate marketplace archive contract")
+    assert "python3 scripts/check_addon_archive.py --release-dir .release" in (
+        archive_check
+    )
+    required_entries = {str(entry) for entry in REQUIRED_ENTRIES}
+    for required in (
+        "ApplicantScout/ApplicantScout.toc",
+        "ApplicantScout/ApplicantScout.lua",
+        "ApplicantScout/LICENSE",
+        "ApplicantScout/THIRD-PARTY-NOTICES.md",
+        "ApplicantScout/media/logo.png",
+        "ApplicantScout/libs/qrencode.lua",
+    ):
+        assert required in required_entries
+    forbidden_contract = FORBIDDEN_NAMES | FORBIDDEN_PARTS
+    for forbidden in (".pkgmeta", "AGENTS.md", "docs", "scripts", "tests"):
+        assert forbidden.casefold() in forbidden_contract
+    _assert_order(
+        marketplace_job,
+        "Checkout addon for marketplace package",
+        "Build marketplace package without uploading",
+        "Validate marketplace archive contract",
+    )
 
 
 def test_check_workflow_pins_external_actions_to_commit_shas():
@@ -867,8 +980,9 @@ def test_check_workflow_pins_external_actions_to_commit_shas():
 
     assert Counter(action for action, _ in action_refs) == Counter(
         {
-            "actions/checkout": 2,
+            "actions/checkout": 3,
             "actions/setup-python": 1,
+            "BigWigsMods/packager": 1,
         }
     )
     for action, ref in action_refs:

@@ -62,10 +62,10 @@ local DB_DEFAULTS = {
     -- absent we force `debug=false` exactly once, then mark migrated so
     -- subsequent user toggles persist normally.
     debugDefaultMigrated = false,
-    -- Pre-transport screenshot CVar values, captured once when we force
-    -- screenshotQuality/screenshotFormat for QR reliability. Restored on
-    -- /apscout off so users who run the addon once don't get stuck with larger
-    -- JPG manual screenshots forever. nil = never changed by us.
+    -- Pre-capture screenshot CVar values. Each QR screenshot takes a short
+    -- JPG/quality lease and restores these values immediately afterwards;
+    -- persistence lets the next load recover if a reload interrupts a lease.
+    -- nil = no value currently owned by ApplicantScout.
     priorScreenshotQuality = nil,
     priorScreenshotFormat = nil,
     -- PVEFrame movement state. nil = never moved (use Blizzard's UIPanelLayout
@@ -201,6 +201,7 @@ local lfgEntryCreationKeyCaptureState = {
 }
 local lfgEntryCreationKeyCaptureHooked = setmetatable({}, { __mode = "k" })
 local entryCreationKeyState = {
+    settingsFrameAttachWatcher = nil,
     END_SESSION_CLEAR_RETRY_DELAY_S = QR_RENDER_SETTLE_S * 2,
     DISABLE_CVAR_RESTORE_AFTER_CLEAR_DELAY_S = QR_RENDER_SETTLE_S * 3,
     entryCreationKeyLevelCache = nil,
@@ -231,7 +232,19 @@ local entryCreationKeyState = {
     rioMPlusSummaryCache = {},
     qrPaintJobGen = 0,
     qrPaintInProgress = false,
+    qrCaptureInProgress = false,
     qrPaintDirtyDuringPaint = false,
+    qrTransportJobStartedAt = nil,
+    qrTransportJobTerminalClear = false,
+    SCREENSHOT_CVAR_RESTORE_DELAY_S = 0.05,
+    screenshotCVarLeaseGeneration = 0,
+    QR_TRANSPORT_JOB_TIMEOUT_S = 8.0,
+    QR_RECOVERY_NOTICE_COOLDOWN_S = 30,
+    qrTransportRecoveryCount = 0,
+    qrTransportLastRecoveryAt = nil,
+    qrTransportLastRecoveryReason = "never",
+    qrTransportLastRecoveryPrintAt = nil,
+    qrTextureVisibleHighWater = 0,
     transportDirtyGeneration = 0,
     LEADER_KEY_TTL_S = 60,
     LEADER_KEY_REQUEST_THROTTLE_S = 3,
@@ -537,7 +550,10 @@ StartSession = function()
     lastQREncodeError = nil
     entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
     entryCreationKeyState.qrPaintInProgress = false
+    entryCreationKeyState.qrCaptureInProgress = false
     entryCreationKeyState.qrPaintDirtyDuringPaint = false
+    entryCreationKeyState.qrTransportJobStartedAt = nil
+    entryCreationKeyState.qrTransportJobTerminalClear = false
     entryCreationKeyState.rioMPlusSummaryCache = {}
     entryCreationKeyState.lastQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
@@ -574,7 +590,10 @@ EndSession = function()
     entryCreationKeyState.ClearRosterCompositionChanged()
     entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
     entryCreationKeyState.qrPaintInProgress = false
+    entryCreationKeyState.qrCaptureInProgress = false
     entryCreationKeyState.qrPaintDirtyDuringPaint = false
+    entryCreationKeyState.qrTransportJobStartedAt = nil
+    entryCreationKeyState.qrTransportJobTerminalClear = false
     MaybeTriggerScreenshot(true, nil, true)
     entryCreationKeyState.lastQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
@@ -1509,13 +1528,11 @@ _SetupPVEFrameMovement = function()
     PVEFrame.apsMovementSetup = true
 end
 
--- Set screenshot format. Reed-Solomon ECC handles JPG quantization noise on
+-- Lease screenshot format. Reed-Solomon ECC handles JPG quantization noise on
 -- 3-px QR modules but tolerance shrinks vs 4 px — bump quality floor to 8
--- (~75% JPG quality) for safety with the smaller modules. Idempotent across
--- /reloads. SetCVar persists in Config.wtf — user's own manual screenshots
--- also get this quality (acceptable side-effect, undone on /apscout off via
--- RestoreScreenshotCVars).
-local function EnsureScreenshotCVars()
+-- (~75% JPG quality) for safety with the smaller modules. SetCVar persists in
+-- Config.wtf, so every capture restores the prior values after Screenshot().
+local function EnsureScreenshotCVars(quiet)
     if not (SetCVar and GetCVar) then return end
     local q = tonumber(GetCVar("screenshotQuality")) or 0
     if q < 8 then
@@ -1534,7 +1551,7 @@ local function EnsureScreenshotCVars()
                 APSPrint("WARN: screenshotQuality SetCVar didn't stick (read back " ..
                          verify .. "); QR decode reliability may suffer at 3-px modules")
             end
-        elseif APSPrint then
+        elseif APSPrint and not quiet then
             APSPrint("set screenshotQuality=8 (was " .. q ..
                      ") for QR-decode reliability with 3-px modules")
         end
@@ -1551,18 +1568,18 @@ local function EnsureScreenshotCVars()
                 APSPrint("WARN: screenshotFormat SetCVar didn't stick (read back " ..
                          verifyFormat .. "); QR transport expects JPG screenshots")
             end
-        elseif APSPrint then
+        elseif APSPrint and not quiet then
             APSPrint("set screenshotFormat=jpg (was " .. currentFormat ..
                      ") for QR screenshot transport")
         end
     end
 end
 
--- Restore the user's pre-addon screenshot CVars on /apscout off. Each stash is
--- restored independently so one missing prior value never blocks the other.
--- Clears stashes after restore/skip so a fresh enable cycle records the
--- THEN-current values.
-local function RestoreScreenshotCVars()
+-- Restore the user's pre-capture screenshot CVars. Each stash is restored
+-- independently so one missing prior value never blocks the other. This runs
+-- after every QR screenshot and also from /off or the next load as recovery.
+-- Clearing stashes lets the next capture record the then-current values.
+local function RestoreScreenshotCVars(quiet)
     if not (SetCVar and GetCVar) then return end
     if not ApplicantScoutDB then return end
 
@@ -1572,10 +1589,10 @@ local function RestoreScreenshotCVars()
         if prior >= 0 and prior <= 10 then
             if currentQuality == 8 then
                 SetCVar("screenshotQuality", tostring(prior))
-                if APSPrint then
+                if APSPrint and not quiet then
                     APSPrint("restored screenshotQuality=" .. prior .. " (pre-ApplicantScout value)")
                 end
-            elseif APSPrint then
+            elseif APSPrint and not quiet then
                 APSPrint("kept screenshotQuality=" .. currentQuality ..
                          " (changed after ApplicantScout forced 8)")
             end
@@ -1589,16 +1606,39 @@ local function RestoreScreenshotCVars()
         if priorFormat ~= "" then
             if currentFormat:lower() == "jpg" then
                 SetCVar("screenshotFormat", priorFormat)
-                if APSPrint then
+                if APSPrint and not quiet then
                     APSPrint("restored screenshotFormat=" .. priorFormat ..
                              " (pre-ApplicantScout value)")
                 end
-            elseif APSPrint then
+            elseif APSPrint and not quiet then
                 APSPrint("kept screenshotFormat=" .. currentFormat ..
                          " (changed after ApplicantScout forced jpg)")
             end
         end
         ApplicantScoutDB.priorScreenshotFormat = nil
+    end
+end
+
+local function AcquireScreenshotCVarLease()
+    entryCreationKeyState.screenshotCVarLeaseGeneration =
+        (entryCreationKeyState.screenshotCVarLeaseGeneration or 0) + 1
+    local leaseGeneration = entryCreationKeyState.screenshotCVarLeaseGeneration
+    EnsureScreenshotCVars(true)
+    return leaseGeneration
+end
+
+local function ReleaseScreenshotCVarLease(leaseGeneration, delay)
+    local function releaseIfCurrent()
+        if entryCreationKeyState.screenshotCVarLeaseGeneration ~= leaseGeneration then
+            return
+        end
+        RestoreScreenshotCVars(true)
+    end
+
+    if delay and delay > 0 and C_Timer and C_Timer.After then
+        C_Timer.After(delay, releaseIfCurrent)
+    else
+        releaseIfCurrent()
     end
 end
 
@@ -3885,6 +3925,10 @@ local function _AcquireQRTexture(x, y, w, h)
     t:SetSize(w, h)
     t:SetPoint("TOPLEFT", qrFrame, "TOPLEFT", x, -y)
     t:Show()
+    entryCreationKeyState.qrTextureVisibleHighWater = math.max(
+        entryCreationKeyState.qrTextureVisibleHighWater or 0,
+        qrTextureUsed
+    )
     return t
 end
 
@@ -3961,24 +4005,53 @@ local function PaintQR(matrix, runs, jobGen, onComplete)
     qrCurrentSize = frame_px
     _ApplyQRFramePosition()
 
-    local prev_used = qrTextureUsed
     qrTextureUsed = 0
     local runIndex = 1
 
-    local function FinishPaint(success)
+    local function CompletePaint(success)
         if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
         entryCreationKeyState.qrPaintInProgress = false
-        -- Hide leftover textures from previous (larger) QRs — they remain in
-        -- pool for reuse on next render.
-        for i = qrTextureUsed + 1, prev_used do
-            local t = qrTexturePool[i]
-            if t then t:Hide() end
-        end
         if not success and APSPrint then
             APSPrint("WARN: QR render exceeded pooled texture budget " ..
                      entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET .. " — rendered QR is INCOMPLETE; companion will fail to decode")
         end
         if onComplete then onComplete(success) end
+    end
+
+    local function FinishPaint(success)
+        if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
+        -- Hide leftovers in the same bounded chunks as painting. Keep the
+        -- visible high-water mark until cleanup completes: if a timer callback
+        -- is aborted, the watchdog can retry and the next job still knows how
+        -- far the stale black textures extend.
+        local cleanupIndex = qrTextureUsed + 1
+        local cleanupTarget = entryCreationKeyState.qrTextureVisibleHighWater or 0
+
+        local function ContinueCleanup()
+            if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
+            local chunkEnd = math.min(
+                cleanupTarget,
+                cleanupIndex + entryCreationKeyState.QR_TEXTURE_PAINT_CHUNK - 1
+            )
+            for i = cleanupIndex, chunkEnd do
+                local t = qrTexturePool[i]
+                if t then t:Hide() end
+            end
+            cleanupIndex = chunkEnd + 1
+            if cleanupIndex <= cleanupTarget then
+                C_Timer.After(0, ContinueCleanup)
+                return
+            end
+            entryCreationKeyState.qrTextureVisibleHighWater = qrTextureUsed
+            CompletePaint(success)
+        end
+
+        if cleanupIndex <= cleanupTarget then
+            C_Timer.After(0, ContinueCleanup)
+        else
+            entryCreationKeyState.qrTextureVisibleHighWater = qrTextureUsed
+            CompletePaint(success)
+        end
     end
 
     local function ContinuePaint()
@@ -4217,6 +4290,62 @@ local function _AcquireQRShotLease()
     return forceVisibleShotGen, QR_RENDER_SETTLE_S
 end
 
+entryCreationKeyState.ClearQRTransportJob = function(jobGen)
+    if jobGen and entryCreationKeyState.qrPaintJobGen ~= jobGen then
+        return false
+    end
+    entryCreationKeyState.qrPaintInProgress = false
+    entryCreationKeyState.qrCaptureInProgress = false
+    entryCreationKeyState.qrPaintDirtyDuringPaint = false
+    entryCreationKeyState.qrTransportJobStartedAt = nil
+    entryCreationKeyState.qrTransportJobTerminalClear = false
+    return true
+end
+
+entryCreationKeyState.RecoverStalledQRTransport = function(now)
+    if not (entryCreationKeyState.qrPaintInProgress
+            or entryCreationKeyState.qrCaptureInProgress) then
+        return false
+    end
+    local startedAt = entryCreationKeyState.qrTransportJobStartedAt
+    if type(startedAt) ~= "number"
+       or now - startedAt < entryCreationKeyState.QR_TRANSPORT_JOB_TIMEOUT_S then
+        return false
+    end
+
+    local wasTerminalClear = entryCreationKeyState.qrTransportJobTerminalClear
+    local phase = entryCreationKeyState.qrCaptureInProgress and "capture" or "build/paint"
+    entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
+    entryCreationKeyState.ClearQRTransportJob()
+    qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
+    qrForceVisibleForShot = false
+    _RefreshQRVisibility()
+    pendingShotDirty = true
+    entryCreationKeyState.qrTransportRecoveryCount =
+        (entryCreationKeyState.qrTransportRecoveryCount or 0) + 1
+    entryCreationKeyState.qrTransportLastRecoveryAt = now
+    entryCreationKeyState.qrTransportLastRecoveryReason = phase .. " timeout"
+
+    local lastPrintAt = entryCreationKeyState.qrTransportLastRecoveryPrintAt
+    if APSPrint
+       and (not lastPrintAt
+            or now - lastPrintAt >= entryCreationKeyState.QR_RECOVERY_NOTICE_COOLDOWN_S) then
+        entryCreationKeyState.qrTransportLastRecoveryPrintAt = now
+        APSPrint("WARN: recovered stalled QR " .. phase .. " job; retrying latest snapshot")
+    end
+
+    if wasTerminalClear and not isSessionActive then
+        C_Timer.After(0, function()
+            if not isSessionActive then
+                MaybeTriggerScreenshot(true, nil, true)
+            end
+        end)
+    else
+        MarkDirty("qrwatchdog")
+    end
+    return true
+end
+
 -- Build payload, dedup vs last hash, throttle, paint QR, trigger Screenshot.
 -- force=true bypasses dedup AND throttle (used by EndSession + /apscout shotnow).
 -- entryHint: optional pre-fetched C_LFGList.GetActiveEntryInfo() result from
@@ -4268,7 +4397,8 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         return
     end
 
-    if entryCreationKeyState.qrPaintInProgress and not force then
+    if (entryCreationKeyState.qrPaintInProgress
+        or entryCreationKeyState.qrCaptureInProgress) and not force then
         pendingShotDirty = true
         entryCreationKeyState.qrPaintDirtyDuringPaint = true
         return
@@ -4364,7 +4494,10 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     local jobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
     entryCreationKeyState.qrPaintJobGen = jobGen
     entryCreationKeyState.qrPaintInProgress = true
+    entryCreationKeyState.qrCaptureInProgress = false
     entryCreationKeyState.qrPaintDirtyDuringPaint = false
+    entryCreationKeyState.qrTransportJobStartedAt = GetTime()
+    entryCreationKeyState.qrTransportJobTerminalClear = terminalClear and true or false
     -- WHY: terminal clears are delayed until the QR paints. If a new session
     -- starts before that callback, the stale clear must not wipe the companion
     -- state for the fresh listing.
@@ -4381,9 +4514,11 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             -- Same retry-suppression rationale as above.
             lastSnapshotHash = h
             pendingShotDirty = dirtySincePaintStarted and true or false
+            entryCreationKeyState.ClearQRTransportJob(jobGen)
             return
         end
 
+        entryCreationKeyState.qrCaptureInProgress = true
         local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()
         local completedPaintGen = entryCreationKeyState.qrPaintJobGen
         local payloadApplicantCount = entryCreationKeyState.lastPayloadApplicantCount
@@ -4396,6 +4531,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             if terminalClearSessionGen
                and (sessionGen ~= terminalClearSessionGen or isSessionActive) then
                 _ReleaseForceVisibleShotLease(forceVisibleShotGen)
+                entryCreationKeyState.ClearQRTransportJob(jobGen)
                 return
             end
             if entryCreationKeyState.qrPaintJobGen ~= completedPaintGen then
@@ -4445,7 +4581,15 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                       qrCurrentSize, h, GetTime()))
             end
             lastShotTime = GetTime()
+            local screenshotCVarLeaseGeneration = AcquireScreenshotCVarLease()
+            -- Schedule release before Screenshot() so even an unexpected API
+            -- error cannot leave the user's global screenshot settings leased.
+            ReleaseScreenshotCVarLease(
+                screenshotCVarLeaseGeneration,
+                entryCreationKeyState.SCREENSHOT_CVAR_RESTORE_DELAY_S
+            )
             Screenshot()
+            entryCreationKeyState.ClearQRTransportJob(jobGen)
             if forceVisibleShotGen then
                 C_Timer.After(0.05, function()
                     _ReleaseForceVisibleShotLease(forceVisibleShotGen)
@@ -4480,8 +4624,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             local dirtySinceBuildStarted =
                 (entryCreationKeyState.qrPaintDirtyDuringPaint and not force)
                 or (entryCreationKeyState.transportDirtyGeneration or 0) ~= payloadDirtyGeneration
-            entryCreationKeyState.qrPaintInProgress = false
-            entryCreationKeyState.qrPaintDirtyDuringPaint = false
+            entryCreationKeyState.ClearQRTransportJob(jobGen)
             lastSnapshotHash = h
             pendingShotDirty = dirtySinceBuildStarted and true or false
             return
@@ -4492,7 +4635,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 h, fallbackHash))
         end
         if not PaintQR(matrix, runs, jobGen, OnQRPaintComplete) then
-            entryCreationKeyState.qrPaintInProgress = false
+            entryCreationKeyState.ClearQRTransportJob(jobGen)
             lastSnapshotHash = h
             pendingShotDirty = false
         end
@@ -4756,11 +4899,9 @@ local EVENT_HANDLERS = {
         CreateQRFrame()
         entryCreationKeyState.SyncAutoHiInitialGroupState()
         entryCreationKeyState.RequestLeaderKeystone(true)
-        if ApplicantScoutDB and ApplicantScoutDB.enabled then
-            EnsureScreenshotCVars()
-        else
-            RestoreScreenshotCVarsWhenSafe(0)
-        end
+        -- Recover a lease interrupted by /reload. The next actual capture
+        -- reacquires JPG/quality immediately before Screenshot().
+        RestoreScreenshotCVars()
         MarkDirty("pew")
     end,
     -- WHY register ADDON_LOADED globally: many info-panel frames live in
@@ -4851,6 +4992,7 @@ end)
 -- uses Unit* reads plus Screenshot(), not chat sends or active-listing reads.
 C_Timer.NewTicker(0.25, function()
     local now = GetTime()
+    entryCreationKeyState.RecoverStalledQRTransport(now)
     _TryHookInfoPanels()
     _RecomputeInteractionSuppression()
     entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker()
@@ -4973,9 +5115,7 @@ _SetEnabled = function(flag)
     flag = not not flag  -- coerce 1/nil → strict bool so equality compare is sane
     if flag == ApplicantScoutDB.enabled then
         if enabledCheckbox then enabledCheckbox:SetChecked(flag) end
-        if flag then
-            EnsureScreenshotCVars()
-        else
+        if not flag then
             _RunDisabledCleanup()
         end
         APSPrint(flag and "already enabled" or "already disabled")
@@ -4983,7 +5123,6 @@ _SetEnabled = function(flag)
     end
     if flag then
         ApplicantScoutDB.enabled = true
-        EnsureScreenshotCVars()
         scanDirty = true  -- next 0.25s tick recovers session if listing active
         APSPrint("enabled — will emit during LFG hosting")
     else
@@ -5074,14 +5213,27 @@ local _SETTINGS_DROPDOWN_WIDTH = 170
 -- Defensive ADDON_LOADED watcher fallback for the unlikely case PVEFrame is
 -- loaded on demand (12.x retail compiles it in, but custom clients may differ).
 _AttachSettingsPanel = function()
-    if settingsFrameAttached then return end
+    local watcher = entryCreationKeyState.settingsFrameAttachWatcher
+    if settingsFrameAttached then
+        if watcher then
+            watcher:UnregisterAllEvents()
+            watcher:SetScript("OnEvent", nil)
+            entryCreationKeyState.settingsFrameAttachWatcher = nil
+        end
+        return
+    end
     if not _G.PVEFrame then
-        local watcher = CreateFrame("Frame")
+        if watcher then return end
+        watcher = CreateFrame("Frame")
+        entryCreationKeyState.settingsFrameAttachWatcher = watcher
         watcher:RegisterEvent("ADDON_LOADED")
         watcher:SetScript("OnEvent", function(self)
             if _G.PVEFrame then
                 self:UnregisterAllEvents()
                 self:SetScript("OnEvent", nil)
+                if entryCreationKeyState.settingsFrameAttachWatcher == self then
+                    entryCreationKeyState.settingsFrameAttachWatcher = nil
+                end
                 _AttachSettingsPanel()
                 -- Same lazy-init opportunity for movement setup. DRY: don't
                 -- spawn a separate watcher.
@@ -5089,6 +5241,12 @@ _AttachSettingsPanel = function()
             end
         end)
         return
+    end
+
+    if watcher then
+        watcher:UnregisterAllEvents()
+        watcher:SetScript("OnEvent", nil)
+        entryCreationKeyState.settingsFrameAttachWatcher = nil
     end
 
     settingsFrame = CreateFrame(
@@ -5415,7 +5573,22 @@ SlashCmdList.APSCOUT = function(msg)
             print("  QR mouse enabled: " .. tostring(qrMoveMode and true or false))
         end
         print("  QR force-visible shot lease: " .. tostring(qrForceVisibleForShot or false))
-        print("  texture pool: " .. #qrTexturePool .. " (used last paint: " .. qrTextureUsed .. ")")
+        print("  QR build/paint active: " .. tostring(entryCreationKeyState.qrPaintInProgress))
+        print("  QR capture settle active: " .. tostring(entryCreationKeyState.qrCaptureInProgress))
+        print("  QR job generation: " .. tostring(entryCreationKeyState.qrPaintJobGen or 0))
+        print("  QR job age: " .. (entryCreationKeyState.qrTransportJobStartedAt
+              and string.format("%.1fs", GetTime() - entryCreationKeyState.qrTransportJobStartedAt)
+              or "idle"))
+        print("  QR dirty during job: " .. tostring(entryCreationKeyState.qrPaintDirtyDuringPaint))
+        print("  QR watchdog recoveries: "
+              .. tostring(entryCreationKeyState.qrTransportRecoveryCount or 0)
+              .. " (last: "
+              .. tostring(entryCreationKeyState.qrTransportLastRecoveryReason or "never")
+              .. ")")
+        print("  texture pool: " .. #qrTexturePool
+              .. " (used last paint: " .. qrTextureUsed
+              .. ", visible high-water: "
+              .. tostring(entryCreationKeyState.qrTextureVisibleHighWater or 0) .. ")")
         print("  last snapshot hash: " .. tostring(lastSnapshotHash))
         print("  last applicant snapshot hash: "
               .. tostring(entryCreationKeyState.lastApplicantSnapshotHash))

@@ -16,6 +16,9 @@ LUA_LIBKEYSTONE_DISABLED_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_libkeystone_disabled_transport.lua"
 )
 LUA_QR_RUN_CHUNKING_CHECK = REPO_ROOT / "tests" / "lua" / "check_qr_run_chunking.lua"
+LUA_QR_CAPTURE_LIFECYCLE_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_qr_capture_lifecycle.lua"
+)
 LUA_LARGE_QR_BUDGET_CHECK = REPO_ROOT / "tests" / "lua" / "check_large_qr_budget.lua"
 LUA_LARGE_QR_ROSTER_FALLBACK_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_large_qr_prefers_roster_fallback.lua"
@@ -204,7 +207,7 @@ def test_interaction_suppression_defers_non_force_payloads_before_dedup():
     assert "return" in suppression_block
 
 
-def test_non_force_snapshot_waits_for_active_qr_paint_before_lfg_reads():
+def test_non_force_snapshot_waits_for_active_qr_job_before_lfg_reads():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
@@ -213,7 +216,8 @@ def test_non_force_snapshot_waits_for_active_qr_paint_before_lfg_reads():
     )
 
     active_idx = screenshot_body.index(
-        "entryCreationKeyState.qrPaintInProgress and not force"
+        "if (entryCreationKeyState.qrPaintInProgress\n"
+        "        or entryCreationKeyState.qrCaptureInProgress) and not force then"
     )
     entry_idx = screenshot_body.index("local entry = nil")
     payload_idx = screenshot_body.index("local payload = BuildPayload")
@@ -1418,6 +1422,37 @@ def test_disable_cleanup_restores_cvars_after_terminal_clear_retry_capture_windo
     assert "restoreSessionGen" in cleanup_body
 
 
+def test_screenshot_cvars_are_leased_only_around_capture():
+    source = _lua_source()
+    events_body = _slice_between(
+        source,
+        "local EVENT_HANDLERS = {",
+        "-- Bind every interaction event",
+    )
+    enabled_body = _slice_between(
+        source,
+        "_SetEnabled = function(flag)",
+        "-- Apply ApplicantScoutDB.debug",
+    )
+    screenshot_body = _slice_between(
+        source,
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
+        "-- LFG entry creation: default Mythic+ playstyle",
+    )
+
+    assert "EnsureScreenshotCVars()" not in events_body
+    assert "EnsureScreenshotCVars()" not in enabled_body
+    assert "RestoreScreenshotCVars()" in events_body
+    acquire_idx = screenshot_body.index(
+        "local screenshotCVarLeaseGeneration = AcquireScreenshotCVarLease()"
+    )
+    release_idx = screenshot_body.index("ReleaseScreenshotCVarLease(", acquire_idx)
+    screenshot_idx = screenshot_body.index("Screenshot()", release_idx)
+    assert acquire_idx < release_idx < screenshot_idx
+    assert "SCREENSHOT_CVAR_RESTORE_DELAY_S = 0.05" in source
+    assert "screenshotCVarLeaseGeneration ~= leaseGeneration" in source
+
+
 def test_disable_cleanup_invalidates_pending_auto_hi_generations_and_retries():
     source = _lua_source()
     auto_hi_body = _slice_between(
@@ -1996,6 +2031,23 @@ def test_auto_hi_settings_panel_initializes_new_party_checkbox_from_db():
         "ApplicantScoutDB.autoHiGreetNewPartyMembers"
         in settings_body[initial_checkbox_idx:attached_idx]
     )
+
+
+def test_settings_panel_reuses_and_retires_lazy_attach_watcher():
+    source = _lua_source()
+    settings_body = _slice_between(
+        source,
+        "_AttachSettingsPanel = function()",
+        "settingsFrame = CreateFrame(",
+    )
+
+    assert "local watcher = entryCreationKeyState.settingsFrameAttachWatcher" in settings_body
+    assert "if watcher then return end" in settings_body
+    assert "entryCreationKeyState.settingsFrameAttachWatcher = watcher" in settings_body
+    assert settings_body.count("watcher:UnregisterAllEvents()") == 2
+    assert settings_body.count('watcher:SetScript("OnEvent", nil)') == 2
+    assert settings_body.count("entryCreationKeyState.settingsFrameAttachWatcher = nil") == 3
+    assert "entryCreationKeyState.settingsFrameAttachWatcher == self" in settings_body
 
 
 def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():
@@ -2702,7 +2754,7 @@ def test_pveframe_position_restore_does_not_hook_groupfinder_show_stack():
     movement_body = _slice_between(
         source,
         "-- PVEFrame movement (Alt+drag, persistent across /reload)",
-        "-- Set screenshot format.",
+        "-- Lease screenshot format.",
     )
     ticker_body = _slice_between(
         source,
@@ -2741,6 +2793,49 @@ def test_qr_render_uses_script_safe_budget_before_texture_hard_cap():
     assert "if limit and #runs > limit then" in qr_body
     assert paint_budget_idx < finish_failure_idx
     assert "C_Timer.After(0, ContinuePaint)" in qr_body
+    assert "local function ContinueCleanup()" in qr_body
+    assert "C_Timer.After(0, ContinueCleanup)" in qr_body
+
+
+def test_qr_capture_settle_window_is_locked_and_watchdog_recoverable():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
+        "-- LFG entry creation",
+    )
+    ticker_body = _slice_between(
+        source,
+        "C_Timer.NewTicker(0.25, function()",
+        "-- Settings panel:",
+    )
+
+    capture_guard_idx = screenshot_body.index(
+        "or entryCreationKeyState.qrCaptureInProgress) and not force then"
+    )
+    capture_start_idx = screenshot_body.index(
+        "entryCreationKeyState.qrCaptureInProgress = true"
+    )
+    settle_idx = screenshot_body.index(
+        "C_Timer.After(forceVisibleShotDelay, function()",
+        capture_start_idx,
+    )
+    screenshot_idx = screenshot_body.index("            Screenshot()", settle_idx)
+    clear_idx = screenshot_body.index(
+        "entryCreationKeyState.ClearQRTransportJob(jobGen)",
+        screenshot_idx,
+    )
+
+    assert capture_guard_idx < capture_start_idx < settle_idx < screenshot_idx < clear_idx
+    assert "QR_TRANSPORT_JOB_TIMEOUT_S = 8.0" in source
+    assert "entryCreationKeyState.RecoverStalledQRTransport = function(now)" in source
+    assert "entryCreationKeyState.RecoverStalledQRTransport(now)" in ticker_body
+
+
+def test_qr_capture_lifecycle_survives_poll_during_settle_window(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_QR_CAPTURE_LIFECYCLE_CHECK).strip()
+
+    assert output.startswith("ok qr-capture-lifecycle shots=")
 
 
 def test_large_qr_run_analysis_is_chunked_in_lua51(pytestconfig):

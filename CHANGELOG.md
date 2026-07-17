@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+## 0.5.3 - 16-Jul-2026 - Companion 0.9.3 capture lifecycle recovery
+
+This paired addon + companion patch keeps APS1 v9 unchanged while preventing
+the QR capture lifecycle from stalling between paint and screenshot.
+
+### Fixed
+
+- A scan tick can no longer replace a completed QR while its screenshot is
+  waiting for the framebuffer settle window, fixing the reload-only recovery
+  seen even with five applicants and a two-player group.
+- QR texture cleanup now yields across frames and retains enough state to hide
+  stale modules after an interrupted callback.
+- A bounded watchdog cancels and retries QR build, paint, or capture work that
+  remains stuck instead of leaving transport frozen until `/reload`.
+- Repeated settings requests before Blizzard's Group Finder frame is available
+  now reuse one load watcher instead of accumulating dormant frames.
+
+### Improved
+
+- `/apscout status` now reports the active QR phase, job age, watchdog recovery
+  count, dirty-during-job state, and visible texture high-water mark.
+- Screenshot format and quality are now leased only around each QR capture and
+  restored afterwards instead of remaining changed whenever the addon is on.
+- Companion `0.9.3` shows `addon update` when the decoded WoW addon version is
+  older than the paired release.
+- Companion `0.9.3` uses Warcraft Logs' full current encounter names for
+  Chimaerus and Belo'ren in raid boss details.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.9.3`.
+- No QR wire-format change; wire payloads remain compact APS1 v9.
+
 ## 0.5.2 - 15-Jul-2026 - Companion 0.9.2 large-raid transport recovery
 
 This paired addon + companion patch keeps APS1 v9 unchanged while making dense

@@ -1,0 +1,9 @@
+{
+  "luaLanguageServer": {
+    "version": "3.18.2",
+    "windowsX64": {
+      "url": "https://github.com/LuaLS/lua-language-server/releases/download/3.18.2/lua-language-server-3.18.2-win32-x64.zip",
+      "sha256": "a4439a8f5e8e9e6505c11f045a7bf45db602124a1e246371c1dbe34924f3cf71"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "runtime.version": "Lua 5.1",
+  "runtime.path": [
+    "?.lua",
+    "?/init.lua"
+  ],
+  "workspace.checkThirdParty": false,
+  "diagnostics.globals": [],
+  "diagnostics.disable": [
+    "assign-type-mismatch",
+    "cast-local-type",
+    "deprecated",
+    "lowercase-global",
+    "param-type-mismatch",
+    "redundant-parameter",
+    "return-type-mismatch"
+  ]
+}
