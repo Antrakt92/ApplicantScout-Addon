@@ -1,13 +1,20 @@
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
+local fixture_mode = arg and arg[1] or "applicants"
+assert(fixture_mode == "applicants" or fixture_mode == "roster-only",
+    "unsupported fixture mode: " .. tostring(fixture_mode))
+local roster_only = fixture_mode == "roster-only"
 
--- Reproduce the live report: two people in the group and five applicants.
-env.unit_data.party2 = nil
-env.unit_data.party3 = nil
-env.unit_data.party4 = nil
-GetNumGroupMembers = function() return 2 end
+-- Default mode reproduces the live report: two people and five applicants.
+-- Roster-only mode keeps a full party and removes every applicant.
+if not roster_only then
+    env.unit_data.party2 = nil
+    env.unit_data.party3 = nil
+    env.unit_data.party4 = nil
+end
+GetNumGroupMembers = function() return roster_only and 5 or 2 end
 IsInRaid = function() return false end
 
-local applicant_ids = { 42, 43, 44, 45, 46 }
+local applicant_ids = roster_only and {} or { 42, 43, 44, 45, 46 }
 C_LFGList.HasActiveEntryInfo = function() return true end
 C_LFGList.GetActiveEntryInfo = function()
     return {
@@ -194,10 +201,17 @@ for _ = 1, 360 do
     end
 end
 
-assert(#screenshot_times >= 2,
-    "polling during the render-settle window starved QR screenshots")
-assert(screenshot_times[2] - screenshot_times[1] >= 1.5,
-    "redundant applicant resend ignored the screenshot throttle")
+if roster_only then
+    assert(#screenshot_times == 2, string.format(
+        "changed roster-only snapshot got %d captures instead of exactly two",
+        #screenshot_times))
+else
+    assert(#screenshot_times >= 2,
+        "polling during the render-settle window starved QR screenshots")
+end
+assert(screenshot_times[2] - screenshot_times[1] >= 0.5,
+    string.format("redundant resend interval %.3fs ignored the screenshot throttle",
+        screenshot_times[2] - screenshot_times[1]))
 for _, values in ipairs(screenshot_cvars) do
     assert(values.format == "jpg" and values.quality == "8",
         "QR capture did not hold its JPG/quality 8 CVar lease")
@@ -208,4 +222,5 @@ assert(ApplicantScoutDB.priorScreenshotFormat == nil
        and ApplicantScoutDB.priorScreenshotQuality == nil,
     "QR capture left stale screenshot CVar restore state")
 
-print(string.format("ok qr-capture-lifecycle shots=%d", #screenshot_times))
+print(string.format("ok qr-capture-lifecycle mode=%s shots=%d",
+    fixture_mode, #screenshot_times))

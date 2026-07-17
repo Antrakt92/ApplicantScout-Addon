@@ -704,7 +704,7 @@ def test_transport_poll_does_not_heartbeat_stable_snapshots():
     assert active_idx < screenshot_idx
 
 
-def test_applicant_snapshots_get_short_redundant_resend_without_periodic_heartbeat():
+def test_nonterminal_snapshots_get_short_redundant_resend_without_periodic_heartbeat():
     source = _lua_source()
     state_body = _slice_between(
         source,
@@ -722,37 +722,38 @@ def test_applicant_snapshots_get_short_redundant_resend_without_periodic_heartbe
         "-- LFG entry creation",
     )
 
-    assert "APPLICANT_SNAPSHOT_MIN_SENDS = 2" in state_body
-    assert "lastApplicantSnapshotHash = nil" in state_body
-    assert "lastApplicantSnapshotSendCount = 0" in state_body
-    assert "entryCreationKeyState.lastApplicantSnapshotHash = nil" in start_body
-    assert "entryCreationKeyState.lastApplicantSnapshotSendCount = 0" in start_body
+    assert "NONTERMINAL_SNAPSHOT_MIN_SENDS = 2" in state_body
+    assert "lastDeliverySnapshotHash = nil" in state_body
+    assert "lastDeliverySnapshotSendCount = 0" in state_body
+    assert "entryCreationKeyState.lastDeliverySnapshotHash = nil" in start_body
+    assert "entryCreationKeyState.lastDeliverySnapshotSendCount = 0" in start_body
 
-    resend_idx = screenshot_body.index("local resendSameApplicantSnapshot =")
-    applicant_idx = screenshot_body.index(
-        "entryCreationKeyState.lastPayloadApplicantCount > 0",
+    resend_idx = screenshot_body.index("local resendSameNonterminalSnapshot =")
+    terminal_idx = screenshot_body.index(
+        "and not terminalClear",
         resend_idx,
     )
     send_count_idx = screenshot_body.index(
-        "< entryCreationKeyState.APPLICANT_SNAPSHOT_MIN_SENDS",
-        applicant_idx,
+        "< entryCreationKeyState.NONTERMINAL_SNAPSHOT_MIN_SENDS",
+        terminal_idx,
     )
     same_hash_guard_idx = screenshot_body.index(
-        "if not force and h == lastSnapshotHash and not resendSameApplicantSnapshot then",
+        "if not force and h == lastSnapshotHash and not resendSameNonterminalSnapshot then",
         send_count_idx,
     )
     commit_idx = screenshot_body.index("lastSnapshotHash = h", same_hash_guard_idx)
-    track_idx = screenshot_body.index("if payloadApplicantCount > 0 then", commit_idx)
+    track_idx = screenshot_body.index("if not terminalClear then", commit_idx)
     redundant_pending_idx = screenshot_body.index(
         "pendingShotDirty = true",
         track_idx,
     )
 
-    assert resend_idx < applicant_idx < send_count_idx < same_hash_guard_idx
+    assert resend_idx < terminal_idx < send_count_idx < same_hash_guard_idx
     assert commit_idx < track_idx < redundant_pending_idx
+    assert "and not resendSameNonterminalSnapshot then" in screenshot_body
 
 
-def test_status_reports_applicant_resend_diagnostics():
+def test_status_reports_delivery_resend_diagnostics():
     source = _lua_source()
     status_body = _slice_between(
         source,
@@ -761,11 +762,11 @@ def test_status_reports_applicant_resend_diagnostics():
     )
 
     hash_idx = status_body.index("last snapshot hash:")
-    applicant_hash_idx = status_body.index("last applicant snapshot hash:", hash_idx)
-    applicant_count_idx = status_body.index("last applicant snapshot sends:", applicant_hash_idx)
-    pending_idx = status_body.index("pending throttled shot:", applicant_count_idx)
+    delivery_hash_idx = status_body.index("last delivery snapshot hash:", hash_idx)
+    delivery_count_idx = status_body.index("last delivery snapshot sends:", delivery_hash_idx)
+    pending_idx = status_body.index("pending throttled shot:", delivery_count_idx)
 
-    assert hash_idx < applicant_hash_idx < applicant_count_idx < pending_idx
+    assert hash_idx < delivery_hash_idx < delivery_count_idx < pending_idx
 
 
 def test_roster_payload_rows_skip_solo_player_when_not_grouped():
@@ -1763,7 +1764,7 @@ def test_incomplete_roster_payload_retries_even_when_hash_is_unchanged():
     )
 
     same_hash_idx = screenshot_body.index(
-        "if not force and h == lastSnapshotHash and not resendSameApplicantSnapshot then"
+        "if not force and h == lastSnapshotHash and not resendSameNonterminalSnapshot then"
     )
     incomplete_idx = screenshot_body.index(
         "entryCreationKeyState.lastPayloadRosterIncomplete",
@@ -2843,7 +2844,17 @@ def test_qr_capture_settle_window_is_locked_and_watchdog_recoverable():
 def test_qr_capture_lifecycle_survives_poll_during_settle_window(pytestconfig):
     output = _run_lua_script(pytestconfig, LUA_QR_CAPTURE_LIFECYCLE_CHECK).strip()
 
-    assert output.startswith("ok qr-capture-lifecycle shots=")
+    assert output.startswith("ok qr-capture-lifecycle mode=applicants shots=")
+
+
+def test_roster_only_snapshot_gets_one_bounded_redundant_capture(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "roster-only",
+    ).strip()
+
+    assert output == "ok qr-capture-lifecycle mode=roster-only shots=2"
 
 
 def test_roster_inspect_timeout_is_bounded_per_guid_and_session(pytestconfig):

@@ -227,9 +227,9 @@ local entryCreationKeyState = {
     rosterChangePreflightDeadline = nil,
     rosterChangePreflightToken = 0,
     pendingTtl = 10,
-    APPLICANT_SNAPSHOT_MIN_SENDS = 2,
-    lastApplicantSnapshotHash = nil,
-    lastApplicantSnapshotSendCount = 0,
+    NONTERMINAL_SNAPSHOT_MIN_SENDS = 2,
+    lastDeliverySnapshotHash = nil,
+    lastDeliverySnapshotSendCount = 0,
     groupTransportGen = 0,
     rioMPlusSummaryCache = {},
     qrPaintJobGen = 0,
@@ -545,8 +545,8 @@ StartSession = function()
     lastSnapshotHash = nil
     lastShotTime = 0
     entryCreationKeyState.lastEmittedApplicantCount = 0
-    entryCreationKeyState.lastApplicantSnapshotHash = nil
-    entryCreationKeyState.lastApplicantSnapshotSendCount = 0
+    entryCreationKeyState.lastDeliverySnapshotHash = nil
+    entryCreationKeyState.lastDeliverySnapshotSendCount = 0
     pendingShotDirty = false
     lastQREncodeMode = "never"
     lastQREncodeBytes = 0
@@ -615,8 +615,8 @@ EndSession = function()
     -- across sessions and trigger empty drains in the scan ticker. Clear here.
     pendingShotDirty = false
     entryCreationKeyState.lastEmittedApplicantCount = 0
-    entryCreationKeyState.lastApplicantSnapshotHash = nil
-    entryCreationKeyState.lastApplicantSnapshotSendCount = 0
+    entryCreationKeyState.lastDeliverySnapshotHash = nil
+    entryCreationKeyState.lastDeliverySnapshotSendCount = 0
     entryCreationKeyState.entryCreationKeyLevelCache = nil
     entryCreationKeyState.rioMPlusSummaryCache = {}
 
@@ -4595,16 +4595,16 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
 
     local h = HashSnapshot(payload)
     -- WHY: companion cannot ACK successful decode. One malformed screenshot can
-    -- otherwise suppress a short-lived applicant snapshot until another event.
-    local resendSameApplicantSnapshot =
+    -- otherwise suppress a changed listing or roster snapshot until another event.
+    -- Bound this to one retry; stable snapshots never become periodic heartbeats.
+    local resendSameNonterminalSnapshot =
         not force
+        and not terminalClear
         and h == lastSnapshotHash
-        and not entryCreationKeyState.lastPayloadRosterIncomplete
-        and entryCreationKeyState.lastPayloadApplicantCount > 0
-        and entryCreationKeyState.lastApplicantSnapshotHash == h
-        and ((entryCreationKeyState.lastApplicantSnapshotSendCount or 0)
-             < entryCreationKeyState.APPLICANT_SNAPSHOT_MIN_SENDS)
-    if not force and h == lastSnapshotHash and not resendSameApplicantSnapshot then
+        and entryCreationKeyState.lastDeliverySnapshotHash == h
+        and ((entryCreationKeyState.lastDeliverySnapshotSendCount or 0)
+             < entryCreationKeyState.NONTERMINAL_SNAPSHOT_MIN_SENDS)
+    if not force and h == lastSnapshotHash and not resendSameNonterminalSnapshot then
         if entryCreationKeyState.lastPayloadRosterIncomplete then
             if entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S) then
                 pendingShotDirty = false
@@ -4621,7 +4621,8 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
 
     local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature
     if not force and quietSignature then
-        if entryCreationKeyState.lastQuietFullPartySignature == quietSignature then
+        if entryCreationKeyState.lastQuietFullPartySignature == quietSignature
+           and not resendSameNonterminalSnapshot then
             lastSnapshotHash = h
             pendingShotDirty = false
             entryCreationKeyState.ClearRosterLoadRetryState()
@@ -4699,17 +4700,17 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 entryCreationKeyState.ClearRosterCompositionChanged()
             end
             lastSnapshotHash = h
-            if payloadApplicantCount > 0 then
-                if entryCreationKeyState.lastApplicantSnapshotHash == h then
-                    entryCreationKeyState.lastApplicantSnapshotSendCount =
-                        (entryCreationKeyState.lastApplicantSnapshotSendCount or 0) + 1
+            if not terminalClear then
+                if entryCreationKeyState.lastDeliverySnapshotHash == h then
+                    entryCreationKeyState.lastDeliverySnapshotSendCount =
+                        (entryCreationKeyState.lastDeliverySnapshotSendCount or 0) + 1
                 else
-                    entryCreationKeyState.lastApplicantSnapshotHash = h
-                    entryCreationKeyState.lastApplicantSnapshotSendCount = 1
+                    entryCreationKeyState.lastDeliverySnapshotHash = h
+                    entryCreationKeyState.lastDeliverySnapshotSendCount = 1
                 end
             else
-                entryCreationKeyState.lastApplicantSnapshotHash = nil
-                entryCreationKeyState.lastApplicantSnapshotSendCount = 0
+                entryCreationKeyState.lastDeliverySnapshotHash = nil
+                entryCreationKeyState.lastDeliverySnapshotSendCount = 0
             end
             pendingShotDirty = false
             if not force and payloadRosterIncomplete then
@@ -4719,9 +4720,9 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             elseif dirtySincePayload then
                 pendingShotDirty = true
             elseif not force
-               and payloadApplicantCount > 0
-               and ((entryCreationKeyState.lastApplicantSnapshotSendCount or 0)
-                    < entryCreationKeyState.APPLICANT_SNAPSHOT_MIN_SENDS) then
+               and not terminalClear
+               and ((entryCreationKeyState.lastDeliverySnapshotSendCount or 0)
+                    < entryCreationKeyState.NONTERMINAL_SNAPSHOT_MIN_SENDS) then
                 pendingShotDirty = true
             else
                 entryCreationKeyState.ClearRosterLoadRetryState()
@@ -5748,11 +5749,11 @@ SlashCmdList.APSCOUT = function(msg)
               .. ", visible high-water: "
               .. tostring(entryCreationKeyState.qrTextureVisibleHighWater or 0) .. ")")
         print("  last snapshot hash: " .. tostring(lastSnapshotHash))
-        print("  last applicant snapshot hash: "
-              .. tostring(entryCreationKeyState.lastApplicantSnapshotHash))
-        print("  last applicant snapshot sends: "
-              .. tostring(entryCreationKeyState.lastApplicantSnapshotSendCount or 0)
-              .. "/" .. tostring(entryCreationKeyState.APPLICANT_SNAPSHOT_MIN_SENDS))
+        print("  last delivery snapshot hash: "
+              .. tostring(entryCreationKeyState.lastDeliverySnapshotHash))
+        print("  last delivery snapshot sends: "
+              .. tostring(entryCreationKeyState.lastDeliverySnapshotSendCount or 0)
+              .. "/" .. tostring(entryCreationKeyState.NONTERMINAL_SNAPSHOT_MIN_SENDS))
         print("  last shot time: " .. (lastShotTime > 0
               and string.format("%.1fs ago", GetTime() - lastShotTime) or "never"))
         print("  pending throttled shot: " .. tostring(pendingShotDirty))
