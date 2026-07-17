@@ -222,6 +222,8 @@ local entryCreationKeyState = {
     lastEmittedApplicantCount = 0,
     rosterChangedSinceLastPayload = false,
     ROSTER_CHANGE_PREFLIGHT_DEADLINE_S = 2.0,
+    ROSTER_INSPECT_RETRY_COOLDOWN_S = 15.0,
+    ROSTER_INSPECT_MAX_TIMEOUTS_PER_SESSION = 2,
     rosterChangePreflightDeadline = nil,
     rosterChangePreflightToken = 0,
     pendingTtl = 10,
@@ -559,6 +561,7 @@ StartSession = function()
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
     entryCreationKeyState.MarkRosterCompositionChanged()
     entryCreationKeyState.ClearRosterInspectBatchState()
+    entryCreationKeyState.ClearRosterInspectFailureState()
     entryCreationKeyState.ClearRosterLoadRetryState()
     entryCreationKeyState.RequestLeaderKeystone(true)
 
@@ -586,6 +589,7 @@ EndSession = function()
     -- Bypasses dedup + throttle (force=true). Retry once so a transient
     -- malformed terminal screenshot does not leave the companion overlay stale.
     entryCreationKeyState.ClearRosterInspectBatchState()
+    entryCreationKeyState.ClearRosterInspectFailureState()
     entryCreationKeyState.ClearRosterLoadRetryState()
     entryCreationKeyState.ClearRosterCompositionChanged()
     entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
@@ -2554,6 +2558,10 @@ local function _MaybeRequestRosterInspect(unit, guid)
     end
 
     local now = GetTime and GetTime() or 0
+    if entryCreationKeyState.RosterInspectRetryBlocked
+       and entryCreationKeyState.RosterInspectRetryBlocked(guid, now) then
+        return false, "retry-budget"
+    end
     if rosterInspectPendingGUID == guid
        and (now - rosterInspectLastRequestTime) < ROSTER_INSPECT_TIMEOUT_S then
         return false, "pending"
@@ -2584,6 +2592,11 @@ end
 -- locals; this large Lua 5.1 file is already at local/upvalue limits.
 entryCreationKeyState.rosterInspectBatchDirtyPending = false
 entryCreationKeyState.rosterInspectBatchSkippedGUIDs = nil
+-- WHY: batch state is cleared after each partial snapshot, so unresolved GUID
+-- budgets must live for the whole listing session or every poll retries forever.
+entryCreationKeyState.rosterInspectFailuresByGUID = {}
+entryCreationKeyState.rosterInspectRetryAfterByGUID = {}
+entryCreationKeyState.rosterInspectExhaustedGUIDs = {}
 entryCreationKeyState.rosterInspectBatchRetryToken = 0
 entryCreationKeyState.rosterInspectBatchRetryDeadline = nil
 entryCreationKeyState.rosterInspectBatchRetrySessionGen = nil
@@ -2632,7 +2645,55 @@ entryCreationKeyState.RosterUnitHasResolvedInspectData = function(unit, guid)
         end
     end
 
-    return hasSpec and hasIlvl
+    local resolved = hasSpec and hasIlvl
+    if resolved and entryCreationKeyState.ClearRosterInspectFailureForGUID then
+        entryCreationKeyState.ClearRosterInspectFailureForGUID(guid)
+    end
+    return resolved
+end
+entryCreationKeyState.ClearRosterInspectFailureForGUID = function(guid)
+    guid = SafeStr(guid, "")
+    if guid == "" then return end
+    entryCreationKeyState.rosterInspectFailuresByGUID[guid] = nil
+    entryCreationKeyState.rosterInspectRetryAfterByGUID[guid] = nil
+    entryCreationKeyState.rosterInspectExhaustedGUIDs[guid] = nil
+end
+entryCreationKeyState.ClearRosterInspectFailureState = function()
+    entryCreationKeyState.rosterInspectFailuresByGUID = {}
+    entryCreationKeyState.rosterInspectRetryAfterByGUID = {}
+    entryCreationKeyState.rosterInspectExhaustedGUIDs = {}
+end
+entryCreationKeyState.MarkRosterInspectAttemptFailed = function(guid, now)
+    guid = SafeStr(guid, "")
+    if guid == "" then return 0 end
+    now = SafeNumber(now, 0)
+    local failureCount = math.floor(SafeNumber(
+        entryCreationKeyState.rosterInspectFailuresByGUID[guid],
+        0
+    )) + 1
+    entryCreationKeyState.rosterInspectFailuresByGUID[guid] = failureCount
+    if failureCount >= entryCreationKeyState.ROSTER_INSPECT_MAX_TIMEOUTS_PER_SESSION then
+        entryCreationKeyState.rosterInspectRetryAfterByGUID[guid] = nil
+        entryCreationKeyState.rosterInspectExhaustedGUIDs[guid] = true
+    else
+        entryCreationKeyState.rosterInspectRetryAfterByGUID[guid] =
+            now + entryCreationKeyState.ROSTER_INSPECT_RETRY_COOLDOWN_S
+    end
+    return failureCount
+end
+entryCreationKeyState.RosterInspectRetryBlocked = function(guid, now)
+    guid = SafeStr(guid, "")
+    if guid == "" then return true end
+    if entryCreationKeyState.rosterInspectExhaustedGUIDs[guid] then return true end
+    local retryAfter = SafeNumber(
+        entryCreationKeyState.rosterInspectRetryAfterByGUID[guid],
+        0
+    )
+    if retryAfter <= 0 then return false end
+    now = SafeNumber(now, 0)
+    if now < retryAfter then return true end
+    entryCreationKeyState.rosterInspectRetryAfterByGUID[guid] = nil
+    return false
 end
 entryCreationKeyState.ClearRosterInspectBatchState = function()
     entryCreationKeyState.rosterInspectBatchDirtyPending = false
@@ -2691,10 +2752,20 @@ entryCreationKeyState.ShouldDeferRosterChangeForPreflight = function()
 end
 entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()
     local skippedInspectCount = 0
+    local inspectCooldownCount = 0
+    local exhaustedInspectCount = 0
     if entryCreationKeyState.rosterInspectBatchSkippedGUIDs then
         for _ in pairs(entryCreationKeyState.rosterInspectBatchSkippedGUIDs) do
             skippedInspectCount = skippedInspectCount + 1
         end
+    end
+    for _, retryAfter in pairs(entryCreationKeyState.rosterInspectRetryAfterByGUID) do
+        if SafeNumber(retryAfter, 0) > GetTime() then
+            inspectCooldownCount = inspectCooldownCount + 1
+        end
+    end
+    for _ in pairs(entryCreationKeyState.rosterInspectExhaustedGUIDs) do
+        exhaustedInspectCount = exhaustedInspectCount + 1
     end
     local pendingInspectAge = "n/a"
     if rosterInspectPendingGUID and rosterInspectLastRequestTime > 0 then
@@ -2725,6 +2796,8 @@ entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()
     print("    last block reason: "
           .. tostring(entryCreationKeyState.rosterInspectBatchLastBlockReason or "none"))
     print("    skipped count: " .. tostring(skippedInspectCount))
+    print("    retry cooldown count: " .. tostring(inspectCooldownCount))
+    print("    exhausted count: " .. tostring(exhaustedInspectCount))
     print("    quiet full-party suppression: cached="
           .. tostring(entryCreationKeyState.lastQuietFullPartySignature ~= nil)
           .. ", payload="
@@ -2840,14 +2913,10 @@ entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()
         entryCreationKeyState.rosterInspectBatchSkippedGUIDs =
             entryCreationKeyState.rosterInspectBatchSkippedGUIDs or {}
         entryCreationKeyState.rosterInspectBatchSkippedGUIDs[timedOutGUID] = true
+        entryCreationKeyState.MarkRosterInspectAttemptFailed(timedOutGUID, now)
     end
 
     local throttleLeft = ROSTER_INSPECT_THROTTLE_S - (now - rosterInspectLastRequestTime)
-    if throttleLeft > 0 and rosterInspectLastRequestTime > 0 then
-        if entryCreationKeyState.ScheduleRosterInspectBatchRetry(throttleLeft) then
-            return true
-        end
-    end
 
     local requested = false
     local requestReason = nil
@@ -2857,12 +2926,19 @@ entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()
         if guid == ""
            or (entryCreationKeyState.rosterInspectBatchSkippedGUIDs
                and entryCreationKeyState.rosterInspectBatchSkippedGUIDs[guid])
-           or entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid) then
+           or entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid)
+           or entryCreationKeyState.RosterInspectRetryBlocked(guid, now) then
             return false
         end
         requested, requestReason = _MaybeRequestRosterInspect(unit, guid)
         return requested or requestReason == "combat"
     end)
+    if requestReason == "throttle"
+       and throttleLeft > 0
+       and rosterInspectLastRequestTime > 0
+       and entryCreationKeyState.ScheduleRosterInspectBatchRetry(throttleLeft) then
+        return true
+    end
     if requestReason == "combat" then
         entryCreationKeyState.rosterInspectBatchDirtyPending = true
         entryCreationKeyState.rosterInspectBatchCombatDeferred = true
@@ -2886,11 +2962,13 @@ entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot = function()
     if IsInRaid and IsInRaid() then return false end
     if not entryCreationKeyState.rosterInspectBatchDirtyPending then
         local seeded = false
+        local now = GetTime and GetTime() or 0
         _ForEachRosterUnit(function(unit)
             if not _UnitExistsForRoster(unit) then return false end
             local guid = entryCreationKeyState.UnitGUIDForRoster(unit)
             if guid ~= ""
-               and not entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid) then
+               and not entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid)
+               and not entryCreationKeyState.RosterInspectRetryBlocked(guid, now) then
                 entryCreationKeyState.rosterInspectBatchDirtyPending = true
                 entryCreationKeyState.rosterInspectBatchSkippedGUIDs = nil
                 entryCreationKeyState.rosterInspectBatchLastBlockReason = "preflight"
@@ -2925,6 +3003,7 @@ local function _OnRosterInspectReady(guid)
         return
     end
     if not GetInspectSpecialization then return end
+    local wasPendingInspect = rosterInspectPendingGUID == guid
     local ok, specID = pcall(GetInspectSpecialization, unit)
     specID = ok and _ClampUInt16(SafeNumber(specID, 0)) or 0
     local ilvl = entryCreationKeyState.ReadRosterInspectItemLevel(unit)
@@ -2936,6 +3015,11 @@ local function _OnRosterInspectReady(guid)
     if ilvl > 0 then
         entryCreationKeyState.rosterInspectIlvlByGUID[guid] = ilvl
         resolved = true
+    end
+    if resolved
+       and wasPendingInspect
+       and not entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid) then
+        entryCreationKeyState.MarkRosterInspectAttemptFailed(guid, GetTime())
     end
     if resolved then
         if rosterInspectPendingGUID == guid then
@@ -3869,6 +3953,14 @@ end
 if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.BuildPayload = BuildPayload
     _G.ApplicantScoutFixtureHarness.HashSnapshot = HashSnapshot
+    _G.ApplicantScoutFixtureHarness.StartSession = StartSession
+    _G.ApplicantScoutFixtureHarness.EndSession = EndSession
+    _G.ApplicantScoutFixtureHarness.EnsureRosterInspectBatchBeforeSnapshot =
+        entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot
+    _G.ApplicantScoutFixtureHarness.OnRosterInspectReady = _OnRosterInspectReady
+    _G.ApplicantScoutFixtureHarness.LastPayloadRosterCount = function()
+        return entryCreationKeyState.lastPayloadRosterCount
+    end
     _G.ApplicantScoutFixtureHarness.OnLeaderKeystoneData =
         entryCreationKeyState.OnLeaderKeystoneData
     _G.ApplicantScoutFixtureHarness.SendLibKeystoneAddonMessage =
@@ -5786,6 +5878,7 @@ SlashCmdList.APSCOUT = function(msg)
         entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
         entryCreationKeyState.MarkRosterCompositionChanged()
         entryCreationKeyState.ClearRosterInspectBatchState()
+        entryCreationKeyState.ClearRosterInspectFailureState()
         entryCreationKeyState.ClearRosterLoadRetryState()
         scanDirty = true
         APSPrint("resync queued — emits when transport is active and QR is available")

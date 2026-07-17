@@ -19,6 +19,9 @@ LUA_QR_RUN_CHUNKING_CHECK = REPO_ROOT / "tests" / "lua" / "check_qr_run_chunking
 LUA_QR_CAPTURE_LIFECYCLE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_qr_capture_lifecycle.lua"
 )
+LUA_ROSTER_INSPECT_EXHAUSTION_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_roster_inspect_exhaustion.lua"
+)
 LUA_LARGE_QR_BUDGET_CHECK = REPO_ROOT / "tests" / "lua" / "check_large_qr_budget.lua"
 LUA_LARGE_QR_ROSTER_FALLBACK_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_large_qr_prefers_roster_fallback.lua"
@@ -2346,6 +2349,7 @@ def test_session_transitions_clear_roster_inspect_pending_state():
 
     for body in (start_body, end_body):
         assert "entryCreationKeyState.ClearRosterInspectBatchState()" in body
+        assert "entryCreationKeyState.ClearRosterInspectFailureState()" in body
 
 
 def test_roster_inspect_retry_scheduler_coalesces_duplicate_deadlines():
@@ -2629,9 +2633,10 @@ def test_reset_invalidates_roster_inspect_batch_retry_without_clearing_known_spe
     )
 
     clear_idx = reset_body.index("entryCreationKeyState.ClearRosterInspectBatchState()")
+    failure_idx = reset_body.index("entryCreationKeyState.ClearRosterInspectFailureState()")
     dirty_idx = reset_body.index("scanDirty = true")
 
-    assert clear_idx < dirty_idx
+    assert clear_idx < failure_idx < dirty_idx
     assert "rosterInspectSpecByGUID = {}" not in reset_body
     assert "rosterInspectBatchRetryToken" not in reset_body
 
@@ -2836,6 +2841,12 @@ def test_qr_capture_lifecycle_survives_poll_during_settle_window(pytestconfig):
     output = _run_lua_script(pytestconfig, LUA_QR_CAPTURE_LIFECYCLE_CHECK).strip()
 
     assert output.startswith("ok qr-capture-lifecycle shots=")
+
+
+def test_roster_inspect_timeout_is_bounded_per_guid_and_session(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_ROSTER_INSPECT_EXHAUSTION_CHECK).strip()
+
+    assert output == "ok roster-inspect-exhaustion requests=4"
 
 
 def test_large_qr_run_analysis_is_chunked_in_lua51(pytestconfig):
