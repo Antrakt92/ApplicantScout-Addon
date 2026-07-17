@@ -103,6 +103,7 @@ if fixture_mode == "secret-leader-owned-key" then
 end
 
 if fixture_mode == "leader-key" or fixture_mode == "secret-leader-keystone" then
+    IsInGroup = function() return true end
     ApplicantScoutDB = {
         enabled = true,
         debug = false,

@@ -258,6 +258,9 @@ local entryCreationKeyState = {
     leaderKeystoneRequestRetryToken = 0,
     leaderKeystoneRequestRetryDeadline = nil,
     leaderKeystoneRequestRetryGeneration = nil,
+    leaderKeystoneRefreshToken = 0,
+    leaderKeystoneRefreshDeadline = nil,
+    leaderKeystoneRefreshGeneration = nil,
     leaderKeystoneCallbackRegistered = false,
     leaderKeystoneLib = nil,
     leaderKeystoneCallbackOwner = {},
@@ -3344,10 +3347,47 @@ entryCreationKeyState.CancelLibKeystoneResponseRetry = function()
         (entryCreationKeyState.libKeystoneResponseRetryToken or 0) + 1
 end
 
+entryCreationKeyState.CancelLeaderKeystoneRefresh = function()
+    entryCreationKeyState.leaderKeystoneRefreshDeadline = nil
+    entryCreationKeyState.leaderKeystoneRefreshGeneration = nil
+    entryCreationKeyState.leaderKeystoneRefreshToken =
+        (entryCreationKeyState.leaderKeystoneRefreshToken or 0) + 1
+end
+
+entryCreationKeyState.ScheduleLeaderKeystoneRefresh = function()
+    if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return false end
+    if not (C_Timer and C_Timer.After) then return false end
+    if not (IsInGroup and IsInGroup()) then return false end
+
+    local refreshGroupGen = entryCreationKeyState.groupTransportGen
+    if entryCreationKeyState.leaderKeystoneRefreshDeadline ~= nil
+       and entryCreationKeyState.leaderKeystoneRefreshGeneration == refreshGroupGen then
+        return true
+    end
+
+    local now = GetTime and GetTime() or 0
+    entryCreationKeyState.leaderKeystoneRefreshToken =
+        (entryCreationKeyState.leaderKeystoneRefreshToken or 0) + 1
+    local refreshToken = entryCreationKeyState.leaderKeystoneRefreshToken
+    entryCreationKeyState.leaderKeystoneRefreshDeadline = now
+    entryCreationKeyState.leaderKeystoneRefreshGeneration = refreshGroupGen
+    C_Timer.After(0, function()
+        if refreshToken ~= entryCreationKeyState.leaderKeystoneRefreshToken then return end
+        entryCreationKeyState.leaderKeystoneRefreshDeadline = nil
+        entryCreationKeyState.leaderKeystoneRefreshGeneration = nil
+        if refreshGroupGen ~= entryCreationKeyState.groupTransportGen then return end
+        if not (IsInGroup and IsInGroup()) then return end
+        if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return end
+        entryCreationKeyState.RequestLeaderKeystone(false)
+    end)
+    return true
+end
+
 entryCreationKeyState.AdvanceGroupTransportGeneration = function()
     entryCreationKeyState.groupTransportGen =
         (entryCreationKeyState.groupTransportGen or 0) + 1
     entryCreationKeyState.CancelLibKeystoneResponseRetry()
+    entryCreationKeyState.CancelLeaderKeystoneRefresh()
 end
 
 entryCreationKeyState.GetLibKeystoneShim = function()
@@ -3446,12 +3486,14 @@ end
 
 entryCreationKeyState.ClearLeaderKeystone = function()
     entryCreationKeyState.leaderKeystone = nil
+    entryCreationKeyState.CancelLeaderKeystoneRefresh()
     entryCreationKeyState.CancelLeaderKeystoneRequestRetry()
 end
 
 entryCreationKeyState.OnLeaderKeystoneData = function(keyLevel, challengeMapID, _rating, playerName, channel)
     if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return end
     if channel ~= "PARTY" then return end
+    if not (IsInGroup and IsInGroup()) then return end
     local leaderName = entryCreationKeyState.CurrentPartyLeaderName()
     if leaderName == "" then return end
     if not entryCreationKeyState.PlayerNamesMatch(playerName, leaderName) then return end
@@ -3462,6 +3504,8 @@ entryCreationKeyState.OnLeaderKeystoneData = function(keyLevel, challengeMapID, 
         MarkDirty("leaderkey")
         return
     end
+    entryCreationKeyState.CancelLeaderKeystoneRefresh()
+    entryCreationKeyState.CancelLeaderKeystoneRequestRetry()
     entryCreationKeyState.leaderKeystone = {
         level = _ClampUInt8(keyLevel),
         challengeMapID = _ClampUInt16(challengeMapID),
@@ -3583,6 +3627,7 @@ entryCreationKeyState.ResolveLeaderKeystoneContext = function()
     if now > 0
        and (now - SafeNumber(leaderKeystone.at, 0)) > entryCreationKeyState.LEADER_KEY_TTL_S then
         entryCreationKeyState.ClearLeaderKeystone()
+        entryCreationKeyState.ScheduleLeaderKeystoneRefresh()
         return nil
     end
     return leaderKeystone

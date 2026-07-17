@@ -25,6 +25,9 @@ LUA_ROSTER_INSPECT_EXHAUSTION_CHECK = (
 LUA_ROSTER_INSPECT_REJOIN_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_inspect_rejoin.lua"
 )
+LUA_LEADER_KEY_REFRESH_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_leader_keystone_refresh.lua"
+)
 LUA_LARGE_QR_BUDGET_CHECK = REPO_ROOT / "tests" / "lua" / "check_large_qr_budget.lua"
 LUA_LARGE_QR_ROSTER_FALLBACK_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_large_qr_prefers_roster_fallback.lua"
@@ -1043,6 +1046,7 @@ def test_leader_keystone_request_uses_checked_send_and_throttle_updates_only_aft
     assert "leaderKeystoneRequestRetryToken" in source
     assert "leaderKeystoneRequestRetryDeadline" in source
     assert 'reason == "request-failed"' in source
+    assert "if not (IsInGroup and IsInGroup()) then return end" in source
 
 
 def test_libkeystone_retries_are_group_generation_scoped_and_cancelled_on_group_left():
@@ -1062,7 +1066,10 @@ def test_libkeystone_retries_are_group_generation_scoped_and_cancelled_on_group_
     assert "groupTransportGen = 0" in state_body
     assert "libKeystoneResponseRetryGeneration = nil" in state_body
     assert "leaderKeystoneRequestRetryGeneration = nil" in state_body
+    assert "leaderKeystoneRefreshGeneration = nil" in state_body
     assert "entryCreationKeyState.CancelLibKeystoneResponseRetry = function()" in leader_body
+    assert "entryCreationKeyState.CancelLeaderKeystoneRefresh = function()" in leader_body
+    assert "entryCreationKeyState.ScheduleLeaderKeystoneRefresh = function()" in leader_body
     assert "entryCreationKeyState.AdvanceGroupTransportGeneration = function()" in leader_body
 
     response_body = _slice_between(
@@ -1085,11 +1092,34 @@ def test_libkeystone_retries_are_group_generation_scoped_and_cancelled_on_group_
     assert "entryCreationKeyState.leaderKeystoneRequestRetryGeneration = retryGroupGen" in request_body
     assert "retryGroupGen ~= entryCreationKeyState.groupTransportGen" in request_body
 
+    refresh_body = _slice_between(
+        leader_body,
+        "entryCreationKeyState.ScheduleLeaderKeystoneRefresh = function()",
+        "entryCreationKeyState.AdvanceGroupTransportGeneration = function()",
+    )
+    assert "local refreshGroupGen = entryCreationKeyState.groupTransportGen" in refresh_body
+    assert "leaderKeystoneRefreshGeneration == refreshGroupGen" in refresh_body
+    assert "refreshGroupGen ~= entryCreationKeyState.groupTransportGen" in refresh_body
+    assert "entryCreationKeyState.RequestLeaderKeystone(false)" in refresh_body
+
+    advance_body = _slice_between(
+        leader_body,
+        "entryCreationKeyState.AdvanceGroupTransportGeneration = function()",
+        "entryCreationKeyState.GetLibKeystoneShim = function()",
+    )
+    assert "entryCreationKeyState.CancelLeaderKeystoneRefresh()" in advance_body
+
     group_left_idx = events_body.index("GROUP_LEFT                       = function()")
     chat_msg_idx = events_body.index("CHAT_MSG_ADDON", group_left_idx)
     group_left_body = events_body[group_left_idx:chat_msg_idx]
     assert "entryCreationKeyState.AdvanceGroupTransportGeneration()" in group_left_body
     assert "entryCreationKeyState.ClearLeaderKeystone()" in group_left_body
+
+
+def test_expired_leader_keystone_schedules_one_generation_scoped_refresh(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_LEADER_KEY_REFRESH_CHECK).strip()
+
+    assert output == "ok leader-keystone-refresh sends=1"
 
 
 def test_full_party_quiet_signature_requires_empty_resolved_non_raid_roster():
