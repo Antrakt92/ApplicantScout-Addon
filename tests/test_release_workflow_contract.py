@@ -673,6 +673,12 @@ def test_release_version_check_accepts_published_paired_companion_assets(
                         "-portable.zip"
                     )
                 },
+                {
+                    "name": (
+                        f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}"
+                        "-release-manifest.json"
+                    )
+                },
             ],
         },
     )
@@ -715,6 +721,12 @@ def test_release_version_check_rejects_unexpected_paired_companion_release_asset
                         "-portable.zip"
                     )
                 },
+                {
+                    "name": (
+                        f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}"
+                        "-release-manifest.json"
+                    )
+                },
                 {"name": f"ApplicantScoutCompanionSetup-{stale_version}.exe"},
             ],
         },
@@ -755,6 +767,12 @@ def test_release_version_check_rejects_missing_paired_companion_checksum(
                         "-portable.zip"
                     )
                 },
+                {
+                    "name": (
+                        f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}"
+                        "-release-manifest.json"
+                    )
+                },
             ],
         },
     )
@@ -774,6 +792,52 @@ def test_release_version_check_rejects_missing_paired_companion_checksum(
     assert (
         f"missingasset:ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}"
         ".exe.sha256"
+    ) in output
+
+
+def test_release_version_check_rejects_missing_paired_companion_manifest(
+    tmp_path: Path,
+):
+    gh = _fake_gh_release_view(
+        tmp_path,
+        expected_tag=CURRENT_COMPANION_TAG,
+        release_json={
+            "tagName": CURRENT_COMPANION_TAG,
+            "isDraft": False,
+            "isPrerelease": False,
+            "assets": [
+                {"name": f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}.exe"},
+                {
+                    "name": (
+                        f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}"
+                        ".exe.sha256"
+                    )
+                },
+                {
+                    "name": (
+                        f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}"
+                        "-portable.zip"
+                    )
+                },
+            ],
+        },
+    )
+
+    result = _run_release_check(
+        "-Tag",
+        CURRENT_ADDON_TAG,
+        "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath",
+        str(gh),
+        "-PublishedReleaseWaitSeconds",
+        "0",
+    )
+
+    assert result.returncode != 0
+    output = re.sub(r"\s+", "", result.stdout + result.stderr)
+    assert (
+        f"missingasset:ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}"
+        "-release-manifest.json"
     ) in output
 
 
@@ -799,6 +863,12 @@ def test_release_version_check_rejects_draft_paired_companion_release(
                     "name": (
                         f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}"
                         "-portable.zip"
+                    )
+                },
+                {
+                    "name": (
+                        f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}"
+                        "-release-manifest.json"
                     )
                 },
             ],

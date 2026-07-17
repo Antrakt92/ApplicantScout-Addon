@@ -368,12 +368,14 @@ if ($RequirePublishedPairedCompanionAssets) {
     $ExpectedCompanionAssets = @(
         "ApplicantScoutCompanionSetup-$PairedCompanionVersion.exe",
         "ApplicantScoutCompanionSetup-$PairedCompanionVersion.exe.sha256",
-        "ApplicantScoutCompanion-$PairedCompanionVersion-portable.zip"
+        "ApplicantScoutCompanion-$PairedCompanionVersion-portable.zip",
+        "ApplicantScoutCompanion-$PairedCompanionVersion-release-manifest.json"
     )
     $ProtectedCompanionAssetPatterns = @(
         '^ApplicantScoutCompanionSetup-\d+\.\d+\.\d+\.exe$',
         '^ApplicantScoutCompanionSetup-\d+\.\d+\.\d+\.exe\.sha256$',
-        '^ApplicantScoutCompanion-\d+\.\d+\.\d+-portable\.zip$'
+        '^ApplicantScoutCompanion-\d+\.\d+\.\d+-portable\.zip$',
+        '^ApplicantScoutCompanion-\d+\.\d+\.\d+-release-manifest\.json$'
     )
     Wait-GitHubReleaseAssets `
         -CliPath $GitHubCliPath `
