@@ -6,6 +6,7 @@ if fixture_mode ~= "" and fixture_mode ~= "leader-key"
    and fixture_mode ~= "secret-unit-apis"
    and fixture_mode ~= "secret-leader-owned-key"
    and fixture_mode ~= "secret-leader-keystone"
+   and fixture_mode ~= "invalidated-applicant"
    and fixture_mode ~= "raid19-applicant" then
     error("unsupported fixture mode: " .. tostring(fixture_mode))
 end
@@ -45,6 +46,20 @@ if fixture_mode == "placeholder-applicant" then
             return "Unknown-Realm", "WARRIOR", nil, nil, 710.2, nil, nil, nil, nil,
                 "TANK", nil, 3210, nil, nil, nil, 73
         end
+        return originalGetApplicantMemberInfo(id, memberIndex)
+    end
+end
+if fixture_mode == "invalidated-applicant" then
+    local originalGetApplicantInfo = C_LFGList.GetApplicantInfo
+    C_LFGList.GetApplicantInfo = function(id)
+        if id == 41 then
+            return { applicantID = 41, applicationStatus = "applied", numMembers = 1 }
+        end
+        return originalGetApplicantInfo(id)
+    end
+    local originalGetApplicantMemberInfo = C_LFGList.GetApplicantMemberInfo
+    C_LFGList.GetApplicantMemberInfo = function(id, memberIndex)
+        if id == 41 then error("invalidated applicant token") end
         return originalGetApplicantMemberInfo(id, memberIndex)
     end
 end
@@ -139,7 +154,9 @@ if fixture_mode == "secret-leader-keystone" then
         "PARTY"
     )
 end
-local applicantIDs = secretApplicantToken and { secretApplicantToken } or { 42 }
+local applicantIDs = secretApplicantToken and { secretApplicantToken }
+    or (fixture_mode == "invalidated-applicant" and { 41, 42 })
+    or { 42 }
 local payload = assert(harness.BuildPayload)(entry, applicantIDs, false)
 if fixture_mode == "secret-unit-apis" and notifyInspectCalled then
     error("NotifyInspect called for secret CanInspect")

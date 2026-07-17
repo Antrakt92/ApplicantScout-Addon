@@ -1533,8 +1533,8 @@ def test_applicant_payload_skips_secret_placeholder_names():
         "local function HashSnapshot(payload)",
     )
 
-    assert 'local memberName = SafeStr(name, "")' in payload_body
-    assert "if not _IsPlaceholderUnitName(memberName) then" in payload_body
+    assert 'local memberName = SafeStr(memberInfo and memberInfo.name, "")' in payload_body
+    assert "if memberInfo and not _IsPlaceholderUnitName(memberName) then" in payload_body
 
 
 def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
@@ -2736,9 +2736,37 @@ def test_taintcheck_support_command_skips_lfg_reads_during_chat_lockdown():
     return_idx = taint_body.index("return", skip_idx)
     applicants_idx = taint_body.index("C_LFGList.GetApplicants()")
     info_idx = taint_body.index("entryCreationKeyState.GetApplicantInfoForTransport(rawID)")
-    member_idx = taint_body.index("C_LFGList.GetApplicantMemberInfo")
+    member_idx = taint_body.index(
+        "entryCreationKeyState.GetApplicantMemberInfoForTransport"
+    )
 
     assert guard_idx < skip_idx < return_idx < applicants_idx < info_idx < member_idx
+
+
+def test_applicant_member_reads_share_one_guarded_adapter():
+    source = _lua_source()
+    adapter_body = _slice_between(
+        source,
+        "entryCreationKeyState.GetApplicantMemberInfoForTransport = function(",
+        "-- Big-endian uint packing",
+    )
+    payload_body = _slice_between(
+        source,
+        BUILD_PAYLOAD_ANCHOR,
+        "local function HashSnapshot(payload)",
+    )
+    taint_body = _slice_between(
+        source,
+        'elseif msg == "taintcheck" then',
+        'elseif msg == "reset" then',
+    )
+
+    assert "pcall(C_LFGList.GetApplicantMemberInfo, apiID, memberIndex)" in adapter_body
+    assert "if not ok then return nil end" in adapter_body
+    assert "entryCreationKeyState.GetApplicantMemberInfoForTransport" in payload_body
+    assert "entryCreationKeyState.GetApplicantMemberInfoForTransport" in taint_body
+    assert "C_LFGList.GetApplicantMemberInfo(" not in payload_body
+    assert "C_LFGList.GetApplicantMemberInfo(" not in taint_body
 
 
 def test_lfg_updates_are_polled_instead_of_registered_on_tainted_event_stack():
@@ -3155,6 +3183,23 @@ def test_lua_producer_omits_placeholder_applicant_member_but_keeps_valid_group_m
     assert error is None
     assert snapshot is not None
     assert [applicant.name for applicant in snapshot.applicants] == ["Mageone-Realm"]
+
+
+@pytest.mark.requires_companion
+def test_invalidated_applicant_token_does_not_drop_later_valid_members(pytestconfig):
+    generated = "".join(
+        _run_lua_fixture(pytestconfig, "invalidated-applicant").split()
+    )
+    payload = bytes.fromhex(generated)
+    parse_payload = _companion_payload_parser(pytestconfig)
+    snapshot, error = parse_payload(payload)
+
+    assert error is None
+    assert snapshot is not None
+    assert [(member.applicant_id, member.name) for member in snapshot.applicants] == [
+        (42, "Tankone-Realm"),
+        (42, "Mageone-Realm"),
+    ]
 
 
 @pytest.mark.requires_companion

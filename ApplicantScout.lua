@@ -1751,6 +1751,23 @@ entryCreationKeyState.GetApplicantInfoForTransport = function(rawID)
     return cleanID, info, apiID
 end
 
+entryCreationKeyState.GetApplicantMemberInfoForTransport = function(apiID, memberIndex)
+    if not (C_LFGList and type(C_LFGList.GetApplicantMemberInfo) == "function") then
+        return nil
+    end
+    local ok, name, class, _, _, ilvl, _, _, _, _, role, _, score, _, _, _, specID =
+        pcall(C_LFGList.GetApplicantMemberInfo, apiID, memberIndex)
+    if not ok then return nil end
+    return {
+        name = name,
+        class = class,
+        ilvl = ilvl,
+        role = role,
+        score = score,
+        specID = specID,
+    }
+end
+
 -- Big-endian uint packing
 local function _Uint32BE(n)
     n = math.floor(SafeNumber(n, 0)) % 4294967296
@@ -3964,18 +3981,20 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     local emittedCount = 0
     for _, app in ipairs(validApps) do
         for m = 1, app.members do
-            local name, class, _, _, ilvl, _, _, _, _, role, _, score, _, _, _, specID
-                = C_LFGList.GetApplicantMemberInfo(app.apiID, m)
-            local memberName = SafeStr(name, "")
-            if not _IsPlaceholderUnitName(memberName) then
-                local classToken = SafeEnumKey(class, "")
-                local roleToken = SafeEnumKey(role, "DAMAGER")
+            local memberInfo =
+                entryCreationKeyState.GetApplicantMemberInfoForTransport(app.apiID, m)
+            local memberName = SafeStr(memberInfo and memberInfo.name, "")
+            if memberInfo and not _IsPlaceholderUnitName(memberName) then
+                local classToken = SafeEnumKey(memberInfo.class, "")
+                local roleToken = SafeEnumKey(memberInfo.role, "DAMAGER")
                 table.insert(memberOut, _Uint32BE(app.id))
                 table.insert(memberOut, string.char(m))
                 table.insert(memberOut, string.char(CLASS_NAME_TO_ID[classToken] or 0))
-                table.insert(memberOut, _Uint16BE(SafeNumber(specID, 0)))
-                table.insert(memberOut, _Uint16BE(SafeRoundedNumber(ilvl, 0)))
-                table.insert(memberOut, _Uint16BE(_ClampUInt16(SafeRoundedNumber(score, 0))))
+                table.insert(memberOut, _Uint16BE(SafeNumber(memberInfo.specID, 0)))
+                table.insert(memberOut, _Uint16BE(SafeRoundedNumber(memberInfo.ilvl, 0)))
+                table.insert(memberOut, _Uint16BE(_ClampUInt16(
+                    SafeRoundedNumber(memberInfo.score, 0)
+                )))
                 local rioSummary = _GetRaiderIOMPlusSummary(
                     _RaiderIOProfileLookupName(memberName),
                     listingActivityIDForRio,
@@ -5963,22 +5982,30 @@ SlashCmdList.APSCOUT = function(msg)
         for i = 1, math.min(3, #applicants) do
             local rawID = applicants[i]
             local id, info, apiID = entryCreationKeyState.GetApplicantInfoForTransport(rawID)
-            local name, class, ilvl, role, score, specID
+            local memberInfo = nil
             if id and id > 0 then
-                name, class, _, _, ilvl, _, _, _, _, role, _, score, _, _, _, specID
-                    = C_LFGList.GetApplicantMemberInfo(apiID or id, 1)
+                memberInfo = entryCreationKeyState.GetApplicantMemberInfoForTransport(
+                    apiID or id,
+                    1
+                )
             end
             print(string.format("  #%d id=%s (id_secret=%s) status=%s",
                   i, SafeDiag(id), tostring(IsSecretValue(rawID)),
                   info and SafeDiag(_GetApplicantApplicationStatus(info)) or "n/a"))
             print(string.format("    name=%s(s=%s) class=%s(s=%s) specID=%s(s=%s)",
-                  SafeDiag(name), tostring(IsSecretValue(name)),
-                  SafeDiag(class), tostring(IsSecretValue(class)),
-                  SafeDiag(specID), tostring(IsSecretValue(specID))))
+                  SafeDiag(memberInfo and memberInfo.name),
+                  tostring(IsSecretValue(memberInfo and memberInfo.name)),
+                  SafeDiag(memberInfo and memberInfo.class),
+                  tostring(IsSecretValue(memberInfo and memberInfo.class)),
+                  SafeDiag(memberInfo and memberInfo.specID),
+                  tostring(IsSecretValue(memberInfo and memberInfo.specID))))
             print(string.format("    ilvl=%s(s=%s) score=%s(s=%s) role=%s(s=%s)",
-                  SafeDiag(ilvl), tostring(IsSecretValue(ilvl)),
-                  SafeDiag(score), tostring(IsSecretValue(score)),
-                  SafeDiag(role), tostring(IsSecretValue(role))))
+                  SafeDiag(memberInfo and memberInfo.ilvl),
+                  tostring(IsSecretValue(memberInfo and memberInfo.ilvl)),
+                  SafeDiag(memberInfo and memberInfo.score),
+                  tostring(IsSecretValue(memberInfo and memberInfo.score)),
+                  SafeDiag(memberInfo and memberInfo.role),
+                  tostring(IsSecretValue(memberInfo and memberInfo.role))))
         end
     elseif msg == "reset" then
         -- Queue a fresh snapshot on the next eligible scan-tick. Clears dedup
