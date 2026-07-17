@@ -1596,9 +1596,9 @@ local function RestoreScreenshotCVars(quiet)
     if not ApplicantScoutDB then return end
 
     if ApplicantScoutDB.priorScreenshotQuality ~= nil then
-        local prior = tonumber(ApplicantScoutDB.priorScreenshotQuality) or 0
+        local prior = SafeNumber(ApplicantScoutDB.priorScreenshotQuality, -1)
         local currentQuality = tonumber(GetCVar("screenshotQuality")) or 0
-        if prior >= 0 and prior <= 10 then
+        if prior >= 1 and prior <= 10 and prior == math.floor(prior) then
             if currentQuality == 8 then
                 SetCVar("screenshotQuality", tostring(prior))
                 if APSPrint and not quiet then
@@ -1613,9 +1613,15 @@ local function RestoreScreenshotCVars(quiet)
     end
 
     if ApplicantScoutDB.priorScreenshotFormat ~= nil then
-        local priorFormat = tostring(ApplicantScoutDB.priorScreenshotFormat or "")
+        local rawPriorFormat = ApplicantScoutDB.priorScreenshotFormat
+        local priorFormat = type(rawPriorFormat) == "string"
+            and rawPriorFormat:lower() or ""
         local currentFormat = tostring(GetCVar("screenshotFormat") or "")
-        if priorFormat ~= "" then
+        local validPriorFormat = priorFormat == "jpg"
+            or priorFormat == "jpeg"
+            or priorFormat == "png"
+            or priorFormat == "tga"
+        if validPriorFormat then
             if currentFormat:lower() == "jpg" then
                 SetCVar("screenshotFormat", priorFormat)
                 if APSPrint and not quiet then

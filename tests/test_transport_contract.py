@@ -19,6 +19,9 @@ LUA_QR_RUN_CHUNKING_CHECK = REPO_ROOT / "tests" / "lua" / "check_qr_run_chunking
 LUA_QR_CAPTURE_LIFECYCLE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_qr_capture_lifecycle.lua"
 )
+LUA_SCREENSHOT_CVAR_RECOVERY_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_screenshot_cvar_recovery.lua"
+)
 LUA_ROSTER_INSPECT_EXHAUSTION_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_inspect_exhaustion.lua"
 )
@@ -2919,6 +2922,19 @@ def test_roster_only_snapshot_gets_one_bounded_redundant_capture(pytestconfig):
     ).strip()
 
     assert output == "ok qr-capture-lifecycle mode=roster-only shots=2"
+
+
+@pytest.mark.parametrize("mode", ["idle", "active"])
+def test_screenshot_cvar_recovery_rejects_malformed_stashes_in_lua51(
+    pytestconfig, mode
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_SCREENSHOT_CVAR_RECOVERY_CHECK,
+        mode,
+    ).strip()
+
+    assert output == f"ok screenshot-cvar-recovery mode={mode}"
 
 
 def test_numeric_transport_boundaries_are_finite_and_clamped_in_lua51(pytestconfig):
