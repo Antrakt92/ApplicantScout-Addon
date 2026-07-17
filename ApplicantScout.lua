@@ -292,6 +292,7 @@ local entryCreationKeyState = {
     autoHiNewPartyRetryDeadline = nil,
     autoHiNewPartyRetryGeneration = nil,
     rosterInspectIlvlByGUID = {},
+    rosterInspectKnownGUIDs = {},
 }
 local ENTRY_CREATION_KEY_CACHE_TTL = 3600
 
@@ -562,6 +563,8 @@ StartSession = function()
     entryCreationKeyState.MarkRosterCompositionChanged()
     entryCreationKeyState.ClearRosterInspectBatchState()
     entryCreationKeyState.ClearRosterInspectFailureState()
+    entryCreationKeyState.ResetRosterInspectDataCache()
+    entryCreationKeyState.ReconcileRosterInspectMembership()
     entryCreationKeyState.ClearRosterLoadRetryState()
     entryCreationKeyState.RequestLeaderKeystone(true)
 
@@ -2533,19 +2536,74 @@ local function _FindRosterUnitByGUID(guid)
     return found
 end
 
+entryCreationKeyState.ClearRosterInspectDataForGUID = function(guid)
+    guid = SafeStr(guid, "")
+    if guid == "" then return end
+    rosterInspectSpecByGUID[guid] = nil
+    entryCreationKeyState.rosterInspectIlvlByGUID[guid] = nil
+    if rosterInspectPendingGUID == guid then
+        rosterInspectPendingGUID = nil
+    end
+    if entryCreationKeyState.ClearRosterInspectFailureForGUID then
+        entryCreationKeyState.ClearRosterInspectFailureForGUID(guid)
+    end
+end
+
+entryCreationKeyState.ResetRosterInspectDataCache = function()
+    rosterInspectSpecByGUID = {}
+    entryCreationKeyState.rosterInspectIlvlByGUID = {}
+    entryCreationKeyState.rosterInspectKnownGUIDs = {}
+    rosterInspectPendingGUID = nil
+end
+
+entryCreationKeyState.ReconcileRosterInspectMembership = function()
+    local currentGUIDs = {}
+    local expectedCount = math.floor(SafeNumber(
+        GetNumGroupMembers and GetNumGroupMembers(),
+        0
+    ))
+    local visitedCount = 0
+    local complete = true
+    _ForEachRosterUnit(function(unit)
+        visitedCount = visitedCount + 1
+        local guid = entryCreationKeyState.UnitGUIDForRoster(unit)
+        if guid == "" then
+            complete = false
+        else
+            currentGUIDs[guid] = true
+        end
+        return false
+    end)
+    if visitedCount ~= expectedCount then complete = false end
+
+    if not complete then
+        -- A secret/unavailable unit identity makes selective reconciliation
+        -- unsafe. Prefer fresh inspection work over emitting stale member data.
+        entryCreationKeyState.ResetRosterInspectDataCache()
+        if entryCreationKeyState.ClearRosterInspectFailureState then
+            entryCreationKeyState.ClearRosterInspectFailureState()
+        end
+    else
+        for guid in pairs(entryCreationKeyState.rosterInspectKnownGUIDs) do
+            if not currentGUIDs[guid] then
+                entryCreationKeyState.ClearRosterInspectDataForGUID(guid)
+            end
+        end
+    end
+    entryCreationKeyState.rosterInspectKnownGUIDs = currentGUIDs
+    return complete
+end
+
 local function _InvalidateRosterSpecCacheForUnit(unit)
     local guid = entryCreationKeyState.UnitGUIDForRoster(unit)
     if guid ~= "" then
-        rosterInspectSpecByGUID[guid] = nil
-        entryCreationKeyState.rosterInspectIlvlByGUID[guid] = nil
-        if rosterInspectPendingGUID == guid then
-            rosterInspectPendingGUID = nil
-        end
+        entryCreationKeyState.ClearRosterInspectDataForGUID(guid)
         return
     end
-    rosterInspectSpecByGUID = {}
-    entryCreationKeyState.rosterInspectIlvlByGUID = {}
-    rosterInspectPendingGUID = nil
+    entryCreationKeyState.ResetRosterInspectDataCache()
+    if entryCreationKeyState.ClearRosterInspectFailureState then
+        entryCreationKeyState.ClearRosterInspectFailureState()
+    end
 end
 
 local function _MaybeRequestRosterInspect(unit, guid)
@@ -5022,6 +5080,7 @@ local EVENT_HANDLERS = {
         MarkDirty("ldrchg")
     end,
     GROUP_ROSTER_UPDATE              = function()
+        entryCreationKeyState.ReconcileRosterInspectMembership()
         entryCreationKeyState.MarkRosterCompositionChanged()
         MarkDirty("roster")
         entryCreationKeyState.RequestLeaderKeystone(false)
@@ -5055,6 +5114,13 @@ local EVENT_HANDLERS = {
         _OnRosterInspectReady(guid)
     end,
 }
+
+if type(_G.ApplicantScoutFixtureHarness) == "table" then
+    _G.ApplicantScoutFixtureHarness.FireEvent = function(event, ...)
+        local handler = EVENT_HANDLERS[event]
+        if handler then return handler(event, ...) end
+    end
+end
 
 -- Bind every interaction event to _OnInteractionEvent. Loop populates the
 -- table directly so the registration loop below picks them up automatically.

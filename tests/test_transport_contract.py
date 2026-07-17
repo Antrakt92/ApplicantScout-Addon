@@ -22,6 +22,9 @@ LUA_QR_CAPTURE_LIFECYCLE_CHECK = (
 LUA_ROSTER_INSPECT_EXHAUSTION_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_inspect_exhaustion.lua"
 )
+LUA_ROSTER_INSPECT_REJOIN_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_roster_inspect_rejoin.lua"
+)
 LUA_LARGE_QR_BUDGET_CHECK = REPO_ROOT / "tests" / "lua" / "check_large_qr_budget.lua"
 LUA_LARGE_QR_ROSTER_FALLBACK_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_large_qr_prefers_roster_fallback.lua"
@@ -2962,15 +2965,35 @@ def test_roster_spec_cache_invalidation_clears_pending_inspect_for_changed_guid(
     source = _lua_source()
     helper_body = _slice_between(
         source,
-        "local function _InvalidateRosterSpecCacheForUnit(unit)",
+        "entryCreationKeyState.ClearRosterInspectDataForGUID = function(guid)",
         "local function _MaybeRequestRosterInspect(unit, guid)",
     )
 
-    assert "local guid = entryCreationKeyState.UnitGUIDForRoster(unit)" in helper_body
     assert "rosterInspectSpecByGUID[guid] = nil" in helper_body
     assert "if rosterInspectPendingGUID == guid then" in helper_body
     assert "rosterInspectPendingGUID = nil" in helper_body
     assert "rosterInspectSpecByGUID = {}" in helper_body
+    assert "entryCreationKeyState.ClearRosterInspectDataForGUID(guid)" in helper_body
+
+
+def test_roster_membership_is_reconciled_before_transport_is_marked_dirty():
+    source = _lua_source()
+    events_body = _slice_between(
+        source,
+        "local EVENT_HANDLERS = {",
+        "-- Bind every interaction event",
+    )
+    handler_body = _slice_between(
+        events_body,
+        "GROUP_ROSTER_UPDATE              = function()",
+        "GROUP_LEFT",
+    )
+
+    reconcile_idx = handler_body.index(
+        "entryCreationKeyState.ReconcileRosterInspectMembership()"
+    )
+    dirty_idx = handler_body.index('MarkDirty("roster")')
+    assert reconcile_idx < dirty_idx
 
 
 def test_roster_dirty_events_are_registered():
@@ -2990,6 +3013,27 @@ def test_roster_dirty_events_are_registered():
     assert 'PLAYER_SPECIALIZATION_CHANGED      = function(_, unit)' in events_body
     assert "_InvalidateRosterSpecCacheForUnit(unit)" in events_body
     assert 'MarkDirty("spec")' in events_body
+
+
+@pytest.mark.requires_companion
+def test_roster_member_rejoin_refreshes_cached_payload_identity(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_ROSTER_INSPECT_REJOIN_CHECK)
+    payloads = [bytes.fromhex(line.strip()) for line in output.splitlines() if line.strip()]
+    assert len(payloads) == 2
+
+    parse_payload = _companion_payload_parser(pytestconfig)
+    snapshots = []
+    for payload in payloads:
+        snapshot, error = parse_payload(payload)
+        assert error is None
+        assert snapshot is not None
+        snapshots.append(snapshot)
+
+    before = next(member for member in snapshots[0].roster if member.name == "Friend-Realm")
+    after = next(member for member in snapshots[1].roster if member.name == "Friend-Realm")
+
+    assert (before.spec_id, before.ilvl, before.role) == (256, 704, 1)
+    assert (after.spec_id, after.ilvl, after.role) == (258, 799, 2)
 
 
 @pytest.mark.requires_companion
