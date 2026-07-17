@@ -103,6 +103,31 @@ jobs:
         shell: pwsh
         run: choco install lua51 --version=5.1.5 -y --no-progress
 
+      - name: Install pinned LuaLS
+        shell: pwsh
+        working-directory: ApplicantScout-Addon
+        run: |
+          $Locks = Get-Content -LiteralPath scripts\tool-version-locks.json -Raw -Encoding UTF8 | ConvertFrom-Json
+          $Tool = $Locks.luaLanguageServer
+          $Archive = Join-Path $env:RUNNER_TEMP "lua-language-server-$($Tool.version)-win32-x64.zip"
+          $InstallRoot = Join-Path $env:RUNNER_TEMP "lua-language-server-$($Tool.version)"
+          Invoke-WebRequest -Uri $Tool.windowsX64.url -OutFile $Archive
+          $ActualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Archive).Hash.ToLowerInvariant()
+          if ($ActualHash -ne $Tool.windowsX64.sha256) {
+            throw "LuaLS archive hash mismatch: $ActualHash"
+          }
+          Expand-Archive -LiteralPath $Archive -DestinationPath $InstallRoot -Force
+          $LuaLS = Join-Path $InstallRoot "bin\lua-language-server.exe"
+          if (-not (Test-Path -LiteralPath $LuaLS -PathType Leaf)) {
+            throw "LuaLS archive is missing bin\lua-language-server.exe"
+          }
+          "APSCOUT_LUALS=$LuaLS" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Check addon Lua diagnostics
+        shell: pwsh
+        working-directory: ApplicantScout-Addon
+        run: .\scripts\check-lua.ps1 -LuaLanguageServer $env:APSCOUT_LUALS
+
       - name: Check paired companion and addon contracts
         shell: pwsh
         working-directory: ApplicantScout-Companion

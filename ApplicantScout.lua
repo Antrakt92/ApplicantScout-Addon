@@ -131,6 +131,7 @@ local QR_RENDER_SETTLE_S = 0.3         -- lets QR paint reach framebuffer before
 local QR_QUIET_ZONE = 2                -- modules of white border around QR
 local QR_EC_LEVEL = 2                  -- error correction: 1=L 2=M 3=Q 4=H. M=15% recovery
 
+---@type any
 local qrFrame = nil                    -- containing frame
 local qrBackground = nil               -- one white texture covering entire frame
 local qrTexturePool = {}               -- pool of black-module rectangle textures (reused)
@@ -711,7 +712,7 @@ end
 entryCreationKeyState.ClearAutoHiSendRetry = function(kind)
     local tokenField, deadlineField, generationField =
         entryCreationKeyState.AutoHiRetryFields(kind)
-    if not tokenField then return end
+    if not (tokenField and deadlineField and generationField) then return end
     entryCreationKeyState[tokenField] =
         (entryCreationKeyState[tokenField] or 0) + 1
     entryCreationKeyState[deadlineField] = nil
@@ -771,7 +772,7 @@ entryCreationKeyState.ScheduleAutoHiSendRetry = function(kind, generation, attem
 
     local tokenField, deadlineField, generationField =
         entryCreationKeyState.AutoHiRetryFields(kind)
-    if not tokenField then return false end
+    if not (tokenField and deadlineField and generationField) then return false end
     local now = GetTime and GetTime() or 0
     local delay = entryCreationKeyState.AUTO_HI_RETRY_DELAY_S
     local due = now + delay
@@ -3890,6 +3891,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
             end
             if shouldUseOwnedKeystone then
                 activityID = ownedActivityID
+                ---@cast ownedInfo table
                 activityInfo = ownedInfo
                 dungeonName = _ActivityInfoListingName(activityInfo)
                 categoryID = math.floor(SafeNumber(activityInfo.categoryID, categoryID))
