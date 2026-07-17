@@ -28,6 +28,9 @@ LUA_ROSTER_INSPECT_REJOIN_CHECK = (
 LUA_LEADER_KEY_REFRESH_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_leader_keystone_refresh.lua"
 )
+LUA_LEADER_KEY_VALIDATION_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_leader_keystone_validation.lua"
+)
 LUA_LARGE_QR_BUDGET_CHECK = REPO_ROOT / "tests" / "lua" / "check_large_qr_budget.lua"
 LUA_LARGE_QR_ROSTER_FALLBACK_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_large_qr_prefers_roster_fallback.lua"
@@ -2922,6 +2925,12 @@ def test_numeric_transport_boundaries_are_finite_and_clamped_in_lua51(pytestconf
     output = _run_lua_script(pytestconfig, LUA_NUMERIC_BOUNDARIES_CHECK).strip()
 
     assert output == "ok numeric-boundaries"
+
+
+def test_leader_keystone_callbacks_reject_malformed_values_in_lua51(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_LEADER_KEY_VALIDATION_CHECK).strip()
+
+    assert output == "ok leader-keystone-validation"
 
 
 def test_roster_inspect_timeout_is_bounded_per_guid_and_session(pytestconfig):

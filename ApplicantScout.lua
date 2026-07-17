@@ -3516,18 +3516,27 @@ entryCreationKeyState.OnLeaderKeystoneData = function(keyLevel, challengeMapID, 
     local leaderName = entryCreationKeyState.CurrentPartyLeaderName()
     if leaderName == "" then return end
     if not entryCreationKeyState.PlayerNamesMatch(playerName, leaderName) then return end
-    keyLevel = math.floor(SafeNumber(keyLevel, 0))
-    challengeMapID = math.floor(SafeNumber(challengeMapID, 0))
-    if keyLevel <= 0 then
+    local rawKeyLevel = SafeNumber(keyLevel, -1)
+    local rawChallengeMapID = SafeNumber(challengeMapID, -1)
+    if rawKeyLevel == 0 and rawChallengeMapID == 0 then
         entryCreationKeyState.ClearLeaderKeystone()
         MarkDirty("leaderkey")
         return
     end
+    keyLevel = _NormalizeKeystoneLevel(rawKeyLevel)
+    if rawKeyLevel ~= math.floor(rawKeyLevel)
+       or keyLevel <= 0
+       or rawChallengeMapID ~= math.floor(rawChallengeMapID)
+       or rawChallengeMapID <= 0
+       or rawChallengeMapID > 65535 then
+        return
+    end
+    challengeMapID = rawChallengeMapID
     entryCreationKeyState.CancelLeaderKeystoneRefresh()
     entryCreationKeyState.CancelLeaderKeystoneRequestRetry()
     entryCreationKeyState.leaderKeystone = {
-        level = _ClampUInt8(keyLevel),
-        challengeMapID = _ClampUInt16(challengeMapID),
+        level = keyLevel,
+        challengeMapID = challengeMapID,
         playerName = leaderName,
         at = GetTime and GetTime() or 0,
     }
