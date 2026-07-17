@@ -35,6 +35,9 @@ LUA_LARGE_QR_ROSTER_FALLBACK_CHECK = (
 LUA_RAID19_APPLICANT_QR_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_raid19_applicant_qr.lua"
 )
+LUA_NUMERIC_BOUNDARIES_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_numeric_boundaries.lua"
+)
 LUA_GOLDEN_CASES = (
     (None, "aps1_v8_lua_golden.hex"),
     ("leader-key", "aps1_v8_lua_leader_key_golden.hex"),
@@ -2913,6 +2916,12 @@ def test_roster_only_snapshot_gets_one_bounded_redundant_capture(pytestconfig):
     ).strip()
 
     assert output == "ok qr-capture-lifecycle mode=roster-only shots=2"
+
+
+def test_numeric_transport_boundaries_are_finite_and_clamped_in_lua51(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_NUMERIC_BOUNDARIES_CHECK).strip()
+
+    assert output == "ok numeric-boundaries"
 
 
 def test_roster_inspect_timeout_is_bounded_per_guid_and_session(pytestconfig):

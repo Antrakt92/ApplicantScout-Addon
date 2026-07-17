@@ -378,7 +378,9 @@ local function SafeNumber(v, default)
     local tv = type(v)
     if tv ~= "number" and tv ~= "string" then return default or 0 end
     local n = tonumber(v)
-    if n == nil or n ~= n then return default or 0 end
+    if n == nil or n ~= n or n == math.huge or n == -math.huge then
+        return default or 0
+    end
     return n
 end
 
@@ -4073,6 +4075,11 @@ local function HashSnapshot(payload)
 end
 
 if type(_G.ApplicantScoutFixtureHarness) == "table" then
+    _G.ApplicantScoutFixtureHarness.SafeNumber = SafeNumber
+    _G.ApplicantScoutFixtureHarness.Uint32BE = _Uint32BE
+    _G.ApplicantScoutFixtureHarness.Uint16BE = _Uint16BE
+    _G.ApplicantScoutFixtureHarness.ClampUInt16 = _ClampUInt16
+    _G.ApplicantScoutFixtureHarness.ClampUInt8 = _ClampUInt8
     _G.ApplicantScoutFixtureHarness.BuildPayload = BuildPayload
     _G.ApplicantScoutFixtureHarness.HashSnapshot = HashSnapshot
     _G.ApplicantScoutFixtureHarness.StartSession = StartSession
