@@ -10,8 +10,8 @@ focused on applicant scouting, playstyle, and Auto Hi.
 
 ### Fixed
 
-- Companion `0.10.0` prevents packaged and developer launches from opening two
-  overlay windows when its local single-instance control endpoint is unavailable.
+- Companion `0.10.0` routes packaged, developer, and WoW-watcher launches through
+  one atomic single-instance endpoint so they cannot open duplicate overlays.
 - A scan tick can no longer replace a completed QR while its screenshot is
   waiting for the framebuffer settle window, fixing the reload-only recovery
   seen even with five applicants and a two-player group.
@@ -25,6 +25,12 @@ focused on applicant scouting, playstyle, and Auto Hi.
   unit data without poisoning the current snapshot.
 - Roster inspect retries and leader-key refreshes are bounded and discard stale
   group context after roster changes.
+- Changed Party snapshots with no applicants receive one bounded redundant
+  capture, so one malformed screenshot cannot lose the update while stable state
+  remains free of periodic heartbeats.
+- A failed `Screenshot()` call keeps the same snapshot retryable instead of
+  recording a false delivery, and terminal-clear retries are serialized and
+  bounded.
 - `/apscout qrvisible` now survives `/reload`; disabling the addon clears the
   override so a stopped transport cannot restore an always-visible QR.
 
@@ -44,6 +50,8 @@ focused on applicant scouting, playstyle, and Auto Hi.
   older than the paired release.
 - Companion `0.10.0` adds keyboard navigation, clearer grouped-applicant and M+
   evidence, and more explicit screenshot/WCL health states.
+- Companion `0.10.0` uses the full current Chimaerus, the Undreamt God and
+  Belo'ren, Child of Al'ar encounter names in Warcraft Logs evidence.
 
 ### Changed
 
