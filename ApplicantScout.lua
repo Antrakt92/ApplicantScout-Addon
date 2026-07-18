@@ -56,6 +56,9 @@ local DB_DEFAULTS = {
     -- Opt-in extra greeting for replacements/new joins in 5-player parties.
     -- Raids are intentionally excluded to avoid noisy roster churn greetings.
     autoHiGreetNewPartyMembers = false,
+    -- Persistent support override for `/apscout qrvisible`. Disabling the
+    -- addon clears it so an intentionally stopped transport stays invisible.
+    qrAlwaysVisible = false,
     -- One-shot migration sentinel. Existing installs may have `debug=true`
     -- stuck from a prior `/apscout debug on` (default flipped from "on-stuck"
     -- to "off after explicit toggle" in this version). When the key is
@@ -526,6 +529,9 @@ InitDB = function()
         entryCreationKeyState.NormalizeSavedBoolean(
             ApplicantScoutDB.autoHiGreetNewPartyMembers
         )
+    entryCreationKeyState.SetQRAlwaysVisible(entryCreationKeyState.NormalizeSavedBoolean(
+        ApplicantScoutDB.qrAlwaysVisible
+    ))
     ApplicantScoutDB.debugDefaultMigrated =
         entryCreationKeyState.NormalizeSavedBoolean(
             ApplicantScoutDB.debugDefaultMigrated
@@ -1191,10 +1197,12 @@ local function CreateQRFrame()
     qrBackground:SetAllPoints(qrFrame)
 
     qrFrameCreated = true
-    -- Hidden by default. Screenshot dispatch takes a temporary visibility
-    -- lease only after a changed payload has been painted.
+    -- Hidden by default unless the persisted support override is enabled.
+    -- Screenshot dispatch otherwise takes a temporary visibility lease only
+    -- after a changed payload has been painted.
     if _RefreshQRMouse then _RefreshQRMouse() end
     qrFrame:Hide()
+    if _RefreshQRVisibility then _RefreshQRVisibility() end
 end
 
 -- /apscout qrvisible state — forces frame to stay visible regardless of session
@@ -1202,6 +1210,16 @@ end
 -- can respect the toggle when hiding the frame.
 qrAlwaysVisible = false
 qrMoveMode = false
+
+-- Keep the runtime visibility decision and SavedVariable atomic. Visibility
+-- refresh is deliberately owned by the caller so disable cleanup can clear
+-- qrMoveMode before deciding whether the frame should remain shown.
+entryCreationKeyState.SetQRAlwaysVisible = function(flag)
+    local enabled = flag == true
+    qrAlwaysVisible = enabled
+    if ApplicantScoutDB then ApplicantScoutDB.qrAlwaysVisible = enabled end
+    return enabled
+end
 
 -- ───────────────────────────────────────────────────────────
 -- QR auto-fade on Blizzard interaction frames
@@ -5022,6 +5040,7 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
             paintInProgress = entryCreationKeyState.qrPaintInProgress == true,
             captureInProgress = entryCreationKeyState.qrCaptureInProgress == true,
             forceVisible = qrForceVisibleForShot == true,
+            alwaysVisible = qrAlwaysVisible == true,
             qrFrameShown = qrFrame and qrFrame:IsShown() or false,
             screenshotFailureHash = entryCreationKeyState.screenshotFailureHash,
             screenshotFailureAttemptCount =
@@ -5483,7 +5502,7 @@ local function _RunDisabledCleanup()
 
     -- Reset before EndSession's deferred Hide closure fires so it respects
     -- "off" semantics even when user had debug visibility/move mode enabled.
-    qrAlwaysVisible = false
+    entryCreationKeyState.SetQRAlwaysVisible(false)
     qrMoveMode = false
     _RefreshQRMouse()
     if entryCreationKeyState.SyncTroubleshootingButtons then
@@ -6229,7 +6248,7 @@ local function PrintHelp()
     print("  /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle")
     print("  /apscout reset          clear transport cache, queue fresh snapshot")
     print("  /apscout shotnow        force snapshot now while enabled (debug / manual sync)")
-    print("  /apscout qrvisible      toggle QR frame always-visible (debug aid)")
+    print("  /apscout qrvisible      toggle persistent QR always-visible mode; off clears it")
     print("  /apscout qrmove         toggle QR move mode (Alt+drag QR frame)")
     print("  /apscout qrreset        reset QR frame position to top-left")
     print("  /apscout taintcheck     probe C_LFGList field secret-tagging")
@@ -6342,13 +6361,10 @@ SlashCmdList.APSCOUT = function(msg)
     elseif msg == "shotnow" then
         entryCreationKeyState.RequestForcedSnapshot()
     elseif msg == "qrvisible" then
-        -- Toggle debug-visible override. _RefreshQRVisibility resolves all four
-        -- corners of the (qrAlwaysVisible × isSessionActive) cross-product
-        -- correctly via the (sessionActive AND NOT suppressed) OR alwaysVisible
-        -- formula — no nested if needed here. Bonus: qrAlwaysVisible=true now
-        -- correctly un-suppresses an interaction-faded QR (debug intent: show
-        -- regardless).
-        qrAlwaysVisible = not qrAlwaysVisible
+        -- Toggle and persist the debug-visible override. It remains available
+        -- after `/reload`; `/apscout off` clears it so disabling the addon
+        -- cannot unexpectedly restore a visible QR on the next login.
+        entryCreationKeyState.SetQRAlwaysVisible(not qrAlwaysVisible)
         _RefreshQRVisibility()
         APSPrint("QR frame always-visible: " .. tostring(qrAlwaysVisible))
     elseif msg == "qrmove" then

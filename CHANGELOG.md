@@ -8,6 +8,11 @@
   Reset QR, and Debug controls for common screenshot and QR recovery without
   requiring memorized slash commands.
 
+### Fixed
+
+- `/apscout qrvisible` now survives `/reload`; disabling the addon clears the
+  override so a stopped transport cannot restore an always-visible QR.
+
 ## 0.5.3 - 16-Jul-2026 - Companion 0.9.3 capture lifecycle recovery
 
 This paired addon + companion patch keeps APS1 v9 unchanged while preventing

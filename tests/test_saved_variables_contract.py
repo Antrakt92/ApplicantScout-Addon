@@ -59,6 +59,10 @@ def test_initdb_fails_closed_for_wrong_type_booleans(pytestconfig):
     assert _run_db_check(pytestconfig, "wrong-types") == "ok wrong-types"
 
 
+def test_qr_always_visible_persists_and_disable_clears_it(pytestconfig):
+    assert _run_db_check(pytestconfig, "qr-visible") == "ok qr-visible"
+
+
 def test_mplus_default_playstyle_applies_to_new_mplus_create_forms(pytestconfig):
     assert _run_default_playstyle_check(pytestconfig, "apply-default") == "ok apply-default"
 
