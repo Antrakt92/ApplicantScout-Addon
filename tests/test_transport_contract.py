@@ -53,6 +53,9 @@ LUA_APPLICANT_SERIALIZATION_REUSE_CHECK = (
 LUA_ROSTER_SERIALIZATION_REUSE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_serialization_reuse.lua"
 )
+LUA_TRANSPORT_STRING_SANITIZATION_REUSE_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_transport_string_sanitization_reuse.lua"
+)
 LUA_NUMERIC_BOUNDARIES_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_numeric_boundaries.lua"
 )
@@ -842,13 +845,15 @@ def test_roster_name_filters_unknown_placeholder_unit_names():
     source = _lua_source()
     name_body = _slice_between(
         source,
-        "local function _IsPlaceholderUnitName(name)",
+        "local function _IsPlaceholderCleanUnitName(name)",
         "local function _UnitClassIDForRoster(unit)",
     )
 
-    helper_idx = name_body.index("local function _IsPlaceholderUnitName(name)")
+    helper_idx = name_body.index("local function _IsPlaceholderCleanUnitName(name)")
     unit_name_idx = name_body.index("local function _UnitFullNameForTransport(unit)")
-    guard_idx = name_body.index('if _IsPlaceholderUnitName(name) then return "" end')
+    guard_idx = name_body.index(
+        'if _IsPlaceholderCleanUnitName(name) then return "" end'
+    )
 
     assert helper_idx < unit_name_idx < guard_idx
     assert "_G.UNKNOWNOBJECT" in name_body
@@ -934,7 +939,7 @@ def test_payload_still_includes_raiderio_completion_summary():
     )
 
     assert "string.char(0x09)" in payload_body
-    assert "_GetRaiderIOMPlusSummary(" in source
+    assert "_GetRaiderIOMPlusSummaryForCleanName(" in source
     assert "rioSummary.hasProfile" in payload_body
     assert "rioSummary.bestDungeonKey" in payload_body
 
@@ -971,7 +976,7 @@ def test_payload_v7_appends_leader_keystone_before_applicants():
     applicants_idx = payload_body.index("local validApps = {}")
     assert leader_idx < pack_idx < applicants_idx
     assert "string.char(_ClampUInt8(leaderKeystone.level))" in payload_body
-    assert "_PackLenStr(out, leaderKeystone.playerName)" in payload_body
+    assert "_PackCleanLenStr(out, leaderKeystone.playerName)" in payload_body
 
 
 def test_leader_keystone_soft_dep_uses_libkeystone_party_protocol():
@@ -1274,9 +1279,9 @@ def test_quiet_full_party_signature_uses_collision_safe_encoding():
     assert 'table.concat({' not in payload_body
     assert 'string.format(\n            "%d:%d:%s' not in roster_body
     assert "listingQuietOut" in payload_body
-    assert "_PackLenStr(listingQuietOut, dungeonName)" in payload_body
+    assert "_PackCleanLenStr(listingQuietOut, dungeonName)" in payload_body
     assert "rosterQuietOut" not in roster_body
-    assert "_PackLenStr(rosterOut, row.name)" in roster_body
+    assert "_PackCleanLenStr(rosterOut, row.name)" in roster_body
     assert "local rosterPayload = table.concat(rosterOut)" in roster_body
 
 
@@ -1313,8 +1318,8 @@ def test_quiet_full_party_signature_covers_companion_visible_roster_fields():
 
     for field in expected_fields:
         assert field in roster_body[serialize_idx:payload_idx]
-    assert roster_body.count("_GetRaiderIOMPlusSummary(") == 1
-    assert roster_body.count("_PackLenStr(rosterOut, row.name)") == 1
+    assert roster_body.count("_GetRaiderIOMPlusSummaryForCleanName(") == 1
+    assert roster_body.count("_PackCleanLenStr(rosterOut, row.name)") == 1
     assert "return rosterPayload, emittedCount, rosterPayload" in roster_body
 
 
@@ -1565,7 +1570,10 @@ def test_applicant_payload_skips_secret_placeholder_names():
     )
 
     assert 'local memberName = SafeStr(memberInfo and memberInfo.name, "")' in payload_body
-    assert "if memberInfo and not _IsPlaceholderUnitName(memberName) then" in payload_body
+    assert (
+        "if memberInfo and not _IsPlaceholderCleanUnitName(memberName) then"
+        in payload_body
+    )
 
 
 def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
@@ -1918,9 +1926,9 @@ def test_roster_payload_rows_include_key_summary_and_group_metadata():
     assert 'table.insert(rosterOut, string.char(_ClampUInt8(row.unitIndex)))' in roster_body
     assert 'table.insert(rosterOut, string.char(_ClampUInt8(row.flags)))' in roster_body
     assert 'table.insert(rosterOut, string.char(_ClampUInt8(row.subgroup)))' in roster_body
-    assert "_GetRaiderIOMPlusSummary(" in roster_body
+    assert "_GetRaiderIOMPlusSummaryForCleanName(" in roster_body
     assert "rioSummary.bestDungeonKey" in roster_body
-    assert "_PackLenStr(rosterOut, row.name)" in roster_body
+    assert "_PackCleanLenStr(rosterOut, row.name)" in roster_body
     assert "emittedCount = emittedCount + 1" in roster_body
 
 
@@ -1928,7 +1936,7 @@ def test_roster_payload_rows_pack_current_score_separately_from_main_score():
     source = _lua_source()
     summary_body = _slice_between(
         source,
-        "local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey)",
+        "local function _GetRaiderIOMPlusSummaryForCleanName(memberName, listingActivityID, targetKey)",
         "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
     )
     roster_body = _slice_between(
@@ -2626,7 +2634,7 @@ def test_initial_unknown_roster_spec_preflight_defers_only_when_inspect_starts()
 
     assert "_ForEachRosterUnit(function(unit)" in ensure_body
     assert "entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid)" in ensure_body
-    assert "_GetRaiderIOMPlusSummary(" not in ensure_body
+    assert "_GetRaiderIOMPlusSummaryForCleanName(" not in ensure_body
     assert "BuildRosterPayloadRows(" not in ensure_body
     assert ensure_idx < payload_idx
 
@@ -3147,6 +3155,15 @@ def test_payload_reuses_player_realm_for_bare_applicant_names(pytestconfig):
     ).strip()
 
     assert output == "ok player-realm-lookup-reuse reads=1"
+
+
+def test_payload_sanitizes_transport_strings_once_at_api_boundaries(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_TRANSPORT_STRING_SANITIZATION_REUSE_CHECK,
+    ).strip()
+
+    assert output.startswith("ok transport-string-sanitization gsubs=")
 
 
 def test_large_qr_prefers_reliable_roster_fallback_before_raw(pytestconfig):
@@ -3816,14 +3833,14 @@ def test_payload_does_not_pack_raiderio_dungeon_rows_into_qr():
     assert "_PackRaiderIODungeonRows" not in source
     assert "rio_row_count" not in payload_body
     assert "rioSummary.dungeons" not in payload_body
-    assert "_PackLenStr(memberOut, memberName)" in payload_body
+    assert "_PackCleanLenStr(memberOut, memberName)" in payload_body
 
 
 def test_raiderio_summary_reuses_one_profile_lookup_per_member():
     source = _lua_source()
     summary_body = _slice_between(
         source,
-        "local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey)",
+        "local function _GetRaiderIOMPlusSummaryForCleanName(memberName, listingActivityID, targetKey)",
         "-- CRC32 IEEE-802.3",
     )
     payload_body = _slice_between(
@@ -3836,7 +3853,7 @@ def test_raiderio_summary_reuses_one_profile_lookup_per_member():
     assert "entryCreationKeyState.rioMPlusSummaryCache" in summary_body
     assert "local cachedSummary = rioSummaryCache[cacheKey]" in summary_body
     assert "rioSummaryCache[cacheKey] = summary" in summary_body
-    assert payload_body.count("_GetRaiderIOMPlusSummary(") == 1
+    assert payload_body.count("_GetRaiderIOMPlusSummaryForCleanName(") == 1
     assert "_RaiderIODungeonMatchesActivity" in summary_body
 
 
@@ -3844,7 +3861,7 @@ def test_raiderio_summary_reports_best_keys_from_timed_runs_only():
     source = _lua_source()
     summary_body = _slice_between(
         source,
-        "local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey)",
+        "local function _GetRaiderIOMPlusSummaryForCleanName(memberName, listingActivityID, targetKey)",
         "-- CRC32 IEEE-802.3",
     )
 
@@ -3857,8 +3874,8 @@ def test_raiderio_lookup_qualifies_same_realm_bare_applicant_names():
     source = _lua_source()
     helper_body = _slice_between(
         source,
-        "local function _RaiderIOProfileLookupName(memberName, playerRealm)",
-        "local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey)",
+        "local function _RaiderIOProfileLookupNameFromCleanName(memberName, playerRealm)",
+        "local function _GetRaiderIOMPlusSummaryForCleanName(memberName, listingActivityID, targetKey)",
     )
     payload_body = _slice_between(
         source,
@@ -3869,10 +3886,12 @@ def test_raiderio_lookup_qualifies_same_realm_bare_applicant_names():
     assert 'memberName:find("-", 1, true)' in helper_body
     assert 'UnitFullName("player")' in helper_body
     assert '"-" .. playerRealm' in helper_body
-    summary_idx = payload_body.index("local rioSummary = _GetRaiderIOMPlusSummary(")
+    summary_idx = payload_body.index(
+        "local rioSummary = _GetRaiderIOMPlusSummaryForCleanName("
+    )
     lookup_idx = payload_body.index(
-        "_RaiderIOProfileLookupName(memberName, playerRealm)"
+        "_RaiderIOProfileLookupNameFromCleanName(memberName, playerRealm)"
     )
     activity_idx = payload_body.index("listingActivityIDForRio", lookup_idx)
     assert summary_idx < lookup_idx < activity_idx
-    assert "_PackLenStr(memberOut, memberName)" in payload_body
+    assert "_PackCleanLenStr(memberOut, memberName)" in payload_body

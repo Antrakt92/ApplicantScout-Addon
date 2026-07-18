@@ -1882,9 +1882,8 @@ local function _TruncateUTF8Bytes(str, maxBytes)
     return str:sub(1, maxBytes)
 end
 
--- Append len-byte + utf-8 bytes to output table. CLAMPS to 255 bytes (safety).
-local function _PackLenStr(out, str)
-    str = SafeStr(str)
+-- Append one already-SafeStr-cleaned value. CLAMPS to 255 bytes (safety).
+local function _PackCleanLenStr(out, str)
     if #str > 255 then str = _TruncateUTF8Bytes(str, 255) end
     table.insert(out, string.char(#str))
     table.insert(out, str)
@@ -2377,16 +2376,13 @@ local function _EmptyRaiderIOMPlusSummary(currentScore, mainScore)
     }
 end
 
-local function _RaiderIOProfileLookupName(memberName, playerRealm)
-    memberName = SafeStr(memberName, "")
+local function _RaiderIOProfileLookupNameFromCleanName(memberName, playerRealm)
     if memberName == "" or memberName == "?" or memberName:find("-", 1, true) then
         return memberName
     end
     if playerRealm == nil then
         local _playerName, resolvedRealm = UnitFullName("player")
         playerRealm = SafeStr(resolvedRealm, "")
-    else
-        playerRealm = SafeStr(playerRealm, "")
     end
     if playerRealm == "" then return memberName end
     -- WHY: LFG may emit same-realm applicants as bare "Name"; RaiderIO profile
@@ -2394,11 +2390,10 @@ local function _RaiderIOProfileLookupName(memberName, playerRealm)
     return memberName .. "-" .. playerRealm
 end
 
-local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey)
-    -- RaiderIO is optional. Query only with the SafeStr-cleaned applicant name:
+local function _GetRaiderIOMPlusSummaryForCleanName(memberName, listingActivityID, targetKey)
+    -- RaiderIO is optional. Callers pass only a SafeStr-cleaned applicant name:
     -- the raw LFG name can be secret-tagged, and RaiderIO's public API performs
     -- string parsing internally.
-    memberName = SafeStr(memberName, "")
     if memberName == "" or memberName == "?" then
         return _EmptyRaiderIOMPlusSummary(0, 0)
     end
@@ -2504,8 +2499,7 @@ local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey
     return StoreRaiderIOSummary(summary)
 end
 
-local function _IsPlaceholderUnitName(name)
-    name = SafeStr(name, "")
+local function _IsPlaceholderCleanUnitName(name)
     local sep = name:find("-", 1, true)
     local base = sep and name:sub(1, sep - 1) or name
     if base == "" or base == "?" then return true end
@@ -2529,8 +2523,7 @@ local function _UnitFullNameForTransport(unit)
         local ok, unitName = pcall(GetUnitName, unit, true)
         if ok then name = SafeStr(unitName, "") end
     end
-    name = SafeStr(name, "")
-    if _IsPlaceholderUnitName(name) then return "" end
+    if _IsPlaceholderCleanUnitName(name) then return "" end
     if name:find("-", 1, true) then return name end
     if realm == "" and UnitFullName then
         local okPlayer, _playerName, playerRealm = pcall(UnitFullName, "player")
@@ -3754,8 +3747,8 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
     end)
 
     for _, row in ipairs(rows) do
-        local rioSummary = _GetRaiderIOMPlusSummary(
-            _RaiderIOProfileLookupName(row.name),
+        local rioSummary = _GetRaiderIOMPlusSummaryForCleanName(
+            _RaiderIOProfileLookupNameFromCleanName(row.name),
             listingActivityIDForRio,
             listingKeyLevelForRio
         )
@@ -3778,7 +3771,7 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
         table.insert(rosterOut, string.char(rioSummary.completedAtOrAboveMinus1))
         table.insert(rosterOut, string.char(rioSummary.dungeonCount))
         table.insert(rosterOut, string.char(_ClampUInt8(row.role)))
-        _PackLenStr(rosterOut, row.name)
+        _PackCleanLenStr(rosterOut, row.name)
         emittedCount = emittedCount + 1
         if row.specID <= 0 then rosterQuietHasUnknownSpec = true end
     end
@@ -3931,9 +3924,9 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
         table.insert(listingQuietOut, _Uint16BE(categoryID))
         table.insert(listingQuietOut, _Uint16BE(difficultyID))
         table.insert(listingQuietOut, string.char(math.min(keyLevel, 255)))
-        _PackLenStr(listingQuietOut, dungeonName)
-        _PackLenStr(listingQuietOut, listingName)
-        _PackLenStr(listingQuietOut, listingComment)
+        _PackCleanLenStr(listingQuietOut, dungeonName)
+        _PackCleanLenStr(listingQuietOut, listingName)
+        _PackCleanLenStr(listingQuietOut, listingComment)
         listingQuietSignature = table.concat(listingQuietOut)
 
         table.insert(out, string.char(1))
@@ -3941,9 +3934,9 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
         table.insert(out, _Uint16BE(categoryID))
         table.insert(out, _Uint16BE(difficultyID))
         table.insert(out, string.char(math.min(keyLevel, 255)))
-        _PackLenStr(out, dungeonName)
-        _PackLenStr(out, listingName)
-        _PackLenStr(out, listingComment)
+        _PackCleanLenStr(out, dungeonName)
+        _PackCleanLenStr(out, listingName)
+        _PackCleanLenStr(out, listingComment)
     else
         table.insert(out, string.char(0))
     end
@@ -3956,9 +3949,9 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     -- ~30-60 bytes per shot (addon+game version strings + region byte + 12-char
     -- realm-qualified name) — negligible vs. QR Version 25-30 capacity.
     table.insert(out, string.char(1))
-    _PackLenStr(out, ADDON_VERSION)
-    local gameVer = (GetBuildInfo and select(1, GetBuildInfo())) or "?"
-    _PackLenStr(out, gameVer)
+    _PackCleanLenStr(out, SafeStr(ADDON_VERSION, "?"))
+    local gameVer = SafeStr((GetBuildInfo and select(1, GetBuildInfo())) or "?", "?")
+    _PackCleanLenStr(out, gameVer)
     local regionID = math.floor(SafeNumber(GetCurrentRegion and GetCurrentRegion(), 0))
     if regionID < 0 then regionID = 0 elseif regionID > 255 then regionID = 0 end
     table.insert(out, string.char(regionID))
@@ -3967,20 +3960,20 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     if playerName == "" then playerName = "?" end
     local playerRealm = SafeStr(prealm, "")
     local fullName = playerName .. ((playerRealm ~= "") and ("-" .. playerRealm) or "")
-    _PackLenStr(out, fullName)
+    _PackCleanLenStr(out, fullName)
 
     local leaderQuietOut = {}
     if leaderKeystone and leaderKeystone.level > 0 then
         table.insert(leaderQuietOut, string.char(_ClampUInt8(leaderKeystone.level)))
         table.insert(leaderQuietOut, _Uint16BE(leaderKeystone.challengeMapID))
-        _PackLenStr(leaderQuietOut, leaderKeystone.playerName)
+        _PackCleanLenStr(leaderQuietOut, leaderKeystone.playerName)
         if listingKeyLevelForRio <= 0 then
             listingKeyLevelForRio = leaderKeystone.level
         end
         table.insert(out, string.char(1))
         table.insert(out, string.char(_ClampUInt8(leaderKeystone.level)))
         table.insert(out, _Uint16BE(leaderKeystone.challengeMapID))
-        _PackLenStr(out, leaderKeystone.playerName)
+        _PackCleanLenStr(out, leaderKeystone.playerName)
     else
         table.insert(out, string.char(0))
     end
@@ -4025,7 +4018,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
             local memberInfo =
                 entryCreationKeyState.GetApplicantMemberInfoForTransport(app.apiID, m)
             local memberName = SafeStr(memberInfo and memberInfo.name, "")
-            if memberInfo and not _IsPlaceholderUnitName(memberName) then
+            if memberInfo and not _IsPlaceholderCleanUnitName(memberName) then
                 local classToken = SafeEnumKey(memberInfo.class, "")
                 local roleToken = SafeEnumKey(memberInfo.role, "DAMAGER")
                 table.insert(memberOut, _Uint32BE(app.id))
@@ -4036,8 +4029,8 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
                 table.insert(memberOut, _Uint16BE(_ClampUInt16(
                     SafeRoundedNumber(memberInfo.score, 0)
                 )))
-                local rioSummary = _GetRaiderIOMPlusSummary(
-                    _RaiderIOProfileLookupName(memberName, playerRealm),
+                local rioSummary = _GetRaiderIOMPlusSummaryForCleanName(
+                    _RaiderIOProfileLookupNameFromCleanName(memberName, playerRealm),
                     listingActivityIDForRio,
                     listingKeyLevelForRio
                 )
@@ -4051,7 +4044,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
                 table.insert(memberOut, string.char(rioSummary.completedAtOrAboveMinus1))
                 table.insert(memberOut, string.char(rioSummary.dungeonCount))
                 table.insert(memberOut, string.char(ROLE_NAME_TO_BYTE[roleToken] or 2))
-                _PackLenStr(memberOut, memberName)
+                _PackCleanLenStr(memberOut, memberName)
                 emittedCount = emittedCount + 1
             end
         end
