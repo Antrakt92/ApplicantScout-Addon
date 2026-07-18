@@ -59,6 +59,9 @@ LUA_TRANSPORT_STRING_SANITIZATION_REUSE_CHECK = (
 LUA_RAIDERIO_FALLBACK_REUSE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_raiderio_fallback_reuse.lua"
 )
+LUA_PAYLOAD_FINALIZATION_REUSE_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_payload_finalization_reuse.lua"
+)
 LUA_NUMERIC_BOUNDARIES_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_numeric_boundaries.lua"
 )
@@ -207,9 +210,8 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
     )
 
     payload_idx = body.index(
-        "local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
+        "local payload, h = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
     )
-    hash_idx = body.index("local h = HashSnapshot(payload)")
     job_idx = body.index("local jobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1")
     callback_idx = body.index("local function OnQRPaintComplete(paintOK)")
     lease_idx = body.index("local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()", callback_idx)
@@ -219,7 +221,8 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
         "BuildQRMatrix(\n        payload,\n        canTryRosterUnavailableFallback,"
     )
 
-    assert payload_idx < hash_idx < job_idx < callback_idx < lease_idx < screenshot_idx
+    assert payload_idx < job_idx < callback_idx < lease_idx < screenshot_idx
+    assert "local h = HashSnapshot(payload)" not in body
     assert screenshot_idx < paint_idx < build_idx
     assert "_ReleaseForceVisibleShotLease(forceVisibleShotGen)" in body[screenshot_idx:]
 
@@ -246,7 +249,7 @@ def test_interaction_suppression_defers_non_force_payloads_before_dedup():
 
     suppression_idx = screenshot_body.index("not force and _qrSuppressedByInteraction")
     payload_idx = screenshot_body.index(
-        "local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
+        "local payload, h = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
     )
     suppression_block = screenshot_body[
         suppression_idx : screenshot_body.index("\n    end", suppression_idx)
@@ -270,7 +273,7 @@ def test_non_force_snapshot_waits_for_active_qr_job_before_lfg_reads():
         "        or entryCreationKeyState.qrCaptureInProgress) and not force then"
     )
     entry_idx = screenshot_body.index("local entry = nil")
-    payload_idx = screenshot_body.index("local payload = BuildPayload")
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload")
     active_block = screenshot_body[
         active_idx : screenshot_body.index("\n    end", active_idx)
     ]
@@ -363,7 +366,7 @@ def test_dirty_event_during_qr_settle_lease_preserves_pending_and_roster_preflig
     assert "entryCreationKeyState.transportDirtyGeneration =" in roster_change_body
 
     payload_idx = screenshot_body.index(
-        "local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
+        "local payload, h = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
     )
     payload_gen_idx = screenshot_body.index(
         "local payloadDirtyGeneration =",
@@ -626,7 +629,7 @@ def test_non_force_screenshot_waits_for_roster_inspect_batch_before_payload():
     force_guard_idx = screenshot_body.rindex("not force", 0, batch_idx)
     pending_idx = screenshot_body.index("pendingShotDirty = true", batch_idx)
     entry_idx = screenshot_body.index("local entry = nil")
-    payload_idx = screenshot_body.index("local payload = BuildPayload")
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload")
 
     assert entry_idx < applicant_idx < empty_guard_idx < batch_idx
     assert force_guard_idx < batch_idx
@@ -692,7 +695,7 @@ def test_roster_composition_change_waits_for_inspect_until_fallback_deadline():
         "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()",
         deadline_guard_idx,
     )
-    payload_idx = screenshot_body.index("local payload = BuildPayload", preflight_idx)
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload", preflight_idx)
     assert empty_guard_idx < deadline_guard_idx < preflight_idx < payload_idx
 
     callback_idx = screenshot_body.index("local function OnQRPaintComplete(paintOK)")
@@ -1199,8 +1202,7 @@ def test_repeat_full_party_quiet_snapshot_is_suppressed_before_qr_paint():
         "-- LFG entry creation",
     )
 
-    payload_idx = screenshot_body.index("local payload = BuildPayload")
-    hash_idx = screenshot_body.index("local h = HashSnapshot(payload)")
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload")
     quiet_idx = screenshot_body.index(
         "local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature"
     )
@@ -1212,7 +1214,8 @@ def test_repeat_full_party_quiet_snapshot_is_suppressed_before_qr_paint():
         quiet_idx : screenshot_body.index("\n    -- Encode payload", quiet_idx)
     ]
 
-    assert throttle_idx < payload_idx < hash_idx < quiet_idx < job_idx
+    assert throttle_idx < payload_idx < quiet_idx < job_idx
+    assert "local h = HashSnapshot(payload)" not in screenshot_body
     assert "entryCreationKeyState.lastQuietFullPartySignature == quietSignature" in quiet_block
     assert "lastSnapshotHash = h" in quiet_block
     assert "pendingShotDirty = false" in quiet_block
@@ -1593,7 +1596,7 @@ def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
     )
 
     assert (
-        "local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
+        "local payload, h = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
         in screenshot_body
     )
     assert 'local rosterPayload, rosterCount = "", 0' in payload_body
@@ -1660,8 +1663,8 @@ def test_qr_build_failure_falls_back_to_roster_unavailable_payload():
         fallback_gate_idx,
     )
     fallback_hash_idx = screenshot_body.index(
-        "fallbackHash = HashSnapshot(payload)",
-        fallback_idx,
+        "payload, fallbackHash =",
+        fallback_gate_idx,
     )
     fallback_matrix_idx = screenshot_body.index(
         "BuildQRMatrix(payload, false, false, jobGen, OnQRBuildComplete)",
@@ -1669,7 +1672,7 @@ def test_qr_build_failure_falls_back_to_roster_unavailable_payload():
     )
     failed_hash_idx = screenshot_body.index("lastSnapshotHash = h", fallback_matrix_idx)
 
-    assert fallback_gate_idx < fallback_idx < fallback_hash_idx < fallback_matrix_idx
+    assert fallback_gate_idx < fallback_hash_idx < fallback_idx < fallback_matrix_idx
     assert fallback_matrix_idx < full_matrix_idx
     assert fallback_matrix_idx < failed_hash_idx
     assert "entryCreationKeyState.lastPayloadRosterCount > 0" in screenshot_body[
@@ -1720,7 +1723,7 @@ def test_lockdown_active_roster_snapshot_marks_lfg_unavailable_not_terminal():
     )
 
     unavailable_idx = screenshot_body.index("local lfgUnavailable =")
-    payload_idx = screenshot_body.index("local payload = BuildPayload")
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload")
     assert unavailable_idx < payload_idx
     assert "not terminalClear" in screenshot_body[unavailable_idx:payload_idx]
     assert "not lfgReadsAllowed" in screenshot_body[unavailable_idx:payload_idx]
@@ -2591,7 +2594,7 @@ def test_combat_deferred_roster_preflight_allows_partial_snapshot():
     )
     pending_idx = screenshot_body.index("pendingShotDirty = true", combat_deferred_idx)
     return_idx = screenshot_body.index("return", pending_idx)
-    payload_idx = screenshot_body.index("local payload = BuildPayload", return_idx)
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload", return_idx)
 
     assert preflight_idx < combat_deferred_idx < pending_idx < return_idx < payload_idx
     assert "not entryCreationKeyState.rosterInspectBatchCombatDeferred" in (
@@ -2632,7 +2635,7 @@ def test_initial_unknown_roster_spec_preflight_defers_only_when_inspect_starts()
 
     ensure_idx = screenshot_body.index("entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()")
     payload_idx = screenshot_body.index(
-        "local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
+        "local payload, h = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
     )
 
     assert "_ForEachRosterUnit(function(unit)" in ensure_body
@@ -2673,7 +2676,7 @@ def test_initial_roster_spec_preflight_does_not_hold_applicant_snapshots():
         "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()",
         empty_guard_idx,
     )
-    payload_idx = screenshot_body.index("local payload = BuildPayload", preflight_idx)
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload", preflight_idx)
 
     assert applicant_idx < applicant_fetch_idx < empty_guard_idx < preflight_idx < payload_idx
 
@@ -2697,7 +2700,7 @@ def test_empty_applicant_clear_after_emitted_applicants_bypasses_roster_prefligh
         "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()",
         prior_applicant_guard_idx,
     )
-    payload_idx = screenshot_body.index("local payload = BuildPayload", preflight_idx)
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload", preflight_idx)
 
     assert (
         applicant_idx
@@ -3178,6 +3181,17 @@ def test_raiderio_fallback_reuses_zero_summary_without_blocking_recovery(
     ).strip()
 
     assert output.startswith("ok raiderio-fallback-reuse calls=")
+
+
+def test_payload_finalization_reuses_crc_scan_and_avoids_large_patch_copy(
+    pytestconfig,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_PAYLOAD_FINALIZATION_REUSE_CHECK,
+    ).strip()
+
+    assert output.startswith("ok payload-finalization byte_calls=")
 
 
 def test_large_qr_prefers_reliable_roster_fallback_before_raw(pytestconfig):

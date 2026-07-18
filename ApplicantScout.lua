@@ -3816,17 +3816,24 @@ do
         CRC32_TABLE[i] = c
     end
 end
-local function _CRC32(s)
+local function _CRC32AndSnapshotHash(chunks)
     local crc = 0xFFFFFFFF
-    for i = 1, #s do
-        crc = bit.bxor(bit.rshift(crc, 8),
-                        CRC32_TABLE[bit.band(bit.bxor(crc, string.byte(s, i)), 0xFF)])
+    local snapshotHash = 5381
+    for chunkIndex = 1, #chunks do
+        local chunk = chunks[chunkIndex]
+        for i = 1, #chunk do
+            local byte = string.byte(chunk, i)
+            crc = bit.bxor(bit.rshift(crc, 8),
+                            CRC32_TABLE[bit.band(bit.bxor(crc, byte), 0xFF)])
+            snapshotHash = ((snapshotHash * 33) + byte) % 4294967296
+        end
     end
-    return bit.bxor(crc, 0xFFFFFFFF) % 4294967296
+    return bit.bxor(crc, 0xFFFFFFFF) % 4294967296, snapshotHash
 end
 
 -- Builds binary payload from current LFG state. entry may be nil (no listing).
--- applicantIDs is array from C_LFGList.GetApplicants(). Returns string of bytes.
+-- applicantIDs is array from C_LFGList.GetApplicants(). Returns payload bytes
+-- and their exact djb2 snapshot hash; one-result Lua callers receive the bytes.
 local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, rosterUnavailable)
     local out = {}
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
@@ -3851,6 +3858,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     -- Header (length patched after we know body size)
     table.insert(out, "APS1")
     table.insert(out, string.char(0x09))    -- v9: partial flags include roster omission
+    local lengthChunkIndex = #out + 1
     table.insert(out, "\0\0")                -- length placeholder (uint16 BE)
     table.insert(out, string.char(headerFlags))
     table.insert(out, "\0")                  -- reserved
@@ -4105,14 +4113,24 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     table.insert(out, _Uint16BE(rosterCount))
     table.insert(out, rosterPayload)
 
-    -- Concat, patch length field, append CRC32
-    local body = table.concat(out)
-    local total_len = #body + 4  -- include CRC32 trailer
-    body = body:sub(1, 5) .. _Uint16BE(total_len) .. body:sub(8)
-    return body .. _Uint32BE(_CRC32(body))
+    -- Patch the dedicated length chunk before concat so finalization does not
+    -- copy almost the entire body through substring slicing. CRC32 and the
+    -- runtime dedup hash then share one body scan; only the four CRC trailer
+    -- bytes need to be folded into the hash afterward.
+    local bodyLength = 0
+    for i = 1, #out do bodyLength = bodyLength + #out[i] end
+    out[lengthChunkIndex] = _Uint16BE(bodyLength + 4)
+    local crc, snapshotHash = _CRC32AndSnapshotHash(out)
+    local crcBytes = _Uint32BE(crc)
+    for i = 1, #crcBytes do
+        snapshotHash = ((snapshotHash * 33) + string.byte(crcBytes, i)) % 4294967296
+    end
+    out[#out + 1] = crcBytes
+    return table.concat(out), snapshotHash
 end
 
--- djb2-style hash for change detection. Collision rate ~1/4B per shot.
+-- Independent djb2 oracle for fixtures. Runtime receives the same hash from
+-- BuildPayload's CRC pass instead of scanning the completed payload again.
 local function HashSnapshot(payload)
     local h = 5381
     for i = 1, #payload do
@@ -4737,11 +4755,10 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         return
     end
 
-    local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
+    local payload, h = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
     local payloadDirtyGeneration =
         entryCreationKeyState.transportDirtyGeneration or 0
 
-    local h = HashSnapshot(payload)
     if force then
         -- Explicit support/terminal shots always get a fresh bounded attempt.
         entryCreationKeyState.ClearScreenshotFailureState()
@@ -4981,8 +4998,8 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
         if not matrix and canTryRosterUnavailableFallback then
             canTryRosterUnavailableFallback = false
-            payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, true)
-            fallbackHash = HashSnapshot(payload)
+            payload, fallbackHash =
+                BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, true)
             fallbackInUse = true
             quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature
             BuildQRMatrix(payload, false, false, jobGen, OnQRBuildComplete)
