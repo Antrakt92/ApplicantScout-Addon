@@ -1,8 +1,18 @@
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 local fixture_mode = arg and arg[1] or "applicants"
-assert(fixture_mode == "applicants" or fixture_mode == "roster-only",
+assert(fixture_mode == "applicants"
+       or fixture_mode == "roster-only"
+       or fixture_mode == "screenshot-failure"
+       or fixture_mode == "screenshot-always-fail"
+       or fixture_mode == "terminal-clear-failure"
+       or fixture_mode == "terminal-clear-always-fail",
     "unsupported fixture mode: " .. tostring(fixture_mode))
 local roster_only = fixture_mode == "roster-only"
+local transient_screenshot_failure = fixture_mode == "screenshot-failure"
+local persistent_screenshot_failure = fixture_mode == "screenshot-always-fail"
+local terminal_clear_failure = fixture_mode == "terminal-clear-failure"
+local terminal_clear_always_fail = fixture_mode == "terminal-clear-always-fail"
+local terminal_clear_mode = terminal_clear_failure or terminal_clear_always_fail
 
 -- Default mode reproduces the live report: two people and five applicants.
 -- Roster-only mode keeps a full party and removes every applicant.
@@ -42,7 +52,11 @@ local timers = {}
 local tickers = {}
 local frames = {}
 local screenshot_times = {}
-local screenshot_cvars = {}
+local screenshot_attempt_cvars = {}
+local screenshot_attempts = 0
+local terminal_failure_started = false
+local terminal_failure_count = 0
+local pre_terminal_hash = nil
 
 GetTime = function() return now end
 local cvars = {
@@ -52,11 +66,23 @@ local cvars = {
 GetCVar = function(name) return cvars[name] end
 SetCVar = function(name, value) cvars[name] = tostring(value) end
 Screenshot = function()
-    screenshot_times[#screenshot_times + 1] = now
-    screenshot_cvars[#screenshot_cvars + 1] = {
+    screenshot_attempts = screenshot_attempts + 1
+    screenshot_attempt_cvars[#screenshot_attempt_cvars + 1] = {
         format = cvars.screenshotFormat,
         quality = cvars.screenshotQuality,
     }
+    local fail_terminal = terminal_failure_started
+       and (terminal_clear_always_fail
+            or (terminal_clear_failure and terminal_failure_count == 0))
+    if (transient_screenshot_failure and screenshot_attempts == 1)
+       or persistent_screenshot_failure
+       or fail_terminal then
+        if fail_terminal then
+            terminal_failure_count = terminal_failure_count + 1
+        end
+        error("injected Screenshot() failure")
+    end
+    screenshot_times[#screenshot_times + 1] = now
 end
 
 local function texture_stub()
@@ -159,7 +185,7 @@ ApplicantScoutDB = {
 local qr_namespace = {}
 local qr_chunk = assert(loadfile("libs/qrencode.lua"))
 qr_chunk("ApplicantScout", qr_namespace)
-env.load_addon(qr_namespace.QR)
+local harness = env.load_addon(qr_namespace.QR)
 
 local event_frame = nil
 for _, frame in ipairs(frames) do
@@ -190,6 +216,9 @@ local function drain_due_timers()
     end
 end
 
+local transient_failure_checked = false
+local transient_restore_checked = false
+local transient_failure_at = nil
 for _ = 1, 360 do
     now = now + frame_step
     drain_due_timers()
@@ -199,9 +228,117 @@ for _ = 1, 360 do
             ticker.callback()
         end
     end
+
+    if transient_screenshot_failure
+       and screenshot_attempts == 1
+       and not transient_failure_checked then
+        local state = harness.QRTransportState()
+        assert(state.pendingShotDirty, "failed capture was not left pending")
+        assert(not state.paintInProgress and not state.captureInProgress,
+            "failed capture left the transport job active")
+        assert(not state.forceVisible and not state.qrFrameShown,
+            "failed capture left the QR visibility lease active")
+        assert(state.lastSnapshotHash == nil
+               and state.deliverySnapshotHash == nil
+               and state.deliverySnapshotSendCount == 0,
+            "failed capture committed dedup or delivery state")
+        assert(state.screenshotFailureHash ~= nil
+               and state.screenshotFailureAttemptCount == 1,
+            "failed capture did not consume exactly one retry-budget attempt")
+        assert(cvars.screenshotFormat == "jpg" and cvars.screenshotQuality == "8",
+            "failed capture did not hold the screenshot CVar lease")
+        assert(ApplicantScoutDB.priorScreenshotFormat == "png"
+               and ApplicantScoutDB.priorScreenshotQuality == 3,
+            "failed capture lost the pending screenshot CVar restore state")
+        transient_failure_checked = true
+        transient_failure_at = now
+    end
+    if transient_failure_checked
+       and not transient_restore_checked
+       and screenshot_attempts == 1
+       and now - transient_failure_at >= 0.06 then
+        assert(cvars.screenshotFormat == "png" and cvars.screenshotQuality == "3",
+            "failed capture did not restore screenshot CVars before retry")
+        assert(ApplicantScoutDB.priorScreenshotFormat == nil
+               and ApplicantScoutDB.priorScreenshotQuality == nil,
+            "failed capture left stale screenshot CVar restore state")
+        transient_restore_checked = true
+    end
+
+    if terminal_clear_mode
+       and not terminal_failure_started
+       and #screenshot_times == 2 then
+        pre_terminal_hash = harness.QRTransportState().lastSnapshotHash
+        assert(pre_terminal_hash ~= nil, "pre-terminal delivery hash was not committed")
+        terminal_failure_started = true
+        applicant_ids = {}
+        GetNumGroupMembers = function() return 0 end
+        C_LFGList.HasActiveEntryInfo = function() return false end
+        C_LFGList.GetActiveEntryInfo = function() return nil end
+        harness.EndSession()
+    end
 end
 
-if roster_only then
+if transient_screenshot_failure then
+    assert(transient_failure_checked and transient_restore_checked,
+        "transient failure checkpoints did not run")
+    assert(#screenshot_times == 2 and screenshot_attempts == 3,
+        string.format("transient failure produced shots=%d attempts=%d, expected 2/3",
+            #screenshot_times, screenshot_attempts))
+elseif persistent_screenshot_failure then
+    local state = harness.QRTransportState()
+    assert(#screenshot_times == 0 and screenshot_attempts == 2,
+        string.format("persistent failure produced shots=%d attempts=%d, expected 0/2",
+            #screenshot_times, screenshot_attempts))
+    assert(not state.pendingShotDirty
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown,
+        "persistent failure did not stop in an idle state")
+    assert(state.screenshotFailureHash ~= nil
+           and state.screenshotFailureAttemptCount == 2,
+        "persistent failure did not exhaust the exact retry budget")
+elseif terminal_clear_failure then
+    local state = harness.QRTransportState()
+    assert(terminal_failure_started, "terminal-clear failure phase did not start")
+    assert(#screenshot_times == 3 and screenshot_attempts == 4,
+        string.format("terminal failure produced shots=%d attempts=%d, expected 3/4",
+            #screenshot_times, screenshot_attempts))
+    assert(not state.sessionActive
+           and not state.pendingShotDirty
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown
+           and not state.terminalClearRetryScheduled,
+        "terminal-clear failures did not stop in an idle ended-session state")
+    assert(state.terminalClearDispatchCount == 2,
+        "terminal clear did not use exactly two serialized dispatches")
+    assert(state.lastSnapshotHash ~= nil
+           and state.lastSnapshotHash ~= pre_terminal_hash
+           and state.deliverySnapshotHash == nil
+           and state.deliverySnapshotSendCount == 0,
+        "successful terminal retry did not commit terminal delivery state")
+elseif terminal_clear_always_fail then
+    local state = harness.QRTransportState()
+    assert(terminal_failure_started, "terminal-clear failure phase did not start")
+    assert(#screenshot_times == 2 and screenshot_attempts == 4,
+        string.format("persistent terminal failure produced shots=%d attempts=%d, expected 2/4",
+            #screenshot_times, screenshot_attempts))
+    assert(not state.sessionActive
+           and not state.pendingShotDirty
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown
+           and not state.terminalClearRetryScheduled,
+        "persistent terminal failures did not stop in an idle ended-session state")
+    assert(state.terminalClearDispatchCount == 2,
+        "persistent terminal clear exceeded or missed its dispatch budget")
+    assert(state.lastSnapshotHash == pre_terminal_hash,
+        "failed terminal captures committed a false delivery hash")
+elseif roster_only then
     assert(#screenshot_times == 2, string.format(
         "changed roster-only snapshot got %d captures instead of exactly two",
         #screenshot_times))
@@ -209,12 +346,14 @@ else
     assert(#screenshot_times >= 2,
         "polling during the render-settle window starved QR screenshots")
 end
-assert(screenshot_times[2] - screenshot_times[1] >= 0.5,
-    string.format("redundant resend interval %.3fs ignored the screenshot throttle",
-        screenshot_times[2] - screenshot_times[1]))
-for _, values in ipairs(screenshot_cvars) do
+if #screenshot_times >= 2 then
+    assert(screenshot_times[2] - screenshot_times[1] >= 0.5,
+        string.format("redundant resend interval %.3fs ignored the screenshot throttle",
+            screenshot_times[2] - screenshot_times[1]))
+end
+for _, values in ipairs(screenshot_attempt_cvars) do
     assert(values.format == "jpg" and values.quality == "8",
-        "QR capture did not hold its JPG/quality 8 CVar lease")
+        "QR capture attempt did not hold its JPG/quality 8 CVar lease")
 end
 assert(cvars.screenshotFormat == "png" and cvars.screenshotQuality == "3",
     "QR capture did not restore screenshot CVars after its lease")
@@ -222,5 +361,5 @@ assert(ApplicantScoutDB.priorScreenshotFormat == nil
        and ApplicantScoutDB.priorScreenshotQuality == nil,
     "QR capture left stale screenshot CVar restore state")
 
-print(string.format("ok qr-capture-lifecycle mode=%s shots=%d",
-    fixture_mode, #screenshot_times))
+print(string.format("ok qr-capture-lifecycle mode=%s shots=%d attempts=%d",
+    fixture_mode, #screenshot_times, screenshot_attempts))

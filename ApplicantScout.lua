@@ -204,6 +204,10 @@ local lfgEntryCreationKeyCaptureHooked = setmetatable({}, { __mode = "k" })
 local entryCreationKeyState = {
     settingsFrameAttachWatcher = nil,
     END_SESSION_CLEAR_RETRY_DELAY_S = QR_RENDER_SETTLE_S * 2,
+    TERMINAL_CLEAR_MAX_DISPATCHES = 2,
+    terminalClearDispatchCount = 0,
+    terminalClearSessionGen = nil,
+    terminalClearRetryScheduled = false,
     DISABLE_CVAR_RESTORE_AFTER_CLEAR_DELAY_S = QR_RENDER_SETTLE_S * 3,
     entryCreationKeyLevelCache = nil,
     pendingEntryCreationKeyLevelCache = nil,
@@ -241,6 +245,9 @@ local entryCreationKeyState = {
     qrTransportJobTerminalClear = false,
     SCREENSHOT_CVAR_RESTORE_DELAY_S = 0.05,
     screenshotCVarLeaseGeneration = 0,
+    SCREENSHOT_FAILURE_MAX_ATTEMPTS = 2,
+    screenshotFailureHash = nil,
+    screenshotFailureAttemptCount = 0,
     QR_TRANSPORT_JOB_TIMEOUT_S = 8.0,
     QR_RECOVERY_NOTICE_COOLDOWN_S = 30,
     qrTransportRecoveryCount = 0,
@@ -299,6 +306,11 @@ local entryCreationKeyState = {
     rosterInspectKnownGUIDs = {},
 }
 local ENTRY_CREATION_KEY_CACHE_TTL = 3600
+
+entryCreationKeyState.ClearScreenshotFailureState = function()
+    entryCreationKeyState.screenshotFailureHash = nil
+    entryCreationKeyState.screenshotFailureAttemptCount = 0
+end
 
 -- ───────────────────────────────────────────────────────────
 -- helpers
@@ -553,6 +565,10 @@ StartSession = function()
     entryCreationKeyState.lastEmittedApplicantCount = 0
     entryCreationKeyState.lastDeliverySnapshotHash = nil
     entryCreationKeyState.lastDeliverySnapshotSendCount = 0
+    entryCreationKeyState.ClearScreenshotFailureState()
+    entryCreationKeyState.terminalClearDispatchCount = 0
+    entryCreationKeyState.terminalClearSessionGen = nil
+    entryCreationKeyState.terminalClearRetryScheduled = false
     pendingShotDirty = false
     lastQREncodeMode = "never"
     lastQREncodeBytes = 0
@@ -595,8 +611,8 @@ EndSession = function()
     -- Final force-shot: terminalClear makes BuildPayload emit has_listing=0,
     -- 0 applicants, and roster_count=0. Companion treats no-listing + roster
     -- as valid Party state, so teardown must explicitly omit roster rows.
-    -- Bypasses dedup + throttle (force=true). Retry once so a transient
-    -- malformed terminal screenshot does not leave the companion overlay stale.
+    -- Bypasses dedup + throttle (force=true). Completion schedules one serialized
+    -- resend so an async first job cannot be cancelled by an absolute retry timer.
     entryCreationKeyState.ClearRosterInspectBatchState()
     entryCreationKeyState.ClearRosterInspectFailureState()
     entryCreationKeyState.ClearRosterLoadRetryState()
@@ -607,15 +623,12 @@ EndSession = function()
     entryCreationKeyState.qrPaintDirtyDuringPaint = false
     entryCreationKeyState.qrTransportJobStartedAt = nil
     entryCreationKeyState.qrTransportJobTerminalClear = false
+    entryCreationKeyState.terminalClearDispatchCount = 0
+    entryCreationKeyState.terminalClearSessionGen = sessionGen
+    entryCreationKeyState.terminalClearRetryScheduled = false
     MaybeTriggerScreenshot(true, nil, true)
     entryCreationKeyState.lastQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
-    local clearRetryGen = sessionGen
-    C_Timer.After(entryCreationKeyState.END_SESSION_CLEAR_RETRY_DELAY_S, function()
-        if sessionGen == clearRetryGen and not isSessionActive then
-            MaybeTriggerScreenshot(true, nil, true)
-        end
-    end)
     -- Defensive: force-shot path resets pendingShotDirty on success, but if it
     -- early-returned (qrFrame missing, QR encode failure) the flag could persist
     -- across sessions and trigger empty drains in the scan ticker. Clear here.
@@ -4540,6 +4553,35 @@ entryCreationKeyState.ClearQRTransportJob = function(jobGen)
     return true
 end
 
+entryCreationKeyState.ScheduleTerminalClearRetry = function(clearSessionGen)
+    if not clearSessionGen
+       or entryCreationKeyState.terminalClearSessionGen ~= clearSessionGen
+       or sessionGen ~= clearSessionGen
+       or isSessionActive
+       or entryCreationKeyState.terminalClearRetryScheduled
+       or (entryCreationKeyState.terminalClearDispatchCount or 0)
+          >= entryCreationKeyState.TERMINAL_CLEAR_MAX_DISPATCHES then
+        return false
+    end
+    entryCreationKeyState.terminalClearRetryScheduled = true
+    C_Timer.After(entryCreationKeyState.END_SESSION_CLEAR_RETRY_DELAY_S, function()
+        if entryCreationKeyState.terminalClearSessionGen ~= clearSessionGen then
+            return
+        end
+        entryCreationKeyState.terminalClearRetryScheduled = false
+        if sessionGen ~= clearSessionGen
+           or isSessionActive
+           or entryCreationKeyState.qrPaintInProgress
+           or entryCreationKeyState.qrCaptureInProgress
+           or (entryCreationKeyState.terminalClearDispatchCount or 0)
+              >= entryCreationKeyState.TERMINAL_CLEAR_MAX_DISPATCHES then
+            return
+        end
+        MaybeTriggerScreenshot(true, nil, true)
+    end)
+    return true
+end
+
 entryCreationKeyState.RecoverStalledQRTransport = function(now)
     if not (entryCreationKeyState.qrPaintInProgress
             or entryCreationKeyState.qrCaptureInProgress) then
@@ -4573,11 +4615,9 @@ entryCreationKeyState.RecoverStalledQRTransport = function(now)
     end
 
     if wasTerminalClear and not isSessionActive then
-        C_Timer.After(0, function()
-            if not isSessionActive then
-                MaybeTriggerScreenshot(true, nil, true)
-            end
-        end)
+        entryCreationKeyState.ScheduleTerminalClearRetry(
+            entryCreationKeyState.terminalClearSessionGen
+        )
     else
         MarkDirty("qrwatchdog")
     end
@@ -4682,6 +4722,20 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         entryCreationKeyState.transportDirtyGeneration or 0
 
     local h = HashSnapshot(payload)
+    if force then
+        -- Explicit support/terminal shots always get a fresh bounded attempt.
+        entryCreationKeyState.ClearScreenshotFailureState()
+    elseif entryCreationKeyState.screenshotFailureHash == h then
+        if (entryCreationKeyState.screenshotFailureAttemptCount or 0)
+           >= entryCreationKeyState.SCREENSHOT_FAILURE_MAX_ATTEMPTS then
+            pendingShotDirty = false
+            return
+        end
+    else
+        -- A new payload gets its own bounded retry budget. Event churn that
+        -- serializes to the same bytes must not restart a persistent failure loop.
+        entryCreationKeyState.ClearScreenshotFailureState()
+    end
     -- WHY: companion cannot ACK successful decode. One malformed screenshot can
     -- otherwise suppress a changed listing or roster snapshot until another event.
     -- Bound this to one retry; stable snapshots never become periodic heartbeats.
@@ -4721,6 +4775,21 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         entryCreationKeyState.lastQuietFullPartySignature = nil
     end
 
+    if terminalClear then
+        if entryCreationKeyState.terminalClearSessionGen ~= sessionGen then
+            entryCreationKeyState.terminalClearSessionGen = sessionGen
+            entryCreationKeyState.terminalClearDispatchCount = 0
+            entryCreationKeyState.terminalClearRetryScheduled = false
+        end
+        if (entryCreationKeyState.terminalClearDispatchCount or 0)
+           >= entryCreationKeyState.TERMINAL_CLEAR_MAX_DISPATCHES then
+            pendingShotDirty = false
+            return
+        end
+        entryCreationKeyState.terminalClearDispatchCount =
+            (entryCreationKeyState.terminalClearDispatchCount or 0) + 1
+    end
+
     -- Encode payload, analyze its row-RLE runs, then paint. The job generation
     -- cancels stale callbacks while each heavy stage yields to a fresh frame.
     local canTryRosterUnavailableFallback =
@@ -4754,6 +4823,11 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             lastSnapshotHash = h
             pendingShotDirty = dirtySincePaintStarted and true or false
             entryCreationKeyState.ClearQRTransportJob(jobGen)
+            if terminalClearSessionGen then
+                entryCreationKeyState.ScheduleTerminalClearRetry(
+                    terminalClearSessionGen
+                )
+            end
             return
         end
 
@@ -4780,6 +4854,48 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             local dirtySincePayload =
                 dirtySincePaintStarted
                 or (entryCreationKeyState.transportDirtyGeneration or 0) ~= payloadDirtyGeneration
+            lastShotTime = GetTime()
+            local screenshotCVarLeaseGeneration = AcquireScreenshotCVarLease()
+            -- Schedule release before Screenshot() so even an unexpected API
+            -- error cannot leave the user's global screenshot settings leased.
+            ReleaseScreenshotCVarLease(
+                screenshotCVarLeaseGeneration,
+                entryCreationKeyState.SCREENSHOT_CVAR_RESTORE_DELAY_S
+            )
+            local screenshotOK = pcall(Screenshot)
+            if not screenshotOK then
+                -- Do not commit dedup/delivery state for a capture that never
+                -- started. The pending drain retries the same payload after the
+                -- normal shot throttle instead of treating it as delivered.
+                if entryCreationKeyState.screenshotFailureHash == h then
+                    entryCreationKeyState.screenshotFailureAttemptCount =
+                        (entryCreationKeyState.screenshotFailureAttemptCount or 0) + 1
+                else
+                    entryCreationKeyState.screenshotFailureHash = h
+                    entryCreationKeyState.screenshotFailureAttemptCount = 1
+                end
+                local retryBudgetRemaining =
+                    entryCreationKeyState.screenshotFailureAttemptCount
+                    < entryCreationKeyState.SCREENSHOT_FAILURE_MAX_ATTEMPTS
+                pendingShotDirty = terminalClearSessionGen
+                    and false or (dirtySincePayload or retryBudgetRemaining)
+                entryCreationKeyState.ClearQRTransportJob(jobGen)
+                _ReleaseForceVisibleShotLease(forceVisibleShotGen)
+                if terminalClearSessionGen then
+                    entryCreationKeyState.ScheduleTerminalClearRetry(
+                        terminalClearSessionGen
+                    )
+                end
+                if force then
+                    APSPrint("WARN: Screenshot() failed during forced capture")
+                elseif not retryBudgetRemaining then
+                    APSPrint("WARN: Screenshot() failed repeatedly; snapshot paused until data changes or /apscout shotnow")
+                elseif ApplicantScoutDB and ApplicantScoutDB.debug then
+                    print("|cff999999[APS-debug]|r Screenshot() failed; snapshot remains pending")
+                end
+                return
+            end
+            entryCreationKeyState.ClearScreenshotFailureState()
             if not force and quietSignature then
                 entryCreationKeyState.lastQuietFullPartySignature = quietSignature
             end
@@ -4819,16 +4935,12 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 print(string.format("|cff999999[APS-debug]|r CAP qr_size=%dpx hash=%x t=%.2f",
                       qrCurrentSize, h, GetTime()))
             end
-            lastShotTime = GetTime()
-            local screenshotCVarLeaseGeneration = AcquireScreenshotCVarLease()
-            -- Schedule release before Screenshot() so even an unexpected API
-            -- error cannot leave the user's global screenshot settings leased.
-            ReleaseScreenshotCVarLease(
-                screenshotCVarLeaseGeneration,
-                entryCreationKeyState.SCREENSHOT_CVAR_RESTORE_DELAY_S
-            )
-            Screenshot()
             entryCreationKeyState.ClearQRTransportJob(jobGen)
+            if terminalClearSessionGen then
+                entryCreationKeyState.ScheduleTerminalClearRetry(
+                    terminalClearSessionGen
+                )
+            end
             if forceVisibleShotGen then
                 C_Timer.After(0.05, function()
                     _ReleaseForceVisibleShotLease(forceVisibleShotGen)
@@ -4866,6 +4978,11 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             entryCreationKeyState.ClearQRTransportJob(jobGen)
             lastSnapshotHash = h
             pendingShotDirty = dirtySinceBuildStarted and true or false
+            if terminalClearSessionGen then
+                entryCreationKeyState.ScheduleTerminalClearRetry(
+                    terminalClearSessionGen
+                )
+            end
             return
         end
         if fallbackInUse and ApplicantScoutDB and ApplicantScoutDB.debug then
@@ -4877,6 +4994,11 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             entryCreationKeyState.ClearQRTransportJob(jobGen)
             lastSnapshotHash = h
             pendingShotDirty = false
+            if terminalClearSessionGen then
+                entryCreationKeyState.ScheduleTerminalClearRetry(
+                    terminalClearSessionGen
+                )
+            end
         end
     end
 
@@ -4887,6 +5009,30 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         jobGen,
         OnQRBuildComplete
     )
+end
+
+if type(_G.ApplicantScoutFixtureHarness) == "table" then
+    _G.ApplicantScoutFixtureHarness.QRTransportState = function()
+        return {
+            pendingShotDirty = pendingShotDirty == true,
+            lastSnapshotHash = lastSnapshotHash,
+            deliverySnapshotHash = entryCreationKeyState.lastDeliverySnapshotHash,
+            deliverySnapshotSendCount =
+                entryCreationKeyState.lastDeliverySnapshotSendCount or 0,
+            paintInProgress = entryCreationKeyState.qrPaintInProgress == true,
+            captureInProgress = entryCreationKeyState.qrCaptureInProgress == true,
+            forceVisible = qrForceVisibleForShot == true,
+            qrFrameShown = qrFrame and qrFrame:IsShown() or false,
+            screenshotFailureHash = entryCreationKeyState.screenshotFailureHash,
+            screenshotFailureAttemptCount =
+                entryCreationKeyState.screenshotFailureAttemptCount or 0,
+            terminalClearDispatchCount =
+                entryCreationKeyState.terminalClearDispatchCount or 0,
+            terminalClearRetryScheduled =
+                entryCreationKeyState.terminalClearRetryScheduled == true,
+            sessionActive = isSessionActive == true,
+        }
+    end
 end
 
 -- ───────────────────────────────────────────────────────────
@@ -6037,6 +6183,7 @@ SlashCmdList.APSCOUT = function(msg)
         -- support recovery does not create unnecessary inspect churn.
         lastSnapshotHash = nil
         pendingShotDirty = false
+        entryCreationKeyState.ClearScreenshotFailureState()
         entryCreationKeyState.lastQuietFullPartySignature = nil
         entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
         entryCreationKeyState.MarkRosterCompositionChanged()

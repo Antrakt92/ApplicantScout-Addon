@@ -181,7 +181,7 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
     job_idx = body.index("local jobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1")
     callback_idx = body.index("local function OnQRPaintComplete(paintOK)")
     lease_idx = body.index("local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()", callback_idx)
-    screenshot_idx = body.index("        Screenshot()")
+    screenshot_idx = body.index("local screenshotOK = pcall(Screenshot)")
     paint_idx = body.index("if not PaintQR(matrix, runs, jobGen, OnQRPaintComplete) then")
     build_idx = body.index(
         "BuildQRMatrix(\n        payload,\n        canTryRosterUnavailableFallback,"
@@ -349,18 +349,20 @@ def test_dirty_event_during_qr_settle_lease_preserves_pending_and_roster_preflig
         "(entryCreationKeyState.transportDirtyGeneration or 0) ~= payloadDirtyGeneration",
         dirty_since_idx,
     )
-    clear_guard_idx = screenshot_body.index("if not dirtySincePayload then", gen_compare_idx)
+    screenshot_idx = screenshot_body.index(
+        "local screenshotOK = pcall(Screenshot)",
+        gen_compare_idx,
+    )
+    clear_guard_idx = screenshot_body.index("if not dirtySincePayload then", screenshot_idx)
     clear_idx = screenshot_body.index(
         "entryCreationKeyState.ClearRosterCompositionChanged()",
         clear_guard_idx,
     )
     pending_guard_idx = screenshot_body.index("elseif dirtySincePayload then", clear_idx)
     pending_idx = screenshot_body.index("pendingShotDirty = true", pending_guard_idx)
-    screenshot_idx = screenshot_body.index("Screenshot()", pending_idx)
-
     assert payload_idx < payload_gen_idx < schedule_idx < dirty_since_idx
-    assert dirty_since_idx < gen_compare_idx < clear_guard_idx < clear_idx
-    assert clear_idx < pending_guard_idx < pending_idx < screenshot_idx
+    assert dirty_since_idx < gen_compare_idx < screenshot_idx < clear_guard_idx < clear_idx
+    assert clear_idx < pending_guard_idx < pending_idx
 
 
 def test_dirty_snapshot_during_qr_paint_preserves_roster_preflight_state():
@@ -1332,28 +1334,39 @@ def test_terminal_clear_is_only_passed_by_end_session():
     assert "MaybeTriggerScreenshot(true, entry, nil, lfgReadsAllowed)" in shotnow_body
 
 
-def test_end_session_retries_terminal_clear_in_same_session_generation():
+def test_terminal_clear_retry_is_serialized_and_session_generation_guarded():
     source = _lua_source()
     end_body = _slice_between(
         source,
         "EndSession = function()",
         "local function _HasGroupRosterForTransport()",
     )
+    retry_body = _slice_between(
+        source,
+        "entryCreationKeyState.ScheduleTerminalClearRetry = function(clearSessionGen)",
+        "entryCreationKeyState.RecoverStalledQRTransport = function(now)",
+    )
 
+    count_idx = end_body.index("entryCreationKeyState.terminalClearDispatchCount = 0")
+    generation_idx = end_body.index("entryCreationKeyState.terminalClearSessionGen = sessionGen")
     first_clear_idx = end_body.index("MaybeTriggerScreenshot(true, nil, true)")
-    retry_gen_idx = end_body.index("local clearRetryGen = sessionGen")
-    retry_after_idx = end_body.index(
+    hide_idx = end_body.index("local genAtSchedule = sessionGen")
+    retry_after_idx = retry_body.index(
         "C_Timer.After(entryCreationKeyState.END_SESSION_CLEAR_RETRY_DELAY_S, function()"
     )
-    guard_idx = end_body.index("if sessionGen == clearRetryGen and not isSessionActive then")
-    retry_clear_idx = end_body.index(
-        "MaybeTriggerScreenshot(true, nil, true)",
-        first_clear_idx + 1,
+    generation_guard_idx = retry_body.index(
+        "entryCreationKeyState.terminalClearSessionGen ~= clearSessionGen"
     )
-    hide_idx = end_body.index("local genAtSchedule = sessionGen")
+    active_job_guard_idx = retry_body.index(
+        "or entryCreationKeyState.qrPaintInProgress",
+        retry_after_idx,
+    )
+    retry_clear_idx = retry_body.index("MaybeTriggerScreenshot(true, nil, true)")
 
-    assert first_clear_idx < retry_gen_idx < retry_after_idx < guard_idx < retry_clear_idx
-    assert retry_clear_idx < hide_idx
+    assert count_idx < generation_idx < first_clear_idx < hide_idx
+    assert generation_guard_idx < retry_after_idx < active_job_guard_idx < retry_clear_idx
+    assert "TERMINAL_CLEAR_MAX_DISPATCHES = 2" in source
+    assert "terminalClearRetryScheduled" in retry_body
 
 
 def test_terminal_clear_screenshot_callback_is_session_generation_guarded():
@@ -1381,10 +1394,6 @@ def test_terminal_clear_screenshot_callback_is_session_generation_guarded():
         guard_idx,
     )
     return_idx = screenshot_body.index("return", release_idx)
-    debug_idx = screenshot_body.index(
-        "if ApplicantScoutDB and ApplicantScoutDB.debug then",
-        schedule_idx,
-    )
     shot_idx = screenshot_body.index("Screenshot()", schedule_idx)
     normal_release_idx = screenshot_body.index(
         "_ReleaseForceVisibleShotLease(forceVisibleShotGen)",
@@ -1392,7 +1401,7 @@ def test_terminal_clear_screenshot_callback_is_session_generation_guarded():
     )
 
     assert capture_idx < schedule_idx < guard_idx
-    assert guard_idx < mismatch_idx < release_idx < return_idx < debug_idx < shot_idx
+    assert guard_idx < mismatch_idx < release_idx < return_idx < shot_idx
     assert guard_idx < active_idx < release_idx
     assert shot_idx < normal_release_idx
 
@@ -1438,11 +1447,6 @@ def test_disable_cleanup_restores_cvars_after_terminal_clear_retry_capture_windo
         "local entryCreationKeyState = {",
         "StartSession = function()",
     )
-    end_body = _slice_between(
-        source,
-        "EndSession = function()",
-        "local function _HasGroupRosterForTransport()",
-    )
     cleanup_body = _slice_between(
         source,
         "local function _RunDisabledCleanup()",
@@ -1456,10 +1460,7 @@ def test_disable_cleanup_restores_cvars_after_terminal_clear_retry_capture_windo
     assert (
         "DISABLE_CVAR_RESTORE_AFTER_CLEAR_DELAY_S = QR_RENDER_SETTLE_S * 3"
     ) in state_body
-    assert (
-        "C_Timer.After(entryCreationKeyState.END_SESSION_CLEAR_RETRY_DELAY_S, function()"
-        in end_body
-    )
+    assert "entryCreationKeyState.ScheduleTerminalClearRetry = function" in source
     assert (
         "entryCreationKeyState.DISABLE_CVAR_RESTORE_AFTER_CLEAR_DELAY_S"
         in cleanup_body
@@ -1838,7 +1839,11 @@ def test_incomplete_roster_payload_schedules_retry_after_successful_qr_paint():
         "C_Timer.After(forceVisibleShotDelay, function()",
         paint_success_idx,
     )
-    clear_pending_idx = screenshot_body.index("pendingShotDirty = false", paint_success_idx)
+    screenshot_idx = screenshot_body.index(
+        "local screenshotOK = pcall(Screenshot)",
+        screenshot_schedule_idx,
+    )
+    clear_pending_idx = screenshot_body.index("pendingShotDirty = false", screenshot_idx)
     incomplete_idx = screenshot_body.index(
         "payloadRosterIncomplete",
         clear_pending_idx,
@@ -1852,14 +1857,9 @@ def test_incomplete_roster_payload_schedules_retry_after_successful_qr_paint():
         "pendingShotDirty = dirtySincePayload or not retryScheduled",
         retry_result_idx,
     )
-    screenshot_idx = screenshot_body.index(
-        "Screenshot()",
-        retry_idx,
-    )
-
-    assert paint_success_idx < screenshot_schedule_idx < clear_pending_idx < incomplete_idx
+    assert paint_success_idx < screenshot_schedule_idx < screenshot_idx < clear_pending_idx
+    assert clear_pending_idx < incomplete_idx
     assert incomplete_idx < retry_result_idx < retry_idx < pending_from_retry_idx
-    assert pending_from_retry_idx < screenshot_idx
 
 
 def test_roster_load_retry_callback_requires_current_token_and_session():
@@ -2628,21 +2628,26 @@ def test_successful_snapshot_commits_emitted_applicant_count_for_clear_priority(
         "entryCreationKeyState.lastPayloadApplicantCount = emittedCount"
     )
     callback_idx = screenshot_body.index("local function OnQRPaintComplete(paintOK)")
+    shot_idx = screenshot_body.index(
+        "local screenshotOK = pcall(Screenshot)",
+        callback_idx,
+    )
+    failure_idx = screenshot_body.index("if not screenshotOK then", shot_idx)
     commit_idx = screenshot_body.index(
         "entryCreationKeyState.lastEmittedApplicantCount =",
-        callback_idx,
+        failure_idx,
     )
     committed_value_idx = screenshot_body.index(
         "payloadApplicantCount",
         commit_idx,
     )
-    shot_idx = screenshot_body.index("lastShotTime = GetTime()", commit_idx)
     paint_idx = screenshot_body.index(
         "if not PaintQR(matrix, runs, jobGen, OnQRPaintComplete) then"
     )
 
     assert emit_count_idx < payload_count_idx
-    assert callback_idx < commit_idx < committed_value_idx < shot_idx < paint_idx
+    assert callback_idx < shot_idx < failure_idx < commit_idx < committed_value_idx
+    assert committed_value_idx < paint_idx
 
 
 def test_roster_batch_clears_pending_guid_when_unit_leaves():
@@ -2896,13 +2901,26 @@ def test_qr_capture_settle_window_is_locked_and_watchdog_recoverable():
         "C_Timer.After(forceVisibleShotDelay, function()",
         capture_start_idx,
     )
-    screenshot_idx = screenshot_body.index("            Screenshot()", settle_idx)
-    clear_idx = screenshot_body.index(
-        "entryCreationKeyState.ClearQRTransportJob(jobGen)",
-        screenshot_idx,
+    screenshot_idx = screenshot_body.index(
+        "local screenshotOK = pcall(Screenshot)",
+        settle_idx,
     )
+    failure_idx = screenshot_body.index("if not screenshotOK then", screenshot_idx)
+    commit_idx = screenshot_body.index("lastSnapshotHash = h", failure_idx)
+    success_clear_idx = screenshot_body.index(
+        "entryCreationKeyState.ClearQRTransportJob(jobGen)",
+        commit_idx,
+    )
+    failure_block = screenshot_body[failure_idx:commit_idx]
 
-    assert capture_guard_idx < capture_start_idx < settle_idx < screenshot_idx < clear_idx
+    assert capture_guard_idx < capture_start_idx < settle_idx < screenshot_idx
+    assert screenshot_idx < failure_idx < commit_idx < success_clear_idx
+    assert "pendingShotDirty = terminalClearSessionGen" in failure_block
+    assert "and false or (dirtySincePayload or retryBudgetRemaining)" in failure_block
+    assert "entryCreationKeyState.ClearQRTransportJob(jobGen)" in failure_block
+    assert "_ReleaseForceVisibleShotLease(forceVisibleShotGen)" in failure_block
+    assert "SCREENSHOT_FAILURE_MAX_ATTEMPTS = 2" in source
+    assert "snapshot paused until data changes or /apscout shotnow" in failure_block
     assert "QR_TRANSPORT_JOB_TIMEOUT_S = 8.0" in source
     assert "entryCreationKeyState.RecoverStalledQRTransport = function(now)" in source
     assert "entryCreationKeyState.RecoverStalledQRTransport(now)" in ticker_body
@@ -2921,7 +2939,62 @@ def test_roster_only_snapshot_gets_one_bounded_redundant_capture(pytestconfig):
         "roster-only",
     ).strip()
 
-    assert output == "ok qr-capture-lifecycle mode=roster-only shots=2"
+    assert output == "ok qr-capture-lifecycle mode=roster-only shots=2 attempts=2"
+
+
+def test_screenshot_exception_keeps_same_snapshot_retryable(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "screenshot-failure",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=screenshot-failure shots=2 attempts=3"
+    )
+
+
+def test_persistent_screenshot_exceptions_exhaust_bounded_attempts(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "screenshot-always-fail",
+    ).strip()
+
+    assert "snapshot paused until data changes or /apscout shotnow" in output
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=screenshot-always-fail shots=0 attempts=2"
+    )
+
+
+def test_terminal_clear_screenshot_failure_retries_serially_and_commits_success(
+    pytestconfig,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "terminal-clear-failure",
+    ).strip()
+
+    assert "Screenshot() failed during forced capture" in output
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=terminal-clear-failure shots=3 attempts=4"
+    )
+
+
+def test_persistent_terminal_clear_failures_stop_after_two_serial_dispatches(
+    pytestconfig,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "terminal-clear-always-fail",
+    ).strip()
+
+    assert output.count("Screenshot() failed during forced capture") == 2
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=terminal-clear-always-fail shots=2 attempts=4"
+    )
 
 
 @pytest.mark.parametrize("mode", ["idle", "active"])
