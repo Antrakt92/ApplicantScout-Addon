@@ -35,14 +35,17 @@ assert(preferred_matrix == nil, "full snapshot used raw before roster fallback")
 
 local emergency_matrix = nil
 local emergency_runs = nil
+local emergency_run_count = nil
 harness.SetQRPaintJobGeneration(42)
-harness.BuildQRMatrixAsync(payload, false, false, 42, function(matrix, runs)
+harness.BuildQRMatrixAsync(payload, false, false, 42, function(matrix, runs, count)
     emergency_matrix = matrix
     emergency_runs = runs
+    emergency_run_count = count
 end)
 drain_timers()
 assert(emergency_matrix ~= nil, "raw emergency fallback was removed")
 assert(#emergency_matrix == 117, "unexpected raw fallback matrix size")
-assert(#emergency_runs == 4446, "unexpected raw fallback run count")
+assert(#emergency_runs == 4446 * 4, "unexpected raw fallback run buffer size")
+assert(emergency_run_count == 4446, "unexpected raw fallback logical run count")
 
 print("ok large-qr-prefers-roster-fallback")

@@ -53,12 +53,13 @@ assert(completed_runs == nil, "large matrix analysis completed synchronously")
 drain_timers()
 assert(timer_calls >= 10, "large matrix analysis was not split across frames")
 assert(completed_count == 2340, "unexpected horizontal run count")
-assert(#completed_runs == completed_count, "run table/count mismatch")
-assert(completed_runs[1][1] == 6 and completed_runs[1][2] == 6, "wrong first run origin")
-assert(completed_runs[1][3] == 9 and completed_runs[1][4] == 3, "wrong first run size")
-local last = completed_runs[#completed_runs]
-assert(last[1] == 348 and last[2] == 354, "wrong last run origin")
-assert(last[3] == 9 and last[4] == 3, "wrong last run size")
+assert(#completed_runs == completed_count * 4, "flat run buffer/count mismatch")
+assert(type(completed_runs[1]) == "number", "QR runs still allocate nested tables")
+assert(completed_runs[1] == 6 and completed_runs[2] == 6, "wrong first run origin")
+assert(completed_runs[3] == 9 and completed_runs[4] == 3, "wrong first run size")
+local last = #completed_runs - 3
+assert(completed_runs[last] == 348 and completed_runs[last + 1] == 354, "wrong last run origin")
+assert(completed_runs[last + 2] == 9 and completed_runs[last + 3] == 3, "wrong last run size")
 
 timer_queue = {}
 timer_calls = 0
@@ -66,16 +67,19 @@ encode_calls = 0
 harness.SetQRPaintJobGeneration(9)
 local encoded_result = nil
 local encoded_runs = nil
-harness.BuildQRMatrixAsync("fixture", false, false, 9, function(result, runs)
+local encoded_run_count = nil
+harness.BuildQRMatrixAsync("fixture", false, false, 9, function(result, runs, count)
     encoded_result = result
     encoded_runs = runs
+    encoded_run_count = count
 end)
 assert(encode_calls == 0, "QR encoding ran inside the caller's frame")
 assert(encoded_result == nil, "QR build completed synchronously")
 drain_timers()
 assert(encode_calls == 1, "QR encode ladder did not stop after success")
 assert(encoded_result == matrix, "QR matrix callback returned the wrong matrix")
-assert(#encoded_runs == 2340, "async QR build returned the wrong run table")
+assert(#encoded_runs == 2340 * 4, "async QR build returned the wrong flat run buffer")
+assert(encoded_run_count == 2340, "async QR build returned the wrong logical run count")
 assert(timer_calls >= 11, "QR encode and analysis did not yield across frames")
 
 local original_print = print

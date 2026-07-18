@@ -25,15 +25,18 @@ end
 local payload = string.rep(string.char(0xAB), 1139)
 local result_matrix = nil
 local result_runs = nil
+local result_run_count = nil
 harness.SetQRPaintJobGeneration(21)
-harness.BuildQRMatrixAsync(payload, false, false, 21, function(matrix, runs)
+harness.BuildQRMatrixAsync(payload, false, false, 21, function(matrix, runs, count)
     result_matrix = matrix
     result_runs = runs
+    result_run_count = count
 end)
 drain_timers()
 
 assert(result_matrix ~= nil, "observed-size payload exceeded QR texture budget")
 assert(#result_matrix == 133, "unexpected QR matrix size")
-assert(#result_runs == 5550, "unexpected QR row-RLE run count")
+assert(#result_runs == 5550 * 4, "unexpected flat QR row-RLE buffer size")
+assert(result_run_count == 5550, "unexpected logical QR row-RLE run count")
 
 print("ok large-qr-budget")

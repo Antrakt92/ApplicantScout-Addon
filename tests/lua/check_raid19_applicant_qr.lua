@@ -53,10 +53,12 @@ assert(unitIsUnitCalls == 19, string.format(
 
 local result_matrix = nil
 local result_runs = nil
+local result_run_count = nil
 harness.SetQRPaintJobGeneration(31)
-harness.BuildQRMatrixAsync(payload, false, true, 31, function(matrix, runs)
+harness.BuildQRMatrixAsync(payload, false, true, 31, function(matrix, runs, count)
     result_matrix = matrix
     result_runs = runs
+    result_run_count = count
 end)
 
 local safety = 1000
@@ -68,11 +70,12 @@ while #timer_queue > 0 do
 end
 
 assert(result_matrix ~= nil, "raid19 + applicant full payload exceeded QR budget")
-assert(result_runs ~= nil and #result_runs <= 6000, "raid19 QR exceeded texture budget")
+assert(result_runs ~= nil and result_run_count <= 6000, "raid19 QR exceeded texture budget")
+assert(#result_runs == result_run_count * 4, "raid19 QR flat buffer/count mismatch")
 
 print(string.format(
     "ok raid19-applicant-qr payload=%d matrix=%d runs=%d",
     #payload,
     #result_matrix,
-    #result_runs
+    result_run_count
 ))

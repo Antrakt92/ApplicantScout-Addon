@@ -4192,6 +4192,7 @@ local _qrencode = _addonNS.QR and _addonNS.QR.qrcode
 entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET = 6000  -- total pooled textures; per-frame work is chunked below
 entryCreationKeyState.QR_TEXTURE_PAINT_CHUNK = 450     -- max texture ops per frame while painting one QR
 entryCreationKeyState.QR_RUN_SCAN_ROWS_PER_FRAME = 12 -- bound matrix analysis work per frame
+entryCreationKeyState.QR_RUN_STRIDE = 4               -- flat x, y, width, height values per run
 entryCreationKeyState.QR_FAILURE_NOTICE_COOLDOWN_S = 30 -- keep persistent failures out of chat spam
 local QR_TEXTURE_HARD_CAP = 10000                      -- safety against runaway texture creation
 entryCreationKeyState.QR_LARGE_PAYLOAD_BYTES = 512 -- prefer hex/L before raw byte mode for applicant bursts
@@ -4223,19 +4224,20 @@ end
 
 local function _BuildQRBlackRunsAsync(matrix, quiet_offset, limit, jobGen, onComplete)
     local runs = {}
+    local runCount = 0
     local nextRow = 1
 
     local function AddRun(x_start, y, run_len)
-        runs[#runs + 1] = {
-            quiet_offset + (x_start - 1) * QR_MODULE_PX,
-            quiet_offset + (y - 1) * QR_MODULE_PX,
-            run_len * QR_MODULE_PX,
-            QR_MODULE_PX,
-        }
-        if limit and #runs > limit then
-            onComplete(nil, #runs)
+        runCount = runCount + 1
+        if limit and runCount > limit then
+            onComplete(nil, runCount)
             return false
         end
+        local baseIndex = #runs
+        runs[baseIndex + 1] = quiet_offset + (x_start - 1) * QR_MODULE_PX
+        runs[baseIndex + 2] = quiet_offset + (y - 1) * QR_MODULE_PX
+        runs[baseIndex + 3] = run_len * QR_MODULE_PX
+        runs[baseIndex + 4] = QR_MODULE_PX
         return true
     end
 
@@ -4267,7 +4269,7 @@ local function _BuildQRBlackRunsAsync(matrix, quiet_offset, limit, jobGen, onCom
         if nextRow <= #matrix then
             C_Timer.After(0, ContinueBuild)
         else
-            onComplete(runs, #runs)
+            onComplete(runs, runCount)
         end
     end
 
@@ -4285,7 +4287,7 @@ end
 
 -- Paint pre-built row runs into the frame. Matrix analysis and encode-mode
 -- fallback complete asynchronously before this function starts.
-local function PaintQR(matrix, runs, jobGen, onComplete)
+local function PaintQR(matrix, runs, runCount, jobGen, onComplete)
     local rows = #matrix
     local total_modules = rows + 2 * QR_QUIET_ZONE   -- assume square QR
     local frame_px = total_modules * QR_MODULE_PX
@@ -4346,18 +4348,23 @@ local function PaintQR(matrix, runs, jobGen, onComplete)
     local function ContinuePaint()
         if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
         local chunkEnd = math.min(
-            #runs,
+            runCount,
             runIndex + entryCreationKeyState.QR_TEXTURE_PAINT_CHUNK - 1
         )
         while runIndex <= chunkEnd do
-            local run = runs[runIndex]
-            if not _AcquireQRTexture(run[1], run[2], run[3], run[4]) then
+            local baseIndex = (runIndex - 1) * entryCreationKeyState.QR_RUN_STRIDE
+            if not _AcquireQRTexture(
+                runs[baseIndex + 1],
+                runs[baseIndex + 2],
+                runs[baseIndex + 3],
+                runs[baseIndex + 4]
+            ) then
                 FinishPaint(false)
                 return
             end
             runIndex = runIndex + 1
         end
-        if runIndex > #runs then
+        if runIndex > runCount then
             FinishPaint(true)
             return
         end
@@ -4529,7 +4536,7 @@ local function BuildQRMatrix(
                             "[APS-debug] QR fallback %s (%d %s) -> %s (%d bytes payload, %d textures)",
                             first_label, first_size, first_unit, label, #payload, renderRuns))
                     end
-                    onComplete(matrix, runs)
+                    onComplete(matrix, runs, renderRuns)
                 end
             )
         end
@@ -4994,7 +5001,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     local fallbackHash = nil
     local fallbackInUse = false
     local OnQRBuildComplete
-    OnQRBuildComplete = function(matrix, runs)
+    OnQRBuildComplete = function(matrix, runs, renderRunCount)
         if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
         if not matrix and canTryRosterUnavailableFallback then
             canTryRosterUnavailableFallback = false
@@ -5027,7 +5034,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 "|cff999999[APS-debug]|r QR roster fallback full_hash=%x fallback_hash=%x",
                 h, fallbackHash))
         end
-        if not PaintQR(matrix, runs, jobGen, OnQRPaintComplete) then
+        if not PaintQR(matrix, runs, renderRunCount, jobGen, OnQRPaintComplete) then
             entryCreationKeyState.ClearQRTransportJob(jobGen)
             lastSnapshotHash = h
             pendingShotDirty = false

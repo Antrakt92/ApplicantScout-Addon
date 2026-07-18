@@ -216,7 +216,9 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
     callback_idx = body.index("local function OnQRPaintComplete(paintOK)")
     lease_idx = body.index("local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()", callback_idx)
     screenshot_idx = body.index("local screenshotOK = pcall(Screenshot)")
-    paint_idx = body.index("if not PaintQR(matrix, runs, jobGen, OnQRPaintComplete) then")
+    paint_idx = body.index(
+        "if not PaintQR(matrix, runs, renderRunCount, jobGen, OnQRPaintComplete) then"
+    )
     build_idx = body.index(
         "BuildQRMatrix(\n        payload,\n        canTryRosterUnavailableFallback,"
     )
@@ -705,7 +707,7 @@ def test_roster_composition_change_waits_for_inspect_until_fallback_deadline():
     )
     commit_idx = screenshot_body.index("lastSnapshotHash = h", clear_idx)
     paint_idx = screenshot_body.index(
-        "if not PaintQR(matrix, runs, jobGen, OnQRPaintComplete) then"
+        "if not PaintQR(matrix, runs, renderRunCount, jobGen, OnQRPaintComplete) then"
     )
     assert callback_idx < clear_idx < commit_idx < paint_idx
 
@@ -1255,7 +1257,7 @@ def test_quiet_signature_is_committed_only_after_successful_qr_paint():
     )
     pre_paint_quiet_block = screenshot_body[quiet_idx:job_idx]
     paint_idx = screenshot_body.index(
-        "if not PaintQR(matrix, runs, jobGen, OnQRPaintComplete) then"
+        "if not PaintQR(matrix, runs, renderRunCount, jobGen, OnQRPaintComplete) then"
     )
 
     assert quiet_idx < job_idx < callback_idx < lease_idx
@@ -2744,7 +2746,7 @@ def test_successful_snapshot_commits_emitted_applicant_count_for_clear_priority(
         commit_idx,
     )
     paint_idx = screenshot_body.index(
-        "if not PaintQR(matrix, runs, jobGen, OnQRPaintComplete) then"
+        "if not PaintQR(matrix, runs, renderRunCount, jobGen, OnQRPaintComplete) then"
     )
 
     assert emit_count_idx < payload_count_idx
@@ -2961,7 +2963,15 @@ def test_qr_render_uses_script_safe_budget_before_texture_hard_cap():
     assert budget_idx < chunk_idx < scan_chunk_idx < hard_cap_idx
     assert async_builder_idx < scan_timer_idx < build_call_idx
     assert "_CountQRBlackRuns" not in qr_body
-    assert "if limit and #runs > limit then" in qr_body
+    assert "entryCreationKeyState.QR_RUN_STRIDE = 4" in qr_body
+    assert "local runCount = 0" in qr_body[async_builder_idx:build_call_idx]
+    assert "runs[#runs + 1] = {" not in qr_body[async_builder_idx:build_call_idx]
+    assert "if limit and runCount > limit then" in qr_body
+    assert "local function PaintQR(matrix, runs, runCount, jobGen, onComplete)" in qr_body
+    assert "onComplete(matrix, runs, renderRuns)" in qr_body
+    assert "local baseIndex = (runIndex - 1) * entryCreationKeyState.QR_RUN_STRIDE" in qr_body
+    for offset in range(1, 5):
+        assert f"runs[baseIndex + {offset}]" in qr_body
     assert paint_budget_idx < finish_failure_idx
     assert "C_Timer.After(0, ContinuePaint)" in qr_body
     assert "local function ContinueCleanup()" in qr_body
