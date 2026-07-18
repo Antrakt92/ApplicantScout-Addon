@@ -37,10 +37,18 @@ focused on applicant scouting, playstyle, and Auto Hi.
 - Stable roster serialization now resolves each unit identity once and reuses
   the payload's player realm for bare applicant names instead of repeating Unit
   API reads on every row.
+- Applicant and roster payloads now sanitize and serialize stable data once, and
+  QR construction uses compact buffers to reduce Lua allocation and repeated
+  work without changing APS1 payload bytes.
 - Companion `0.10.0` shows `addon update` when the decoded WoW addon version is
   older than the paired release.
 - Companion `0.10.0` adds keyboard navigation, clearer grouped-applicant and M+
   evidence, and more explicit screenshot/WCL health states.
+
+### Changed
+
+- Removed the troubleshooting button strip from everyday settings; diagnostic
+  slash commands remain available when support information is needed.
 
 ### Notes
 
