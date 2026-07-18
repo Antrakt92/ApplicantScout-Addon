@@ -22,6 +22,9 @@ LUA_QR_CAPTURE_LIFECYCLE_CHECK = (
 LUA_SCREENSHOT_CVAR_RECOVERY_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_screenshot_cvar_recovery.lua"
 )
+LUA_SETTINGS_ATTACH_WATCHER_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_settings_attach_watcher.lua"
+)
 LUA_ROSTER_INSPECT_EXHAUSTION_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_inspect_exhaustion.lua"
 )
@@ -2094,6 +2097,17 @@ def test_settings_panel_reuses_and_retires_lazy_attach_watcher():
     assert settings_body.count('watcher:SetScript("OnEvent", nil)') == 2
     assert settings_body.count("entryCreationKeyState.settingsFrameAttachWatcher = nil") == 3
     assert "entryCreationKeyState.settingsFrameAttachWatcher == self" in settings_body
+
+
+def test_settings_panel_watcher_is_singleton_until_runtime_attachment(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_SETTINGS_ATTACH_WATCHER_CHECK,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok settings-attach-watcher singleton=1 retired=1 attached=1"
+    )
 
 
 def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():

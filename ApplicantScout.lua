@@ -5033,6 +5033,12 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
             sessionActive = isSessionActive == true,
         }
     end
+    _G.ApplicantScoutFixtureHarness.SettingsAttachState = function()
+        return {
+            attached = settingsFrameAttached == true,
+            watcher = entryCreationKeyState.settingsFrameAttachWatcher,
+        }
+    end
 end
 
 -- ───────────────────────────────────────────────────────────
