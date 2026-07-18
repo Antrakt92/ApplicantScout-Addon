@@ -2377,13 +2377,17 @@ local function _EmptyRaiderIOMPlusSummary(currentScore, mainScore)
     }
 end
 
-local function _RaiderIOProfileLookupName(memberName)
+local function _RaiderIOProfileLookupName(memberName, playerRealm)
     memberName = SafeStr(memberName, "")
     if memberName == "" or memberName == "?" or memberName:find("-", 1, true) then
         return memberName
     end
-    local _playerName, playerRealm = UnitFullName("player")
-    playerRealm = SafeStr(playerRealm, "")
+    if playerRealm == nil then
+        local _playerName, resolvedRealm = UnitFullName("player")
+        playerRealm = SafeStr(resolvedRealm, "")
+    else
+        playerRealm = SafeStr(playerRealm, "")
+    end
     if playerRealm == "" then return memberName end
     -- WHY: LFG may emit same-realm applicants as bare "Name"; RaiderIO profile
     -- lookups need the realm-qualified key to expose per-dungeon history.
@@ -2666,12 +2670,13 @@ local function _InvalidateRosterSpecCacheForUnit(unit)
     end
 end
 
-local function _MaybeRequestRosterInspect(unit, guid)
+local function _MaybeRequestRosterInspect(unit, guid, isSelf)
     if not (NotifyInspect and CanInspect) then return false, "api" end
-    if _UnitIsSelfForRoster(unit) then return false, "self" end
+    if isSelf == nil then isSelf = _UnitIsSelfForRoster(unit) end
+    if isSelf then return false, "self" end
     guid = SafeStr(guid, "")
     if guid == "" then return false, "guid" end
-    if entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid) then
+    if entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid, isSelf) then
         return false, "cached"
     end
 
@@ -2733,8 +2738,9 @@ entryCreationKeyState.ReadRosterInspectItemLevel = function(unit)
     if not ok or IsSecretValue(ilvl) then return 0 end
     return _ClampUInt16(SafeRoundedNumber(ilvl, 0))
 end
-entryCreationKeyState.RosterUnitHasResolvedInspectData = function(unit, guid)
-    if _UnitIsSelfForRoster(unit) then return true end
+entryCreationKeyState.RosterUnitHasResolvedInspectData = function(unit, guid, isSelf)
+    if isSelf == nil then isSelf = _UnitIsSelfForRoster(unit) end
+    if isSelf then return true end
     guid = SafeStr(guid, "")
     if guid == "" then return false end
 
@@ -3156,14 +3162,13 @@ local function _OnRosterInspectReady(guid)
     end
 end
 
-local function _UnitSpecIDForRoster(unit)
-    local guid = entryCreationKeyState.UnitGUIDForRoster(unit)
+local function _UnitSpecIDForRoster(unit, guid, isSelf)
     if guid ~= "" then
         local cachedSpecID = _ClampUInt16(SafeNumber(rosterInspectSpecByGUID[guid], 0))
         if cachedSpecID > 0 then return cachedSpecID end
     end
 
-    if _UnitIsSelfForRoster(unit) then
+    if isSelf then
         if GetSpecialization and GetSpecializationInfo then
             local okSpec, specIndex = pcall(GetSpecialization)
             specIndex = okSpec and math.floor(SafeNumber(specIndex, 0)) or 0
@@ -3181,13 +3186,12 @@ local function _UnitSpecIDForRoster(unit)
             return specID
         end
     end
-    _MaybeRequestRosterInspect(unit, guid)
+    _MaybeRequestRosterInspect(unit, guid, isSelf)
     return 0
 end
 
-local function _UnitItemLevelForRoster(unit)
-    if not _UnitIsSelfForRoster(unit) then
-        local guid = entryCreationKeyState.UnitGUIDForRoster(unit)
+local function _UnitItemLevelForRoster(unit, guid, isSelf)
+    if not isSelf then
         if guid ~= "" then
             local cachedIlvl = entryCreationKeyState.CachedRosterInspectItemLevel(guid)
             if cachedIlvl > 0 then return cachedIlvl end
@@ -3197,7 +3201,7 @@ local function _UnitItemLevelForRoster(unit)
                 entryCreationKeyState.rosterInspectIlvlByGUID[guid] = ilvl
                 return ilvl
             end
-            _MaybeRequestRosterInspect(unit, guid)
+            _MaybeRequestRosterInspect(unit, guid, isSelf)
         end
         return 0
     end
@@ -3230,10 +3234,12 @@ local function _BuildRosterRow(unit, unitIndex, subgroup, isRaid)
     if not _UnitExistsForRoster(unit) then return nil end
     local name = _UnitFullNameForTransport(unit)
     if name == "" then return nil end
-    local specID = _UnitSpecIDForRoster(unit)
+    local guid = entryCreationKeyState.UnitGUIDForRoster(unit)
+    local isSelf = _UnitIsSelfForRoster(unit)
+    local specID = _UnitSpecIDForRoster(unit, guid, isSelf)
     local roleToken = _UnitRoleTokenForRoster(unit, specID)
     local flags = 0
-    if _UnitIsSelfForRoster(unit) then flags = flags + 1 end
+    if isSelf then flags = flags + 1 end
     if isRaid then flags = flags + 2 end
     return {
         unitIndex = unitIndex,
@@ -3241,7 +3247,7 @@ local function _BuildRosterRow(unit, unitIndex, subgroup, isRaid)
         subgroup = subgroup,
         classID = _UnitClassIDForRoster(unit),
         specID = specID,
-        ilvl = _UnitItemLevelForRoster(unit),
+        ilvl = _UnitItemLevelForRoster(unit, guid, isSelf),
         role = ROLE_NAME_TO_BYTE[roleToken] or 2,
         name = name,
     }
@@ -4046,7 +4052,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
                     SafeRoundedNumber(memberInfo.score, 0)
                 )))
                 local rioSummary = _GetRaiderIOMPlusSummary(
-                    _RaiderIOProfileLookupName(memberName),
+                    _RaiderIOProfileLookupName(memberName, playerRealm),
                     listingActivityIDForRio,
                     listingKeyLevelForRio
                 )

@@ -44,6 +44,9 @@ LUA_LARGE_QR_ROSTER_FALLBACK_CHECK = (
 LUA_RAID19_APPLICANT_QR_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_raid19_applicant_qr.lua"
 )
+LUA_PLAYER_REALM_LOOKUP_REUSE_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_player_realm_lookup_reuse.lua"
+)
 LUA_NUMERIC_BOUNDARIES_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_numeric_boundaries.lua"
 )
@@ -1937,12 +1940,14 @@ def test_roster_spec_resolution_requests_inspect_when_spec_is_unknown():
     source = _lua_source()
     spec_body = _slice_between(
         source,
-        "local function _UnitSpecIDForRoster(unit)",
-        "local function _UnitItemLevelForRoster(unit)",
+        "local function _UnitSpecIDForRoster(unit, guid, isSelf)",
+        "local function _UnitItemLevelForRoster(unit, guid, isSelf)",
     )
 
     inspect_idx = spec_body.index("GetInspectSpecialization")
-    request_idx = spec_body.index("_MaybeRequestRosterInspect(unit, guid)")
+    request_idx = spec_body.index(
+        "_MaybeRequestRosterInspect(unit, guid, isSelf)"
+    )
     fallback_idx = spec_body.index("return 0", request_idx)
 
     assert "rosterInspectSpecByGUID[guid]" in spec_body
@@ -1953,17 +1958,17 @@ def test_roster_item_level_uses_inspect_cache_for_non_self_units():
     source = _lua_source()
     item_level_body = _slice_between(
         source,
-        "local function _UnitItemLevelForRoster(unit)",
+        "local function _UnitItemLevelForRoster(unit, guid, isSelf)",
         "local function _UnitRoleTokenForRoster(unit, specID)",
     )
     inspect_body = _slice_between(
         source,
         "local function _OnRosterInspectReady(guid)",
-        "local function _UnitSpecIDForRoster(unit)",
+        "local function _UnitSpecIDForRoster(unit, guid, isSelf)",
     )
     request_body = _slice_between(
         source,
-        "local function _MaybeRequestRosterInspect(unit, guid)",
+        "local function _MaybeRequestRosterInspect(unit, guid, isSelf)",
         "entryCreationKeyState.ClearRosterInspectBatchState = function()",
     )
 
@@ -1973,11 +1978,16 @@ def test_roster_item_level_uses_inspect_cache_for_non_self_units():
     read_idx = item_level_body.index(
         "entryCreationKeyState.ReadRosterInspectItemLevel(unit)"
     )
-    request_idx = item_level_body.index("_MaybeRequestRosterInspect(unit, guid)")
+    request_idx = item_level_body.index(
+        "_MaybeRequestRosterInspect(unit, guid, isSelf)"
+    )
 
     assert "C_PaperDollInfo.GetInspectItemLevel" in source
     assert "entryCreationKeyState.rosterInspectIlvlByGUID[guid] = ilvl" in inspect_body
-    assert "entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid)" in request_body
+    assert (
+        "entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid, isSelf)"
+        in request_body
+    )
     assert cache_idx < read_idx < request_idx
 
 
@@ -1991,7 +2001,7 @@ def test_inspect_ready_marks_roster_dirty_after_caching_spec():
     inspect_body = _slice_between(
         source,
         "local function _OnRosterInspectReady(guid)",
-        "local function _UnitSpecIDForRoster(unit)",
+        "local function _UnitSpecIDForRoster(unit, guid, isSelf)",
     )
     events_body = _slice_between(
         source,
@@ -2308,7 +2318,7 @@ def test_inspect_ready_batches_followup_roster_inspects_before_dirty():
     source = _lua_source()
     request_body = _slice_between(
         source,
-        "local function _MaybeRequestRosterInspect(unit, guid)",
+        "local function _MaybeRequestRosterInspect(unit, guid, isSelf)",
         "entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)",
     )
     batch_body = _slice_between(
@@ -2319,7 +2329,7 @@ def test_inspect_ready_batches_followup_roster_inspects_before_dirty():
     inspect_body = _slice_between(
         source,
         "local function _OnRosterInspectReady(guid)",
-        "local function _UnitSpecIDForRoster(unit)",
+        "local function _UnitSpecIDForRoster(unit, guid, isSelf)",
     )
 
     assert "return true" in request_body
@@ -2375,7 +2385,7 @@ def test_roster_and_auto_hi_unit_apis_do_not_branch_on_raw_secret_results():
     )
     request_body = _slice_between(
         source,
-        "local function _MaybeRequestRosterInspect(unit, guid)",
+        "local function _MaybeRequestRosterInspect(unit, guid, isSelf)",
         "entryCreationKeyState.ClearRosterInspectBatchState = function()",
     )
 
@@ -2435,7 +2445,7 @@ def test_pending_roster_inspect_does_not_reissue_same_guid_before_timeout():
     source = _lua_source()
     request_body = _slice_between(
         source,
-        "local function _MaybeRequestRosterInspect(unit, guid)",
+        "local function _MaybeRequestRosterInspect(unit, guid, isSelf)",
         "entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)",
     )
 
@@ -2522,7 +2532,7 @@ def test_combat_block_keeps_batch_pending_until_player_regen_enabled():
     source = _lua_source()
     request_body = _slice_between(
         source,
-        "local function _MaybeRequestRosterInspect(unit, guid)",
+        "local function _MaybeRequestRosterInspect(unit, guid, isSelf)",
         "entryCreationKeyState.ClearRosterInspectBatchState = function()",
     )
     batch_body = _slice_between(
@@ -2727,7 +2737,7 @@ def test_roster_batch_clears_pending_guid_when_unit_leaves():
     inspect_body = _slice_between(
         source,
         "local function _OnRosterInspectReady(guid)",
-        "local function _UnitSpecIDForRoster(unit)",
+        "local function _UnitSpecIDForRoster(unit, guid, isSelf)",
     )
 
     missing_idx = batch_body.index("not _FindRosterUnitByGUID(rosterInspectPendingGUID)")
@@ -3101,6 +3111,15 @@ def test_raid19_with_applicant_keeps_full_roster_inside_qr_budget(pytestconfig):
     assert output.startswith("ok raid19-applicant-qr payload=")
 
 
+def test_payload_reuses_player_realm_for_bare_applicant_names(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_PLAYER_REALM_LOOKUP_REUSE_CHECK,
+    ).strip()
+
+    assert output == "ok player-realm-lookup-reuse reads=1"
+
+
 def test_large_qr_prefers_reliable_roster_fallback_before_raw(pytestconfig):
     assert _run_lua_script(
         pytestconfig,
@@ -3197,7 +3216,7 @@ def test_roster_spec_cache_invalidation_clears_pending_inspect_for_changed_guid(
     helper_body = _slice_between(
         source,
         "entryCreationKeyState.ClearRosterInspectDataForGUID = function(guid)",
-        "local function _MaybeRequestRosterInspect(unit, guid)",
+        "local function _MaybeRequestRosterInspect(unit, guid, isSelf)",
     )
 
     assert "rosterInspectSpecByGUID[guid] = nil" in helper_body
@@ -3809,7 +3828,7 @@ def test_raiderio_lookup_qualifies_same_realm_bare_applicant_names():
     source = _lua_source()
     helper_body = _slice_between(
         source,
-        "local function _RaiderIOProfileLookupName(memberName)",
+        "local function _RaiderIOProfileLookupName(memberName, playerRealm)",
         "local function _GetRaiderIOMPlusSummary(memberName, listingActivityID, targetKey)",
     )
     payload_body = _slice_between(
@@ -3822,7 +3841,9 @@ def test_raiderio_lookup_qualifies_same_realm_bare_applicant_names():
     assert 'UnitFullName("player")' in helper_body
     assert '"-" .. playerRealm' in helper_body
     summary_idx = payload_body.index("local rioSummary = _GetRaiderIOMPlusSummary(")
-    lookup_idx = payload_body.index("_RaiderIOProfileLookupName(memberName)")
+    lookup_idx = payload_body.index(
+        "_RaiderIOProfileLookupName(memberName, playerRealm)"
+    )
     activity_idx = payload_body.index("listingActivityIDForRio", lookup_idx)
     assert summary_idx < lookup_idx < activity_idx
     assert "_PackLenStr(memberOut, memberName)" in payload_body

@@ -34,6 +34,9 @@ focused on applicant scouting, playstyle, and Auto Hi.
   count, dirty-during-job state, and visible texture high-water mark.
 - Screenshot format and quality are now leased only around each QR capture and
   restored afterwards instead of remaining changed whenever the addon is on.
+- Stable roster serialization now resolves each unit identity once and reuses
+  the payload's player realm for bare applicant names instead of repeating Unit
+  API reads on every row.
 - Companion `0.10.0` shows `addon update` when the decoded WoW addon version is
   older than the paired release.
 - Companion `0.10.0` adds keyboard navigation, clearer grouped-applicant and M+
