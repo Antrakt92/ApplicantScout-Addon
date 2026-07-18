@@ -5,14 +5,8 @@
 ## 0.6.0 - 18-Jul-2026 - Companion 0.10.0 transport and usability update
 
 This paired addon + companion release keeps APS1 v9 unchanged while making QR
-capture recover automatically and bringing common diagnostics into the Group
-Finder panel.
-
-### Added
-
-- The Group Finder settings panel now includes compact Status, Snapshot,
-  Move/Lock QR, Reset QR, and Debug controls for common screenshot and QR
-  recovery without requiring memorized slash commands.
+capture recover automatically and keeping the everyday Group Finder settings
+focused on applicant scouting, playstyle, and Auto Hi.
 
 ### Fixed
 

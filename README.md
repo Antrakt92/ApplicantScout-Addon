@@ -135,10 +135,9 @@ the wrong folder, or the Screenshots folder is synced/shared before cleanup.
 
 ## Handy Slash Commands
 
-Open WoW Group Finder to use the compact in-game troubleshooting row: **Status**,
-**Snapshot**, **Move QR** / **Lock QR**, **Reset QR**, and **Debug**. The slash
-commands below remain available as fallbacks when the Group Finder panel is not
-open.
+The Group Finder panel stays focused on everyday applicant scouting, playstyle,
+and Auto Hi controls. Advanced diagnostics and QR recovery remain available
+through the slash commands below.
 
 ```text
 /apscout on | off       enable/disable capture
@@ -169,15 +168,13 @@ open.
 
 - Overlay stays empty: open companion Settings and confirm the Screenshots path
   points at the active `_retail_\Screenshots` folder.
-- WoW side looks idle: click **Status** in the Group Finder settings panel, or
-  run `/apscout status`, while hosting a listing.
-- Need a manual sync: keep ApplicantScout enabled and click **Snapshot**, or run
-  `/apscout shotnow`.
+- WoW side looks idle: run `/apscout status` while hosting a listing.
+- Need a manual sync: keep ApplicantScout enabled and run `/apscout shotnow`.
 - Applicant state looks stale: run `/apscout reset` while transport is active.
 - WCL cells stay empty: open companion Settings and use Test WCL.
-- QR frame is in the way: click **Move QR**, Alt-drag it, then click **Lock QR**.
-  Use **Reset QR** to restore the default position; `/apscout qrmove` and
-  `/apscout qrreset` remain available as fallbacks.
+- QR frame is in the way: run `/apscout qrmove`, Alt-drag it, then run the same
+  command again to lock it. Use `/apscout qrreset` to restore the default
+  position.
 
 ## Local Development
 

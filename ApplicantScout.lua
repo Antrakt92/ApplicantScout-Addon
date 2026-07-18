@@ -5505,9 +5505,6 @@ local function _RunDisabledCleanup()
     entryCreationKeyState.SetQRAlwaysVisible(false)
     qrMoveMode = false
     _RefreshQRMouse()
-    if entryCreationKeyState.SyncTroubleshootingButtons then
-        entryCreationKeyState.SyncTroubleshootingButtons()
-    end
 
     -- If no session was active, EndSession didn't schedule deferred Hide; sync
     -- Hide here. Active-session case is handled by EndSession's deferred
@@ -5556,9 +5553,6 @@ _SetDebug = function(flag)
     flag = not not flag
     ApplicantScoutDB.debug = flag
     APSPrint("debug " .. (flag and "ON — every scan/emit will print" or "OFF"))
-    if entryCreationKeyState.SyncTroubleshootingButtons then
-        entryCreationKeyState.SyncTroubleshootingButtons()
-    end
 end
 
 _SyncAutoMPlusPlaystyleDropdown = function()
@@ -5618,7 +5612,7 @@ end
 
 -- Layout constants for the Blizzard-tooltip-style panel chrome.
 local _SETTINGS_FRAME_WIDTH = 420
-local _SETTINGS_FRAME_HEIGHT = 165
+local _SETTINGS_FRAME_HEIGHT = 104
 local _SETTINGS_ANCHOR_X = 0
 local _SETTINGS_ANCHOR_Y = 6
 local _SETTINGS_TOP_PAD = 10        -- clearance under the rope-border top edge
@@ -5626,30 +5620,12 @@ local _SETTINGS_LEFT_PAD = 14
 local _SETTINGS_RIGHT_COL_X = 238
 local _SETTINGS_DROPDOWN_WIDTH = 170
 
-entryCreationKeyState.SyncTroubleshootingButtons = function()
-    if not settingsFrame then return end
-    if settingsFrame.debugButton then
-        settingsFrame.debugButton:SetText(
-            "Debug: " .. ((ApplicantScoutDB and ApplicantScoutDB.debug) and "On" or "Off")
-        )
-    end
-    if settingsFrame.qrMoveButton then
-        settingsFrame.qrMoveButton:SetText(qrMoveMode and "Lock QR" or "Move QR")
-    end
-end
-
-entryCreationKeyState.ToggleTroubleshootingDebug = function()
-    _SetDebug(not (ApplicantScoutDB and ApplicantScoutDB.debug))
-    return ApplicantScoutDB and ApplicantScoutDB.debug or false
-end
-
 entryCreationKeyState.ToggleQRMoveMode = function()
     qrMoveMode = not qrMoveMode
     _RefreshQRMouse()
     _RefreshQRVisibility()
     APSPrint("QR move mode: " .. tostring(qrMoveMode) ..
              (qrMoveMode and " — Alt+drag the QR frame to reposition" or ""))
-    entryCreationKeyState.SyncTroubleshootingButtons()
     return qrMoveMode
 end
 
@@ -5918,91 +5894,6 @@ _AttachSettingsPanel = function()
         "Also send this greeting 10 seconds after a new player joins your party. Disabled in raids."
     )
 
-    local troubleshootingDivider = settingsFrame:CreateTexture(nil, "ARTWORK")
-    troubleshootingDivider:SetColorTexture(1, 1, 1, 0.14)
-    troubleshootingDivider:SetPoint(
-        "TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -103)
-    troubleshootingDivider:SetPoint(
-        "TOPRIGHT", settingsFrame, "TOPRIGHT", -_SETTINGS_LEFT_PAD, -103)
-    troubleshootingDivider:SetHeight(1)
-
-    local troubleshootingLabel = settingsFrame:CreateFontString(
-        nil, "OVERLAY", "GameFontDisableSmall")
-    troubleshootingLabel:SetPoint(
-        "TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -114)
-    troubleshootingLabel:SetText("Troubleshooting")
-
-    local function _CreateTroubleshootingButton(
-        name, label, width, x, onClick, tooltipTitle, tooltipBody)
-        local button = CreateFrame(
-            "Button",
-            name,
-            settingsFrame,
-            "UIPanelButtonTemplate"
-        )
-        button:SetSize(width, 22)
-        button:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", x, -128)
-        button:SetText(label)
-        button:SetScript("OnClick", onClick)
-        button:HookScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText(tooltipTitle)
-            GameTooltip:AddLine(tooltipBody, 1, 1, 1, true)
-            GameTooltip:Show()
-        end)
-        button:HookScript("OnLeave", function() GameTooltip:Hide() end)
-        return button
-    end
-
-    -- WHY: fixed button actions delegate to the same lifecycle-aware helpers
-    -- as slash commands so guards, state changes, and user feedback stay
-    -- single-sourced.
-    settingsFrame.statusButton = _CreateTroubleshootingButton(
-        "ApplicantScoutSettingsStatusButton",
-        "Status",
-        58,
-        _SETTINGS_LEFT_PAD,
-        function() entryCreationKeyState.PrintTroubleshootingStatus() end,
-        "Show diagnostics",
-        "Print current QR, screenshot, listing, and transport state to chat. Redact character and listing details before sharing."
-    )
-    settingsFrame.snapshotButton = _CreateTroubleshootingButton(
-        "ApplicantScoutSettingsSnapshotButton",
-        "Snapshot",
-        76,
-        _SETTINGS_LEFT_PAD + 62,
-        function() entryCreationKeyState.RequestForcedSnapshot() end,
-        "Force snapshot",
-        "Request one fresh QR screenshot while ApplicantScout is enabled. Use when companion data looks stale."
-    )
-    settingsFrame.qrMoveButton = _CreateTroubleshootingButton(
-        "ApplicantScoutSettingsQRMoveButton",
-        "Move QR",
-        66,
-        _SETTINGS_LEFT_PAD + 142,
-        function() entryCreationKeyState.ToggleQRMoveMode() end,
-        "Move QR frame",
-        "Toggle move mode. Hold Alt and drag the QR frame, then click Lock QR when finished."
-    )
-    settingsFrame.qrResetButton = _CreateTroubleshootingButton(
-        "ApplicantScoutSettingsQRResetButton",
-        "Reset QR",
-        70,
-        _SETTINGS_LEFT_PAD + 212,
-        function() entryCreationKeyState.ResetQRPositionForSupport() end,
-        "Reset QR position",
-        "Restore the QR frame to its default top-left position."
-    )
-    settingsFrame.debugButton = _CreateTroubleshootingButton(
-        "ApplicantScoutSettingsDebugButton",
-        "Debug: Off",
-        76,
-        _SETTINGS_LEFT_PAD + 286,
-        function() entryCreationKeyState.ToggleTroubleshootingDebug() end,
-        "Toggle debug logging",
-        "Turn verbose scan and transport messages on or off. Leave off during normal use."
-    )
-
     -- Re-sync checkboxes from DB on each show. Handles slash-toggle-while-
     -- panel-was-hidden case: open via /apscout config → checkboxes reflect DB truth.
     settingsFrame:HookScript("OnShow", function()
@@ -6011,7 +5902,6 @@ _AttachSettingsPanel = function()
             ApplicantScoutDB.autoHiGreetNewPartyMembers)
         _SyncAutoMPlusPlaystyleDropdown()
         entryCreationKeyState.SyncAutoHiEditBox()
-        entryCreationKeyState.SyncTroubleshootingButtons()
     end)
 
     enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
@@ -6019,7 +5909,6 @@ _AttachSettingsPanel = function()
         ApplicantScoutDB.autoHiGreetNewPartyMembers and true or false)
     _SyncAutoMPlusPlaystyleDropdown()
     entryCreationKeyState.SyncAutoHiEditBox()
-    entryCreationKeyState.SyncTroubleshootingButtons()
 
     settingsFrameAttached = true  -- LAST: any earlier failure leaves false → retry next PLAYER_LOGIN
 end

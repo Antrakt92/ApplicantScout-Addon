@@ -2057,7 +2057,7 @@ def test_auto_hi_settings_panel_persists_user_message_from_edit_box():
     assert "10 seconds after a new player joins your party" in settings_body
 
 
-def test_settings_panel_exposes_troubleshooting_buttons_through_shared_helpers():
+def test_settings_panel_omits_troubleshooting_controls_and_stays_compact():
     source = _lua_source()
     settings_body = _slice_between(
         source,
@@ -2065,31 +2065,20 @@ def test_settings_panel_exposes_troubleshooting_buttons_through_shared_helpers()
         "-- slash commands",
     )
 
-    expected_actions = (
-        ("Status", "statusButton", "Status", "PrintTroubleshootingStatus"),
-        ("Snapshot", "snapshotButton", "Snapshot", "RequestForcedSnapshot"),
-        ("QRMove", "qrMoveButton", "Move QR", "ToggleQRMoveMode"),
-        ("QRReset", "qrResetButton", "Reset QR", "ResetQRPositionForSupport"),
-        ("Debug", "debugButton", "Debug: Off", "ToggleTroubleshootingDebug"),
+    forbidden = (
+        "ApplicantScoutSettingsStatusButton",
+        "ApplicantScoutSettingsSnapshotButton",
+        "ApplicantScoutSettingsQRMoveButton",
+        "ApplicantScoutSettingsQRResetButton",
+        "ApplicantScoutSettingsDebugButton",
+        "troubleshootingLabel",
+        "_CreateTroubleshootingButton",
+        "SyncTroubleshootingButtons",
+        "ToggleTroubleshootingDebug",
     )
-    assert "_SETTINGS_FRAME_HEIGHT = 165" in settings_body
-    assert 'troubleshootingLabel:SetText("Troubleshooting")' in settings_body
-    assert '"UIPanelButtonTemplate"' in settings_body
-    assert settings_body.count("_CreateTroubleshootingButton(") == len(expected_actions) + 1
-    button_positions = []
-    for suffix, field, label, helper in expected_actions:
-        assignment = f"settingsFrame.{field} = _CreateTroubleshootingButton("
-        start = settings_body.index(assignment)
-        button_positions.append(start)
-        action_body = settings_body[start : start + 900]
-        assert f'"ApplicantScoutSettings{suffix}Button"' in action_body
-        assert f'"{label}"' in action_body
-        assert f"function() entryCreationKeyState.{helper}() end" in action_body
-    assert button_positions == sorted(button_positions)
+    assert "_SETTINGS_FRAME_HEIGHT = 104" in settings_body
+    assert all(token not in settings_body for token in forbidden)
     assert "SlashCmdList.APSCOUT(" not in settings_body
-    assert "entryCreationKeyState.SyncTroubleshootingButtons()" in settings_body
-    assert '"Debug: " ..' in settings_body
-    assert 'settingsFrame.qrMoveButton:SetText(qrMoveMode and "Lock QR" or "Move QR")' in settings_body
 
 
 def test_troubleshooting_slash_commands_delegate_to_shared_helpers():
@@ -2170,7 +2159,7 @@ def test_settings_panel_watcher_is_singleton_until_runtime_attachment(pytestconf
     ).strip()
 
     assert output.splitlines()[-1] == (
-        "ok settings-attach-watcher singleton=1 retired=1 attached=1 tools=5 stateful=2"
+        "ok settings-attach-watcher singleton=1 retired=1 attached=1 tools=0"
     )
 
 
