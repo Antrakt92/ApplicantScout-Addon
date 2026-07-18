@@ -58,6 +58,8 @@ BUILD_PAYLOAD_ANCHOR = (
     "local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, rosterUnavailable)"
 )
 CHECK_SESSION_TRANSITION_ANCHOR = "CheckSessionTransition = function(lfgReadsAllowed)"
+STATUS_HELPER_ANCHOR = "entryCreationKeyState.PrintTroubleshootingStatus = function()"
+FORCED_SNAPSHOT_HELPER_ANCHOR = "entryCreationKeyState.RequestForcedSnapshot = function()"
 STALE_FUNCTION_ANCHORS = {
     "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
     "MaybeTriggerScreenshot = function(force, entryHint, terminalClear",
@@ -144,6 +146,18 @@ def _slice_between(text: str, start: str, end: str) -> str:
     start_idx = text.index(start)
     end_idx = text.index(end, start_idx)
     return text[start_idx:end_idx]
+
+
+def _status_helper_body(source: str) -> str:
+    return _slice_between(source, STATUS_HELPER_ANCHOR, "local function PrintHelp()")
+
+
+def _forced_snapshot_helper_body(source: str) -> str:
+    return _slice_between(
+        source,
+        FORCED_SNAPSHOT_HELPER_ANCHOR,
+        "-- Lazily creates the settings panel",
+    )
 
 
 def test_slice_between_rejects_stale_function_anchors():
@@ -772,11 +786,7 @@ def test_nonterminal_snapshots_get_short_redundant_resend_without_periodic_heart
 
 def test_status_reports_delivery_resend_diagnostics():
     source = _lua_source()
-    status_body = _slice_between(
-        source,
-        'elseif msg == "status" then',
-        "-- raw API diagnostics",
-    )
+    status_body = _status_helper_body(source)
 
     hash_idx = status_body.index("last snapshot hash:")
     delivery_hash_idx = status_body.index("last delivery snapshot hash:", hash_idx)
@@ -879,28 +889,26 @@ def test_pve_frame_drag_requires_alt_modifier():
     assert combat_guard_idx < alt_guard_idx < start_moving_idx
 
 
-def test_shotnow_is_gated_when_addon_is_disabled():
+def test_forced_snapshot_helper_rejects_unready_requests_before_dispatch():
     source = _lua_source()
-    body = _slice_between(
-        source,
-        'elseif msg == "shotnow" then',
-        'elseif msg == "qrvisible" then',
-    )
+    body = _forced_snapshot_helper_body(source)
 
     disabled_guard_idx = body.index("not (ApplicantScoutDB and ApplicantScoutDB.enabled)")
+    qr_guard_idx = body.index("if not qrFrameCreated then")
+    lockdown_idx = body.index("local lfgReadsAllowed = not IsChatMessagingLockdown()")
+    transition_idx = body.index("local entry = CheckSessionTransition(lfgReadsAllowed)")
     screenshot_idx = body.index("MaybeTriggerScreenshot(true")
 
-    assert disabled_guard_idx < screenshot_idx
-    assert "return" in body[disabled_guard_idx:screenshot_idx]
+    assert disabled_guard_idx < qr_guard_idx < lockdown_idx < transition_idx < screenshot_idx
+    assert 'return false, "disabled"' in body[disabled_guard_idx:qr_guard_idx]
+    assert 'return false, "qr-frame-unavailable"' in body[qr_guard_idx:lockdown_idx]
+    assert 'return true, "requested"' in body[screenshot_idx:]
+    assert "forced snapshot requested" in body[screenshot_idx:]
 
 
 def test_shotnow_refreshes_session_before_forced_snapshot():
     source = _lua_source()
-    body = _slice_between(
-        source,
-        'elseif msg == "shotnow" then',
-        'elseif msg == "qrvisible" then',
-    )
+    body = _forced_snapshot_helper_body(source)
 
     transition_idx = body.index("CheckSessionTransition(lfgReadsAllowed)")
     screenshot_idx = body.index("MaybeTriggerScreenshot(true")
@@ -1326,11 +1334,7 @@ def test_terminal_clear_is_only_passed_by_end_session():
         "EndSession = function()",
         "local function _HasGroupRosterForTransport()",
     )
-    shotnow_body = _slice_between(
-        source,
-        'elseif msg == "shotnow" then',
-        'elseif msg == "qrvisible" then',
-    )
+    shotnow_body = _forced_snapshot_helper_body(source)
 
     assert "MaybeTriggerScreenshot(true, nil, true)" in end_body
     assert "MaybeTriggerScreenshot(true, entry, true)" not in shotnow_body
@@ -1725,11 +1729,7 @@ def test_solo_active_listing_poll_runs_during_lockdown_without_lfg_reads():
 
 def test_shotnow_uses_lockdown_guard_without_terminal_clear():
     source = _lua_source()
-    shotnow_body = _slice_between(
-        source,
-        'elseif msg == "shotnow" then',
-        'elseif msg == "qrvisible" then',
-    )
+    shotnow_body = _forced_snapshot_helper_body(source)
 
     assert "local lfgReadsAllowed = not IsChatMessagingLockdown()" in shotnow_body
     assert "local entry = CheckSessionTransition(lfgReadsAllowed)" in shotnow_body
@@ -2057,6 +2057,70 @@ def test_auto_hi_settings_panel_persists_user_message_from_edit_box():
     assert "10 seconds after a new player joins your party" in settings_body
 
 
+def test_settings_panel_exposes_troubleshooting_buttons_through_shared_helpers():
+    source = _lua_source()
+    settings_body = _slice_between(
+        source,
+        "-- Settings panel: pinned above PVEFrame",
+        "-- slash commands",
+    )
+
+    expected_actions = (
+        ("Status", "statusButton", "Status", "PrintTroubleshootingStatus"),
+        ("Snapshot", "snapshotButton", "Snapshot", "RequestForcedSnapshot"),
+        ("QRMove", "qrMoveButton", "Move QR", "ToggleQRMoveMode"),
+        ("QRReset", "qrResetButton", "Reset QR", "ResetQRPositionForSupport"),
+        ("Debug", "debugButton", "Debug: Off", "ToggleTroubleshootingDebug"),
+    )
+    assert "_SETTINGS_FRAME_HEIGHT = 165" in settings_body
+    assert 'troubleshootingLabel:SetText("Troubleshooting")' in settings_body
+    assert '"UIPanelButtonTemplate"' in settings_body
+    assert settings_body.count("_CreateTroubleshootingButton(") == len(expected_actions) + 1
+    button_positions = []
+    for suffix, field, label, helper in expected_actions:
+        assignment = f"settingsFrame.{field} = _CreateTroubleshootingButton("
+        start = settings_body.index(assignment)
+        button_positions.append(start)
+        action_body = settings_body[start : start + 900]
+        assert f'"ApplicantScoutSettings{suffix}Button"' in action_body
+        assert f'"{label}"' in action_body
+        assert f"function() entryCreationKeyState.{helper}() end" in action_body
+    assert button_positions == sorted(button_positions)
+    assert "SlashCmdList.APSCOUT(" not in settings_body
+    assert "entryCreationKeyState.SyncTroubleshootingButtons()" in settings_body
+    assert '"Debug: " ..' in settings_body
+    assert 'settingsFrame.qrMoveButton:SetText(qrMoveMode and "Lock QR" or "Move QR")' in settings_body
+
+
+def test_troubleshooting_slash_commands_delegate_to_shared_helpers():
+    source = _lua_source()
+    slash_body = source[source.index("SlashCmdList.APSCOUT = function(msg)") :]
+    expected = (
+        ("status", 'elseif msg == "taintcheck" then', "PrintTroubleshootingStatus"),
+        ("shotnow", 'elseif msg == "qrvisible" then', "RequestForcedSnapshot"),
+        ("qrmove", 'elseif msg == "qrreset" then', "ToggleQRMoveMode"),
+        (
+            "qrreset",
+            'elseif msg == "debug" or msg == "debug on" then',
+            "ResetQRPositionForSupport",
+        ),
+    )
+    forbidden = (
+        "MaybeTriggerScreenshot(",
+        "_RefreshQRMouse()",
+        "_RefreshQRVisibility()",
+        "_ResetQRFramePosition()",
+    )
+    for command, next_anchor, helper in expected:
+        branch = _slice_between(
+            slash_body,
+            f'elseif msg == "{command}" then',
+            next_anchor,
+        )
+        assert f"entryCreationKeyState.{helper}()" in branch
+        assert all(token not in branch for token in forbidden)
+
+
 def test_auto_hi_settings_panel_initializes_new_party_checkbox_from_db():
     source = _lua_source()
     settings_body = _slice_between(
@@ -2106,7 +2170,7 @@ def test_settings_panel_watcher_is_singleton_until_runtime_attachment(pytestconf
     ).strip()
 
     assert output.splitlines()[-1] == (
-        "ok settings-attach-watcher singleton=1 retired=1 attached=1"
+        "ok settings-attach-watcher singleton=1 retired=1 attached=1 tools=5 stateful=2"
     )
 
 
@@ -2705,11 +2769,7 @@ def test_reset_invalidates_roster_inspect_batch_retry_without_clearing_known_spe
 
 def test_status_reports_roster_inspect_batch_diagnostics_without_raw_ids():
     source = _lua_source()
-    status_body = _slice_between(
-        source,
-        'elseif msg == "status" then',
-        'elseif msg == "taintcheck" then',
-    )
+    status_body = _status_helper_body(source)
     diagnostics_body = _slice_between(
         source,
         "entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()",
@@ -2730,11 +2790,7 @@ def test_status_reports_roster_inspect_batch_diagnostics_without_raw_ids():
 
 def test_status_support_command_skips_lfg_reads_during_chat_lockdown():
     source = _lua_source()
-    status_body = _slice_between(
-        source,
-        'elseif msg == "status" then',
-        'elseif msg == "taintcheck" then',
-    )
+    status_body = _status_helper_body(source)
 
     guard_idx = status_body.index("local lfgReadsAllowed = not IsChatMessagingLockdown()")
     raw_idx = status_body.index('print("|cff00ff7f---|r raw API:")')
@@ -2830,11 +2886,7 @@ def test_info_panel_suppression_is_polled_instead_of_hooking_blizzard_frames():
         "C_Timer.NewTicker(0.25, function()",
         "-- Settings panel:",
     )
-    status_body = _slice_between(
-        source,
-        'elseif msg == "status" then',
-        'elseif msg == "taintcheck" then',
-    )
+    status_body = _status_helper_body(source)
 
     assert ':HookScript("OnShow"' not in interaction_body
     assert ':HookScript("OnHide"' not in interaction_body
@@ -3424,11 +3476,7 @@ def test_listing_key_level_uses_owned_keystone_only_after_listing_match_guard():
         BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
-    status_body = _slice_between(
-        source,
-        'elseif msg == "status" then',
-        'elseif msg == "taintcheck" then',
-    )
+    status_body = _status_helper_body(source)
 
     assert helper_body.startswith(
         "local function _GetListingKeystoneLevel(activityID, questID, listingName, listingComment, activityInfo)"
@@ -3458,11 +3506,7 @@ def test_owned_keystone_fallback_is_disabled_for_non_leader_party_context():
         BUILD_PAYLOAD_ANCHOR,
         "local function HashSnapshot(payload)",
     )
-    status_body = _slice_between(
-        source,
-        'elseif msg == "status" then',
-        'elseif msg == "taintcheck" then',
-    )
+    status_body = _status_helper_body(source)
 
     assert "IsInGroup" in guard_body
     assert "entryCreationKeyState.CleanUnitIsGroupLeader(\"player\") == true" in guard_body
@@ -3632,11 +3676,7 @@ def test_lfg_default_playstyle_user_touch_state_is_not_panel_keyed_from_hook_sta
 
 def test_status_reports_key_capture_hooks_and_cache_decision_separately():
     source = _lua_source()
-    status_body = _slice_between(
-        source,
-        'elseif msg == "status" then',
-        'elseif msg == "taintcheck" then',
-    )
+    status_body = _status_helper_body(source)
     diagnostics_body = _slice_between(
         source,
         "entryCreationKeyState.PrintDiagnostics = function()",
@@ -3694,11 +3734,7 @@ def test_listing_key_level_can_read_clean_application_viewer_text():
         "local function _GetListingKeystoneLevel(",
         "local function _RaiderIODungeonMatchesActivity(dungeon, listingActivityID)",
     )
-    status_body = _slice_between(
-        source,
-        'elseif msg == "status" then',
-        'elseif msg == "taintcheck" then',
-    )
+    status_body = _status_helper_body(source)
 
     assert "LFGListFrame" in visible_body
     assert "ApplicationViewer" in visible_body

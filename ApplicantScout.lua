@@ -5438,7 +5438,7 @@ end)
 -- chrome. Same backdrop/border textures as GameTooltip (and RaiderIO, Details,
 -- BigWigs popups) so the panel reads as a native WoW UI element next to PVEFrame
 -- instead of a foreign-styled box. Brand-green title only ("Applicant" in
--- #00ff7f, "Scout" in white); "×" close glyph at top-right.
+-- #00ff7f, "Scout" in white).
 --
 -- Parent=PVEFrame so visibility cascades automatically: open LFG → panel
 -- appears, close LFG → panel hides. Anchor BOTTOMLEFT-of-self to TOPLEFT-of-
@@ -5451,11 +5451,6 @@ end)
 -- NOT call SetToplevel(true) — it re-raises on every click and would hide
 -- UIDropDownMenu / ColorPickerFrame children of any future widgets.
 --
--- Close-× path: custom button calls settingsFrame:Hide(). WoW's visibility
--- model treats explicit Hide() as sticky across the parent's hide/show cycle,
--- so subsequent PVEFrame:Show() will NOT bring the panel back automatically —
--- user reopens via /apscout config. No flag bookkeeping needed.
-
 -- Tooltip pattern. SetScript override (not HookScript) is fine for simple
 -- widgets like CheckButton whose default OnEnter is empty. For widgets with
 -- native hover behavior (Buttons), caller switches to HookScript explicitly.
@@ -5491,6 +5486,9 @@ local function _RunDisabledCleanup()
     qrAlwaysVisible = false
     qrMoveMode = false
     _RefreshQRMouse()
+    if entryCreationKeyState.SyncTroubleshootingButtons then
+        entryCreationKeyState.SyncTroubleshootingButtons()
+    end
 
     -- If no session was active, EndSession didn't schedule deferred Hide; sync
     -- Hide here. Active-session case is handled by EndSession's deferred
@@ -5534,12 +5532,14 @@ _SetEnabled = function(flag)
     end
 end
 
--- Apply ApplicantScoutDB.debug + emit feedback. Debug is intentionally a
--- slash-command troubleshooting control, not a normal settings-panel option.
+-- Apply ApplicantScoutDB.debug + emit feedback for both slash and settings UI.
 _SetDebug = function(flag)
     flag = not not flag
     ApplicantScoutDB.debug = flag
     APSPrint("debug " .. (flag and "ON — every scan/emit will print" or "OFF"))
+    if entryCreationKeyState.SyncTroubleshootingButtons then
+        entryCreationKeyState.SyncTroubleshootingButtons()
+    end
 end
 
 _SyncAutoMPlusPlaystyleDropdown = function()
@@ -5599,13 +5599,63 @@ end
 
 -- Layout constants for the Blizzard-tooltip-style panel chrome.
 local _SETTINGS_FRAME_WIDTH = 420
-local _SETTINGS_FRAME_HEIGHT = 112
+local _SETTINGS_FRAME_HEIGHT = 165
 local _SETTINGS_ANCHOR_X = 0
 local _SETTINGS_ANCHOR_Y = 6
 local _SETTINGS_TOP_PAD = 10        -- clearance under the rope-border top edge
 local _SETTINGS_LEFT_PAD = 14
 local _SETTINGS_RIGHT_COL_X = 238
 local _SETTINGS_DROPDOWN_WIDTH = 170
+
+entryCreationKeyState.SyncTroubleshootingButtons = function()
+    if not settingsFrame then return end
+    if settingsFrame.debugButton then
+        settingsFrame.debugButton:SetText(
+            "Debug: " .. ((ApplicantScoutDB and ApplicantScoutDB.debug) and "On" or "Off")
+        )
+    end
+    if settingsFrame.qrMoveButton then
+        settingsFrame.qrMoveButton:SetText(qrMoveMode and "Lock QR" or "Move QR")
+    end
+end
+
+entryCreationKeyState.ToggleTroubleshootingDebug = function()
+    _SetDebug(not (ApplicantScoutDB and ApplicantScoutDB.debug))
+    return ApplicantScoutDB and ApplicantScoutDB.debug or false
+end
+
+entryCreationKeyState.ToggleQRMoveMode = function()
+    qrMoveMode = not qrMoveMode
+    _RefreshQRMouse()
+    _RefreshQRVisibility()
+    APSPrint("QR move mode: " .. tostring(qrMoveMode) ..
+             (qrMoveMode and " — Alt+drag the QR frame to reposition" or ""))
+    entryCreationKeyState.SyncTroubleshootingButtons()
+    return qrMoveMode
+end
+
+entryCreationKeyState.ResetQRPositionForSupport = function()
+    _ResetQRFramePosition()
+    local position = _CurrentQRPositionText()
+    APSPrint("QR position reset: " .. position)
+    return position
+end
+
+entryCreationKeyState.RequestForcedSnapshot = function()
+    if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then
+        APSPrint("forced snapshot skipped — enable ApplicantScout first")
+        return false, "disabled"
+    end
+    if not qrFrameCreated then
+        APSPrint("forced snapshot skipped — QR frame unavailable; /reload and retry")
+        return false, "qr-frame-unavailable"
+    end
+    local lfgReadsAllowed = not IsChatMessagingLockdown()
+    local entry = CheckSessionTransition(lfgReadsAllowed)
+    MaybeTriggerScreenshot(true, entry, nil, lfgReadsAllowed)
+    APSPrint("forced snapshot requested — check Screenshots/ folder")
+    return true, "requested"
+end
 
 -- Lazily creates the settings panel as a child of PVEFrame, anchored above
 -- the LFG title bar. Idempotent (one-shot via settingsFrameAttached flag).
@@ -5849,6 +5899,91 @@ _AttachSettingsPanel = function()
         "Also send this greeting 10 seconds after a new player joins your party. Disabled in raids."
     )
 
+    local troubleshootingDivider = settingsFrame:CreateTexture(nil, "ARTWORK")
+    troubleshootingDivider:SetColorTexture(1, 1, 1, 0.14)
+    troubleshootingDivider:SetPoint(
+        "TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -103)
+    troubleshootingDivider:SetPoint(
+        "TOPRIGHT", settingsFrame, "TOPRIGHT", -_SETTINGS_LEFT_PAD, -103)
+    troubleshootingDivider:SetHeight(1)
+
+    local troubleshootingLabel = settingsFrame:CreateFontString(
+        nil, "OVERLAY", "GameFontDisableSmall")
+    troubleshootingLabel:SetPoint(
+        "TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -114)
+    troubleshootingLabel:SetText("Troubleshooting")
+
+    local function _CreateTroubleshootingButton(
+        name, label, width, x, onClick, tooltipTitle, tooltipBody)
+        local button = CreateFrame(
+            "Button",
+            name,
+            settingsFrame,
+            "UIPanelButtonTemplate"
+        )
+        button:SetSize(width, 22)
+        button:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", x, -128)
+        button:SetText(label)
+        button:SetScript("OnClick", onClick)
+        button:HookScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(tooltipTitle)
+            GameTooltip:AddLine(tooltipBody, 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        button:HookScript("OnLeave", function() GameTooltip:Hide() end)
+        return button
+    end
+
+    -- WHY: fixed button actions delegate to the same lifecycle-aware helpers
+    -- as slash commands so guards, state changes, and user feedback stay
+    -- single-sourced.
+    settingsFrame.statusButton = _CreateTroubleshootingButton(
+        "ApplicantScoutSettingsStatusButton",
+        "Status",
+        58,
+        _SETTINGS_LEFT_PAD,
+        function() entryCreationKeyState.PrintTroubleshootingStatus() end,
+        "Show diagnostics",
+        "Print current QR, screenshot, listing, and transport state to chat. Redact character and listing details before sharing."
+    )
+    settingsFrame.snapshotButton = _CreateTroubleshootingButton(
+        "ApplicantScoutSettingsSnapshotButton",
+        "Snapshot",
+        76,
+        _SETTINGS_LEFT_PAD + 62,
+        function() entryCreationKeyState.RequestForcedSnapshot() end,
+        "Force snapshot",
+        "Request one fresh QR screenshot while ApplicantScout is enabled. Use when companion data looks stale."
+    )
+    settingsFrame.qrMoveButton = _CreateTroubleshootingButton(
+        "ApplicantScoutSettingsQRMoveButton",
+        "Move QR",
+        66,
+        _SETTINGS_LEFT_PAD + 142,
+        function() entryCreationKeyState.ToggleQRMoveMode() end,
+        "Move QR frame",
+        "Toggle move mode. Hold Alt and drag the QR frame, then click Lock QR when finished."
+    )
+    settingsFrame.qrResetButton = _CreateTroubleshootingButton(
+        "ApplicantScoutSettingsQRResetButton",
+        "Reset QR",
+        70,
+        _SETTINGS_LEFT_PAD + 212,
+        function() entryCreationKeyState.ResetQRPositionForSupport() end,
+        "Reset QR position",
+        "Restore the QR frame to its default top-left position."
+    )
+    settingsFrame.debugButton = _CreateTroubleshootingButton(
+        "ApplicantScoutSettingsDebugButton",
+        "Debug: Off",
+        76,
+        _SETTINGS_LEFT_PAD + 286,
+        function() entryCreationKeyState.ToggleTroubleshootingDebug() end,
+        "Toggle debug logging",
+        "Turn verbose scan and transport messages on or off. Leave off during normal use."
+    )
+
     -- Re-sync checkboxes from DB on each show. Handles slash-toggle-while-
     -- panel-was-hidden case: open via /apscout config → checkboxes reflect DB truth.
     settingsFrame:HookScript("OnShow", function()
@@ -5857,6 +5992,7 @@ _AttachSettingsPanel = function()
             ApplicantScoutDB.autoHiGreetNewPartyMembers)
         _SyncAutoMPlusPlaystyleDropdown()
         entryCreationKeyState.SyncAutoHiEditBox()
+        entryCreationKeyState.SyncTroubleshootingButtons()
     end)
 
     enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
@@ -5864,6 +6000,7 @@ _AttachSettingsPanel = function()
         ApplicantScoutDB.autoHiGreetNewPartyMembers and true or false)
     _SyncAutoMPlusPlaystyleDropdown()
     entryCreationKeyState.SyncAutoHiEditBox()
+    entryCreationKeyState.SyncTroubleshootingButtons()
 
     settingsFrameAttached = true  -- LAST: any earlier failure leaves false → retry next PLAYER_LOGIN
 end
@@ -5871,6 +6008,217 @@ end
 
 -- ───────────────────────────────────────────────────────────
 -- slash commands
+
+entryCreationKeyState.PrintTroubleshootingStatus = function()
+    print("|cff00ff7fApplicantScout|r status:")
+    print("  enabled: " .. tostring(ApplicantScoutDB.enabled))
+    print("  M+ default playstyle: " .. _GetAutoMPlusPlaystyleStatusText())
+    print("  settings panel attached: " .. tostring(settingsFrameAttached))
+    print("  session active: " .. tostring(isSessionActive))
+    print("  session gen: " .. tostring(sessionGen))
+    print("  scanDirty: " .. tostring(scanDirty))
+    print("  group members: "
+          .. tostring(math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))))
+    print("  transport poll age: "
+          .. (lastTransportPollTime > 0
+               and string.format("%.1fs", GetTime() - lastTransportPollTime)
+               or "never"))
+    print("  shot suppressed: " .. (suppressShotsUntil and suppressShotsUntil > 0
+          and (GetTime() < suppressShotsUntil
+               and string.format("yes (%.2fs left)", suppressShotsUntil - GetTime())
+               or "no (window expired)")
+          or "no"))
+    local lfgReadsAllowed = not IsChatMessagingLockdown()
+    print("  ChatMessagingLockdown: " .. tostring(not lfgReadsAllowed))
+    print("  Auto Hi send: "
+          .. tostring(entryCreationKeyState.autoHiLastSendStatus or "never"))
+    print("  leader key request: "
+          .. tostring(entryCreationKeyState.leaderKeystoneLastRequestStatus or "never"))
+    print("  LibKS send: "
+          .. tostring(entryCreationKeyState.libKeystoneLastSendStatus or "never"))
+    -- QR transport diagnostics
+    print("|cff00ff7f---|r QR transport:")
+    print("  QR library loaded: " .. tostring(_qrencode ~= nil))
+    print("  QR frame created: " .. tostring(qrFrameCreated))
+    if qrFrame then
+        print("  QR frame visible: " .. tostring(qrFrame:IsShown()) ..
+              " (always-visible mode: " .. tostring(qrAlwaysVisible) ..
+              ", move mode: " .. tostring(qrMoveMode) .. ")")
+        print("  QR frame size: " .. qrCurrentSize .. "×" .. qrCurrentSize .. " px")
+        print("  QR frame position: " .. _CurrentQRPositionText())
+        print("  QR mouse enabled: " .. tostring(qrMoveMode and true or false))
+    end
+    print("  QR force-visible shot lease: " .. tostring(qrForceVisibleForShot or false))
+    print("  QR build/paint active: " .. tostring(entryCreationKeyState.qrPaintInProgress))
+    print("  QR capture settle active: " .. tostring(entryCreationKeyState.qrCaptureInProgress))
+    print("  QR job generation: " .. tostring(entryCreationKeyState.qrPaintJobGen or 0))
+    print("  QR job age: " .. (entryCreationKeyState.qrTransportJobStartedAt
+          and string.format("%.1fs", GetTime() - entryCreationKeyState.qrTransportJobStartedAt)
+          or "idle"))
+    print("  QR dirty during job: " .. tostring(entryCreationKeyState.qrPaintDirtyDuringPaint))
+    print("  QR watchdog recoveries: "
+          .. tostring(entryCreationKeyState.qrTransportRecoveryCount or 0)
+          .. " (last: "
+          .. tostring(entryCreationKeyState.qrTransportLastRecoveryReason or "never")
+          .. ")")
+    print("  texture pool: " .. #qrTexturePool
+          .. " (used last paint: " .. qrTextureUsed
+          .. ", visible high-water: "
+          .. tostring(entryCreationKeyState.qrTextureVisibleHighWater or 0) .. ")")
+    print("  last snapshot hash: " .. tostring(lastSnapshotHash))
+    print("  last delivery snapshot hash: "
+          .. tostring(entryCreationKeyState.lastDeliverySnapshotHash))
+    print("  last delivery snapshot sends: "
+          .. tostring(entryCreationKeyState.lastDeliverySnapshotSendCount or 0)
+          .. "/" .. tostring(entryCreationKeyState.NONTERMINAL_SNAPSHOT_MIN_SENDS))
+    print("  last shot time: " .. (lastShotTime > 0
+          and string.format("%.1fs ago", GetTime() - lastShotTime) or "never"))
+    print("  pending throttled shot: " .. tostring(pendingShotDirty))
+    entryCreationKeyState.PrintRosterInspectBatchDiagnostics()
+    print("  last QR encode: " .. tostring(lastQREncodeMode)
+          .. " (" .. tostring(lastQREncodeBytes) .. " bytes)")
+    print("  last QR error: " .. tostring(lastQREncodeError or "none"))
+    print("  screenshotQuality: " .. tostring(GetCVar("screenshotQuality")))
+    print("  screenshotFormat: " .. tostring(GetCVar("screenshotFormat")))
+    print("  prior screenshotQuality stash: " ..
+          tostring(ApplicantScoutDB.priorScreenshotQuality))
+    print("  prior screenshotFormat stash: " ..
+          tostring(ApplicantScoutDB.priorScreenshotFormat))
+    -- raw API diagnostics
+    print("|cff00ff7f---|r raw API:")
+    if lfgReadsAllowed then
+    print("  HasActiveEntryInfo: " .. tostring(C_LFGList.HasActiveEntryInfo()))
+    local entry = SafeTable(C_LFGList.GetActiveEntryInfo())
+    if entry then
+        local activityIDs = SafeTable(entry.activityIDs)
+        local cleanActivityID = math.floor(SafeNumber(activityIDs and activityIDs[1], 0))
+        if cleanActivityID <= 0 then
+            cleanActivityID = math.floor(SafeNumber(entry.activityID, 0))
+        end
+        local cleanQuestID = math.floor(SafeNumber(entry.questID, 0))
+        local statusActivityInfo =
+            _GetActivityInfoForListing(cleanActivityID, cleanQuestID)
+        local statusDungeonName = _ActivityInfoListingName(statusActivityInfo)
+        print("  entry.activityIDs[1]: " .. SafeDiag(activityIDs and activityIDs[1]))
+        print("  entry.activityID: " .. SafeDiag(entry.activityID))
+        print("  entry.questID: " .. SafeDiag(entry.questID))
+        if cleanActivityID > 0 then
+            if statusActivityInfo then
+                print("  activity.name: " .. statusDungeonName)
+                print("  activity.shortName: " .. SafeDiag(statusActivityInfo.shortName))
+                print("  activity.fullName: " .. SafeDiag(statusActivityInfo.fullName))
+                print("  activity.categoryID: " .. SafeDiag(statusActivityInfo.categoryID))
+                print("  activity.difficultyID: " .. SafeDiag(statusActivityInfo.difficultyID))
+            end
+            if C_LFGList.GetKeystoneForActivity then
+                print("  activity.keystoneLevel: "
+                      .. SafeDiag(C_LFGList.GetKeystoneForActivity(cleanActivityID)))
+            else
+                print("  activity.keystoneLevel: n/a")
+            end
+        end
+        print("  entry.name: " .. SafeDiag(entry.name))
+        print("  entry.comment: " .. SafeDiag(entry.comment))
+        local visibleKeyLevel =
+            _G.ApplicantScout_VisibleApplicationViewerKeystoneLevel
+        print("  visibleFrame.keyLevel: "
+              .. tostring(visibleKeyLevel and visibleKeyLevel() or 0))
+        local visibleDiagnostics =
+            _G.ApplicantScout_VisibleApplicationViewerKeystoneDiagnostics
+        visibleDiagnostics = visibleDiagnostics and visibleDiagnostics() or {}
+        for _, line in ipairs(visibleDiagnostics) do
+            print(line)
+        end
+        local cachedKeyLevel =
+            entryCreationKeyState.PeekCachedEntryCreationKeystoneLevel(
+                cleanActivityID, cleanQuestID)
+        print("  entryCreationCache.keyLevel: " .. tostring(cachedKeyLevel))
+        local statusListingName = SafeStr(entry.name, "?"):gsub("|K[^|]*|k", "")
+        local statusListingComment = SafeStr(entry.comment, "?")
+        local ownedActivityID, ownedGroupID, ownedLevel, ownedInfo =
+            _GetOwnedKeystoneListingInfo()
+        print("  ownedKeystone.activityID: " .. tostring(ownedActivityID))
+        print("  ownedKeystone.groupID: " .. tostring(ownedGroupID))
+        print("  ownedKeystone.level: " .. tostring(ownedLevel))
+        print("  ownedKeystone.activityName: " .. _ActivityInfoListingName(ownedInfo))
+        local statusUseOwned = ownedLevel > 0
+            and ownedActivityID > 0
+            and ownedInfo
+            and entryCreationKeyState.CanUseOwnedKeystoneForListingFallback()
+            and (ownedActivityID == cleanActivityID
+                or statusDungeonName == "Mythic+"
+                or statusDungeonName == "?")
+        print("  ownedKeystone.usedForListing: " .. tostring(statusUseOwned))
+        local listingKeyLevel =
+            _G.ApplicantScout_GetListingKeystoneLevel
+        local statusDerivedKeyLevel = listingKeyLevel and listingKeyLevel(
+            cleanActivityID,
+            cleanQuestID,
+            statusListingName,
+            statusListingComment,
+            statusActivityInfo) or 0
+        if statusDerivedKeyLevel == 0 and statusUseOwned then
+            statusDerivedKeyLevel = ownedLevel
+        end
+        print("  derived keyLevel: "
+              .. tostring(statusDerivedKeyLevel))
+    else
+        print("  entry: nil")
+    end
+    local applicants = SafeTable(C_LFGList.GetApplicants()) or {}
+    print("  GetApplicants count: " .. #applicants)
+    for i = 1, math.min(3, #applicants) do
+        local rawID = applicants[i]
+        local id, info = entryCreationKeyState.GetApplicantInfoForTransport(rawID)
+        if info then
+            print(string.format("    #%d id=%s status=%s numMembers=%s",
+                  i, SafeDiag(id), SafeDiag(_GetApplicantApplicationStatus(info)),
+                  SafeDiag(info.numMembers)))
+        else
+            print(string.format("    #%d id=%s status=n/a numMembers=n/a",
+                  i, SafeDiag(rawID)))
+        end
+    end
+    else
+        print("  raw API skipped during ChatMessagingLockdown")
+    end
+    -- Phase 1 + 2 diagnostics
+    print("|cff00ff7f---|r visibility:")
+    print("  QR suppressed by interaction: " .. tostring(_qrSuppressedByInteraction or false))
+    local activeKinds = {}
+    for kind, active in pairs(_interactionSlots) do
+        if active then activeKinds[#activeKinds + 1] = kind end
+    end
+    print("  active interaction slots: " .. (#activeKinds > 0
+          and table.concat(activeKinds, ", ") or "(none)"))
+    local trackedCount = 0
+    for _ in pairs(_trackedInfoPanels) do trackedCount = trackedCount + 1 end
+    print("  info panels tracked: " .. trackedCount .. "/" .. #INFO_PANEL_FRAMES)
+    print("|cff00ff7f---|r LFG window:")
+    local hasBlizzMove = C_AddOns and C_AddOns.IsAddOnLoaded
+                         and C_AddOns.IsAddOnLoaded("BlizzMove") or false
+    print("  BlizzMove loaded: " .. tostring(hasBlizzMove))
+    print("  movement setup: " .. tostring(PVEFrame
+          and PVEFrame.apsMovementSetup or false))
+    entryCreationKeyState.PrintDiagnostics()
+    print("  default playstyle hooks: " .. tostring(lfgDefaultPlaystyleHooksSetup)
+          .. (lfgDefaultPlaystyleHookError
+              and (" (error: " .. lfgDefaultPlaystyleHookError .. ")")
+              or ""))
+    if ApplicantScoutDB.pveFramePosition then
+        local point, x, y, ok =
+            _NormalizePVEFramePosition(ApplicantScoutDB.pveFramePosition)
+        if ok then
+            print(string.format("  saved position: %s @ (%.0f, %.0f)",
+                  point, x, y))
+        else
+            _ClearInvalidPVEFramePosition()
+            print("  saved position: (default; invalid saved position cleared)")
+        end
+    else
+        print("  saved position: (default)")
+    end
+end
 
 local function PrintHelp()
     print("|cff00ff7fApplicantScout v" .. ADDON_VERSION .. "|r (QR transport)")
@@ -5923,7 +6271,7 @@ SlashCmdList.APSCOUT = function(msg)
     elseif msg == "config" or msg == "settings" then
         -- Toggle settings panel visibility. Lazy-attach if PLAYER_LOGIN race
         -- left settingsFrameAttached=false (PVEFrame still loading). Open via
-        -- this slash overrides the close-X "stay hidden" sticky semantics.
+        -- this slash remains available when the parent LFG window is hidden.
         if not settingsFrameAttached then _AttachSettingsPanel() end
         if not settingsFrame then
             APSPrint("settings unavailable — PVEFrame not loaded; open LFG window once and retry")
@@ -5933,214 +6281,7 @@ SlashCmdList.APSCOUT = function(msg)
             settingsFrame:Show()
         end
     elseif msg == "status" then
-        print("|cff00ff7fApplicantScout|r status:")
-        print("  enabled: " .. tostring(ApplicantScoutDB.enabled))
-        print("  M+ default playstyle: " .. _GetAutoMPlusPlaystyleStatusText())
-        print("  settings panel attached: " .. tostring(settingsFrameAttached))
-        print("  session active: " .. tostring(isSessionActive))
-        print("  session gen: " .. tostring(sessionGen))
-        print("  scanDirty: " .. tostring(scanDirty))
-        print("  group members: "
-              .. tostring(math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))))
-        print("  transport poll age: "
-              .. (lastTransportPollTime > 0
-                   and string.format("%.1fs", GetTime() - lastTransportPollTime)
-                   or "never"))
-        print("  shot suppressed: " .. (suppressShotsUntil and suppressShotsUntil > 0
-              and (GetTime() < suppressShotsUntil
-                   and string.format("yes (%.2fs left)", suppressShotsUntil - GetTime())
-                   or "no (window expired)")
-              or "no"))
-        local lfgReadsAllowed = not IsChatMessagingLockdown()
-        print("  ChatMessagingLockdown: " .. tostring(not lfgReadsAllowed))
-        print("  Auto Hi send: "
-              .. tostring(entryCreationKeyState.autoHiLastSendStatus or "never"))
-        print("  leader key request: "
-              .. tostring(entryCreationKeyState.leaderKeystoneLastRequestStatus or "never"))
-        print("  LibKS send: "
-              .. tostring(entryCreationKeyState.libKeystoneLastSendStatus or "never"))
-        -- QR transport diagnostics
-        print("|cff00ff7f---|r QR transport:")
-        print("  QR library loaded: " .. tostring(_qrencode ~= nil))
-        print("  QR frame created: " .. tostring(qrFrameCreated))
-        if qrFrame then
-            print("  QR frame visible: " .. tostring(qrFrame:IsShown()) ..
-                  " (always-visible mode: " .. tostring(qrAlwaysVisible) ..
-                  ", move mode: " .. tostring(qrMoveMode) .. ")")
-            print("  QR frame size: " .. qrCurrentSize .. "×" .. qrCurrentSize .. " px")
-            print("  QR frame position: " .. _CurrentQRPositionText())
-            print("  QR mouse enabled: " .. tostring(qrMoveMode and true or false))
-        end
-        print("  QR force-visible shot lease: " .. tostring(qrForceVisibleForShot or false))
-        print("  QR build/paint active: " .. tostring(entryCreationKeyState.qrPaintInProgress))
-        print("  QR capture settle active: " .. tostring(entryCreationKeyState.qrCaptureInProgress))
-        print("  QR job generation: " .. tostring(entryCreationKeyState.qrPaintJobGen or 0))
-        print("  QR job age: " .. (entryCreationKeyState.qrTransportJobStartedAt
-              and string.format("%.1fs", GetTime() - entryCreationKeyState.qrTransportJobStartedAt)
-              or "idle"))
-        print("  QR dirty during job: " .. tostring(entryCreationKeyState.qrPaintDirtyDuringPaint))
-        print("  QR watchdog recoveries: "
-              .. tostring(entryCreationKeyState.qrTransportRecoveryCount or 0)
-              .. " (last: "
-              .. tostring(entryCreationKeyState.qrTransportLastRecoveryReason or "never")
-              .. ")")
-        print("  texture pool: " .. #qrTexturePool
-              .. " (used last paint: " .. qrTextureUsed
-              .. ", visible high-water: "
-              .. tostring(entryCreationKeyState.qrTextureVisibleHighWater or 0) .. ")")
-        print("  last snapshot hash: " .. tostring(lastSnapshotHash))
-        print("  last delivery snapshot hash: "
-              .. tostring(entryCreationKeyState.lastDeliverySnapshotHash))
-        print("  last delivery snapshot sends: "
-              .. tostring(entryCreationKeyState.lastDeliverySnapshotSendCount or 0)
-              .. "/" .. tostring(entryCreationKeyState.NONTERMINAL_SNAPSHOT_MIN_SENDS))
-        print("  last shot time: " .. (lastShotTime > 0
-              and string.format("%.1fs ago", GetTime() - lastShotTime) or "never"))
-        print("  pending throttled shot: " .. tostring(pendingShotDirty))
-        entryCreationKeyState.PrintRosterInspectBatchDiagnostics()
-        print("  last QR encode: " .. tostring(lastQREncodeMode)
-              .. " (" .. tostring(lastQREncodeBytes) .. " bytes)")
-        print("  last QR error: " .. tostring(lastQREncodeError or "none"))
-        print("  screenshotQuality: " .. tostring(GetCVar("screenshotQuality")))
-        print("  screenshotFormat: " .. tostring(GetCVar("screenshotFormat")))
-        print("  prior screenshotQuality stash: " ..
-              tostring(ApplicantScoutDB.priorScreenshotQuality))
-        print("  prior screenshotFormat stash: " ..
-              tostring(ApplicantScoutDB.priorScreenshotFormat))
-        -- raw API diagnostics
-        print("|cff00ff7f---|r raw API:")
-        if lfgReadsAllowed then
-        print("  HasActiveEntryInfo: " .. tostring(C_LFGList.HasActiveEntryInfo()))
-        local entry = SafeTable(C_LFGList.GetActiveEntryInfo())
-        if entry then
-            local activityIDs = SafeTable(entry.activityIDs)
-            local cleanActivityID = math.floor(SafeNumber(activityIDs and activityIDs[1], 0))
-            if cleanActivityID <= 0 then
-                cleanActivityID = math.floor(SafeNumber(entry.activityID, 0))
-            end
-            local cleanQuestID = math.floor(SafeNumber(entry.questID, 0))
-            local statusActivityInfo =
-                _GetActivityInfoForListing(cleanActivityID, cleanQuestID)
-            local statusDungeonName = _ActivityInfoListingName(statusActivityInfo)
-            print("  entry.activityIDs[1]: " .. SafeDiag(activityIDs and activityIDs[1]))
-            print("  entry.activityID: " .. SafeDiag(entry.activityID))
-            print("  entry.questID: " .. SafeDiag(entry.questID))
-            if cleanActivityID > 0 then
-                if statusActivityInfo then
-                    print("  activity.name: " .. statusDungeonName)
-                    print("  activity.shortName: " .. SafeDiag(statusActivityInfo.shortName))
-                    print("  activity.fullName: " .. SafeDiag(statusActivityInfo.fullName))
-                    print("  activity.categoryID: " .. SafeDiag(statusActivityInfo.categoryID))
-                    print("  activity.difficultyID: " .. SafeDiag(statusActivityInfo.difficultyID))
-                end
-                if C_LFGList.GetKeystoneForActivity then
-                    print("  activity.keystoneLevel: "
-                          .. SafeDiag(C_LFGList.GetKeystoneForActivity(cleanActivityID)))
-                else
-                    print("  activity.keystoneLevel: n/a")
-                end
-            end
-            print("  entry.name: " .. SafeDiag(entry.name))
-            print("  entry.comment: " .. SafeDiag(entry.comment))
-            local visibleKeyLevel =
-                _G.ApplicantScout_VisibleApplicationViewerKeystoneLevel
-            print("  visibleFrame.keyLevel: "
-                  .. tostring(visibleKeyLevel and visibleKeyLevel() or 0))
-            local visibleDiagnostics =
-                _G.ApplicantScout_VisibleApplicationViewerKeystoneDiagnostics
-            visibleDiagnostics = visibleDiagnostics and visibleDiagnostics() or {}
-            for _, line in ipairs(visibleDiagnostics) do
-                print(line)
-            end
-            local cachedKeyLevel =
-                entryCreationKeyState.PeekCachedEntryCreationKeystoneLevel(
-                    cleanActivityID, cleanQuestID)
-            print("  entryCreationCache.keyLevel: " .. tostring(cachedKeyLevel))
-            local statusListingName = SafeStr(entry.name, "?"):gsub("|K[^|]*|k", "")
-            local statusListingComment = SafeStr(entry.comment, "?")
-            local ownedActivityID, ownedGroupID, ownedLevel, ownedInfo =
-                _GetOwnedKeystoneListingInfo()
-            print("  ownedKeystone.activityID: " .. tostring(ownedActivityID))
-            print("  ownedKeystone.groupID: " .. tostring(ownedGroupID))
-            print("  ownedKeystone.level: " .. tostring(ownedLevel))
-            print("  ownedKeystone.activityName: " .. _ActivityInfoListingName(ownedInfo))
-            local statusUseOwned = ownedLevel > 0
-                and ownedActivityID > 0
-                and ownedInfo
-                and entryCreationKeyState.CanUseOwnedKeystoneForListingFallback()
-                and (ownedActivityID == cleanActivityID
-                    or statusDungeonName == "Mythic+"
-                    or statusDungeonName == "?")
-            print("  ownedKeystone.usedForListing: " .. tostring(statusUseOwned))
-            local listingKeyLevel =
-                _G.ApplicantScout_GetListingKeystoneLevel
-            local statusDerivedKeyLevel = listingKeyLevel and listingKeyLevel(
-                cleanActivityID,
-                cleanQuestID,
-                statusListingName,
-                statusListingComment,
-                statusActivityInfo) or 0
-            if statusDerivedKeyLevel == 0 and statusUseOwned then
-                statusDerivedKeyLevel = ownedLevel
-            end
-            print("  derived keyLevel: "
-                  .. tostring(statusDerivedKeyLevel))
-        else
-            print("  entry: nil")
-        end
-        local applicants = SafeTable(C_LFGList.GetApplicants()) or {}
-        print("  GetApplicants count: " .. #applicants)
-        for i = 1, math.min(3, #applicants) do
-            local rawID = applicants[i]
-            local id, info = entryCreationKeyState.GetApplicantInfoForTransport(rawID)
-            if info then
-                print(string.format("    #%d id=%s status=%s numMembers=%s",
-                      i, SafeDiag(id), SafeDiag(_GetApplicantApplicationStatus(info)),
-                      SafeDiag(info.numMembers)))
-            else
-                print(string.format("    #%d id=%s status=n/a numMembers=n/a",
-                      i, SafeDiag(rawID)))
-            end
-        end
-        else
-            print("  raw API skipped during ChatMessagingLockdown")
-        end
-        -- Phase 1 + 2 diagnostics
-        print("|cff00ff7f---|r visibility:")
-        print("  QR suppressed by interaction: " .. tostring(_qrSuppressedByInteraction or false))
-        local activeKinds = {}
-        for kind, active in pairs(_interactionSlots) do
-            if active then activeKinds[#activeKinds + 1] = kind end
-        end
-        print("  active interaction slots: " .. (#activeKinds > 0
-              and table.concat(activeKinds, ", ") or "(none)"))
-        local trackedCount = 0
-        for _ in pairs(_trackedInfoPanels) do trackedCount = trackedCount + 1 end
-        print("  info panels tracked: " .. trackedCount .. "/" .. #INFO_PANEL_FRAMES)
-        print("|cff00ff7f---|r LFG window:")
-        local hasBlizzMove = C_AddOns and C_AddOns.IsAddOnLoaded
-                             and C_AddOns.IsAddOnLoaded("BlizzMove") or false
-        print("  BlizzMove loaded: " .. tostring(hasBlizzMove))
-        print("  movement setup: " .. tostring(PVEFrame
-              and PVEFrame.apsMovementSetup or false))
-        entryCreationKeyState.PrintDiagnostics()
-        print("  default playstyle hooks: " .. tostring(lfgDefaultPlaystyleHooksSetup)
-              .. (lfgDefaultPlaystyleHookError
-                  and (" (error: " .. lfgDefaultPlaystyleHookError .. ")")
-                  or ""))
-        if ApplicantScoutDB.pveFramePosition then
-            local point, x, y, ok =
-                _NormalizePVEFramePosition(ApplicantScoutDB.pveFramePosition)
-            if ok then
-                print(string.format("  saved position: %s @ (%.0f, %.0f)",
-                      point, x, y))
-            else
-                _ClearInvalidPVEFramePosition()
-                print("  saved position: (default; invalid saved position cleared)")
-            end
-        else
-            print("  saved position: (default)")
-        end
+        entryCreationKeyState.PrintTroubleshootingStatus()
     elseif msg == "taintcheck" then
         -- One-shot diagnostic. Slash-handler frame is hardware-event-rooted
         -- (clean). Reads C_LFGList directly + per-field issecretvalue dump.
@@ -6199,18 +6340,7 @@ SlashCmdList.APSCOUT = function(msg)
         scanDirty = true
         APSPrint("resync queued — emits when transport is active and QR is available")
     elseif msg == "shotnow" then
-        -- Force snapshot bypass dedup + throttle. Use this to verify QR pipeline
-        -- end-to-end during dev: builds payload, encodes as QR, paints into frame,
-        -- calls Screenshot(). Inspect the resulting JPG in any QR scanner — should
-        -- decode to APS1 + length + listing/version/applicants + CRC32.
-        if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then
-            APSPrint("shotnow skipped — enable ApplicantScout first")
-            return
-        end
-        local lfgReadsAllowed = not IsChatMessagingLockdown()
-        local entry = CheckSessionTransition(lfgReadsAllowed)
-        MaybeTriggerScreenshot(true, entry, nil, lfgReadsAllowed)
-        APSPrint("forced snapshot — check Screenshots/ folder")
+        entryCreationKeyState.RequestForcedSnapshot()
     elseif msg == "qrvisible" then
         -- Toggle debug-visible override. _RefreshQRVisibility resolves all four
         -- corners of the (qrAlwaysVisible × isSessionActive) cross-product
@@ -6222,16 +6352,9 @@ SlashCmdList.APSCOUT = function(msg)
         _RefreshQRVisibility()
         APSPrint("QR frame always-visible: " .. tostring(qrAlwaysVisible))
     elseif msg == "qrmove" then
-        -- Explicit move/debug mode. Normal visible QR intentionally has mouse
-        -- disabled so it doesn't intercept HUD clicks while hosting.
-        qrMoveMode = not qrMoveMode
-        _RefreshQRMouse()
-        _RefreshQRVisibility()
-        APSPrint("QR move mode: " .. tostring(qrMoveMode) ..
-                 (qrMoveMode and " — Alt+drag the QR frame to reposition" or ""))
+        entryCreationKeyState.ToggleQRMoveMode()
     elseif msg == "qrreset" then
-        _ResetQRFramePosition()
-        APSPrint("QR position reset: " .. _CurrentQRPositionText())
+        entryCreationKeyState.ResetQRPositionForSupport()
     elseif msg == "debug" or msg == "debug on" then
         _SetDebug(true)
     elseif msg == "debug off" or msg == "nodebug" then

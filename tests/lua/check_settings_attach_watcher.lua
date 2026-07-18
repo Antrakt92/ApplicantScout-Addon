@@ -140,4 +140,44 @@ assert(finalState.attached and finalState.watcher == nil,
 assert(#frames == framesAfterAttach,
     "opening the attached settings panel created another frame")
 
-print("ok settings-attach-watcher singleton=1 retired=1 attached=1")
+local toolButtonNames = {
+    "ApplicantScoutSettingsStatusButton",
+    "ApplicantScoutSettingsSnapshotButton",
+    "ApplicantScoutSettingsQRMoveButton",
+    "ApplicantScoutSettingsQRResetButton",
+    "ApplicantScoutSettingsDebugButton",
+}
+for _, name in ipairs(toolButtonNames) do
+    local button = _G[name]
+    assert(button and type(button.scripts.OnClick) == "function",
+        name .. " is missing its click action")
+end
+
+local debugButton = _G.ApplicantScoutSettingsDebugButton
+assert(debugButton.text == "Debug: Off", "debug button did not initialize from DB")
+debugButton.scripts.OnClick(debugButton)
+assert(ApplicantScoutDB.debug == true and debugButton.text == "Debug: On",
+    "debug button did not route through the shared command state")
+debugButton.scripts.OnClick(debugButton)
+assert(ApplicantScoutDB.debug == false and debugButton.text == "Debug: Off",
+    "debug button did not return to the disabled state")
+
+local qrMoveButton = _G.ApplicantScoutSettingsQRMoveButton
+assert(qrMoveButton.text == "Move QR", "QR move button did not initialize unlocked")
+qrMoveButton.scripts.OnClick(qrMoveButton)
+assert(qrMoveButton.text == "Lock QR", "QR move button did not expose lock state")
+SlashCmdList.APSCOUT("off")
+assert(qrMoveButton.text == "Move QR",
+    "disabling the addon left the QR move button in lock state")
+
+ApplicantScoutDB.qrFramePosition = { x = 12, y = -12 }
+local qrResetButton = _G.ApplicantScoutSettingsQRResetButton
+qrResetButton.scripts.OnClick(qrResetButton)
+assert(ApplicantScoutDB.qrFramePosition == nil,
+    "QR reset button did not clear the saved position")
+
+local snapshotButton = _G.ApplicantScoutSettingsSnapshotButton
+local snapshotOK = pcall(snapshotButton.scripts.OnClick, snapshotButton)
+assert(snapshotOK, "disabled Snapshot button action raised instead of rejecting safely")
+
+print("ok settings-attach-watcher singleton=1 retired=1 attached=1 tools=5 stateful=2")

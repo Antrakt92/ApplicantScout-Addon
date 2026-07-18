@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- The Group Finder settings panel now includes compact Status, Snapshot, Move/Lock QR,
+  Reset QR, and Debug controls for common screenshot and QR recovery without
+  requiring memorized slash commands.
+
 ## 0.5.3 - 16-Jul-2026 - Companion 0.9.3 capture lifecycle recovery
 
 This paired addon + companion patch keeps APS1 v9 unchanged while preventing
