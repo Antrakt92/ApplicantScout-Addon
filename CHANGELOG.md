@@ -10,6 +10,8 @@ focused on applicant scouting, playstyle, and Auto Hi.
 
 ### Fixed
 
+- Companion `0.10.0` prevents packaged and developer launches from opening two
+  overlay windows when its local single-instance control endpoint is unavailable.
 - A scan tick can no longer replace a completed QR while its screenshot is
   waiting for the framebuffer settle window, fixing the reload-only recovery
   seen even with five applicants and a two-player group.
