@@ -2,21 +2,17 @@
 
 ## Unreleased
 
+## 0.6.0 - 18-Jul-2026 - Companion 0.10.0 transport and usability update
+
+This paired addon + companion release keeps APS1 v9 unchanged while making QR
+capture recover automatically and bringing common diagnostics into the Group
+Finder panel.
+
 ### Added
 
-- The Group Finder settings panel now includes compact Status, Snapshot, Move/Lock QR,
-  Reset QR, and Debug controls for common screenshot and QR recovery without
-  requiring memorized slash commands.
-
-### Fixed
-
-- `/apscout qrvisible` now survives `/reload`; disabling the addon clears the
-  override so a stopped transport cannot restore an always-visible QR.
-
-## 0.5.3 - 16-Jul-2026 - Companion 0.9.3 capture lifecycle recovery
-
-This paired addon + companion patch keeps APS1 v9 unchanged while preventing
-the QR capture lifecycle from stalling between paint and screenshot.
+- The Group Finder settings panel now includes compact Status, Snapshot,
+  Move/Lock QR, Reset QR, and Debug controls for common screenshot and QR
+  recovery without requiring memorized slash commands.
 
 ### Fixed
 
@@ -29,6 +25,12 @@ the QR capture lifecycle from stalling between paint and screenshot.
   remains stuck instead of leaving transport frozen until `/reload`.
 - Repeated settings requests before Blizzard's Group Finder frame is available
   now reuse one load watcher instead of accumulating dormant frames.
+- Applicant and Party reads now reject malformed, non-finite, or unavailable
+  unit data without poisoning the current snapshot.
+- Roster inspect retries and leader-key refreshes are bounded and discard stale
+  group context after roster changes.
+- `/apscout qrvisible` now survives `/reload`; disabling the addon clears the
+  override so a stopped transport cannot restore an always-visible QR.
 
 ### Improved
 
@@ -36,14 +38,14 @@ the QR capture lifecycle from stalling between paint and screenshot.
   count, dirty-during-job state, and visible texture high-water mark.
 - Screenshot format and quality are now leased only around each QR capture and
   restored afterwards instead of remaining changed whenever the addon is on.
-- Companion `0.9.3` shows `addon update` when the decoded WoW addon version is
+- Companion `0.10.0` shows `addon update` when the decoded WoW addon version is
   older than the paired release.
-- Companion `0.9.3` uses Warcraft Logs' full current encounter names for
-  Chimaerus and Belo'ren in raid boss details.
+- Companion `0.10.0` adds keyboard navigation, clearer grouped-applicant and M+
+  evidence, and more explicit screenshot/WCL health states.
 
 ### Notes
 
-- This addon release is paired with ApplicantScout Companion `0.9.3`.
+- This addon release is paired with ApplicantScout Companion `0.10.0`.
 - No QR wire-format change; wire payloads remain compact APS1 v9.
 
 ## 0.5.2 - 15-Jul-2026 - Companion 0.9.2 large-raid transport recovery
