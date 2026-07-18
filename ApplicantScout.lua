@@ -4057,10 +4057,12 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
         end
     end
 
+    -- The member block is already fully ordered. Append its serialized bytes as
+    -- one chunk instead of copying every field chunk into the outer payload on
+    -- each transport poll.
+    local memberPayload = table.concat(memberOut)
     table.insert(out, _Uint16BE(emittedCount))
-    for _, chunk in ipairs(memberOut) do
-        table.insert(out, chunk)
-    end
+    table.insert(out, memberPayload)
     entryCreationKeyState.lastPayloadApplicantCount = emittedCount
 
     local rosterPayload, rosterCount = "", 0

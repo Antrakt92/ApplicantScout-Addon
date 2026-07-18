@@ -47,6 +47,9 @@ LUA_RAID19_APPLICANT_QR_CHECK = (
 LUA_PLAYER_REALM_LOOKUP_REUSE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_player_realm_lookup_reuse.lua"
 )
+LUA_APPLICANT_SERIALIZATION_REUSE_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_applicant_serialization_reuse.lua"
+)
 LUA_ROSTER_SERIALIZATION_REUSE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_serialization_reuse.lua"
 )
@@ -946,9 +949,10 @@ def test_payload_v6_appends_current_group_roster_after_applicants():
 
     assert "string.char(0x09)" in payload_body
     assert "BuildRosterPayloadRows(" in payload_body
-    applicants_idx = payload_body.index("for _, chunk in ipairs(memberOut) do")
+    applicants_idx = payload_body.index("table.insert(out, memberPayload)")
     roster_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
     assert applicants_idx < roster_idx
+    assert "local memberPayload = table.concat(memberOut)" in payload_body
     assert "table.insert(out, rosterPayload)" in payload_body
 
 
@@ -3125,6 +3129,15 @@ def test_roster_payload_serializes_each_row_once(pytestconfig):
     ).strip()
 
     assert output.startswith("ok roster-serialization-reuse rows=40 inserts=800 bytes=")
+
+
+def test_applicant_payload_appends_one_serialized_member_block(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_APPLICANT_SERIALIZATION_REUSE_CHECK,
+    ).strip()
+
+    assert output.startswith("ok applicant-serialization-reuse rows=40 inserts=800")
 
 
 def test_payload_reuses_player_realm_for_bare_applicant_names(pytestconfig):
