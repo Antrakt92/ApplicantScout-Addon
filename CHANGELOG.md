@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.6.0 - 18-Jul-2026 - Companion 0.10.0 transport and usability update
+## 0.6.1 - 18-Jul-2026 - Companion 0.10.1 transport and usability update
 
 This paired addon + companion release keeps APS1 v9 unchanged while making QR
 capture recover automatically and keeping the everyday Group Finder settings
@@ -10,7 +10,7 @@ focused on applicant scouting, playstyle, and Auto Hi.
 
 ### Fixed
 
-- Companion `0.10.0` routes packaged, developer, and WoW-watcher launches through
+- Companion `0.10.1` routes packaged, developer, and WoW-watcher launches through
   one atomic single-instance endpoint so they cannot open duplicate overlays.
 - A scan tick can no longer replace a completed QR while its screenshot is
   waiting for the framebuffer settle window, fixing the reload-only recovery
@@ -46,11 +46,11 @@ focused on applicant scouting, playstyle, and Auto Hi.
 - Applicant and roster payloads now sanitize and serialize stable data once, and
   QR construction uses compact buffers to reduce Lua allocation and repeated
   work without changing APS1 payload bytes.
-- Companion `0.10.0` shows `addon update` when the decoded WoW addon version is
+- Companion `0.10.1` shows `addon update` when the decoded WoW addon version is
   older than the paired release.
-- Companion `0.10.0` adds keyboard navigation, clearer grouped-applicant and M+
+- Companion `0.10.1` adds keyboard navigation, clearer grouped-applicant and M+
   evidence, and more explicit screenshot/WCL health states.
-- Companion `0.10.0` uses the full current Chimaerus, the Undreamt God and
+- Companion `0.10.1` uses the full current Chimaerus, the Undreamt God and
   Belo'ren, Child of Al'ar encounter names in Warcraft Logs evidence.
 
 ### Changed
@@ -60,7 +60,7 @@ focused on applicant scouting, playstyle, and Auto Hi.
 
 ### Notes
 
-- This addon release is paired with ApplicantScout Companion `0.10.0`.
+- This addon release is paired with ApplicantScout Companion `0.10.1`.
 - No QR wire-format change; wire payloads remain compact APS1 v9.
 
 ## 0.5.2 - 15-Jul-2026 - Companion 0.9.2 large-raid transport recovery
