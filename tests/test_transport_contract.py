@@ -56,6 +56,9 @@ LUA_ROSTER_SERIALIZATION_REUSE_CHECK = (
 LUA_TRANSPORT_STRING_SANITIZATION_REUSE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_transport_string_sanitization_reuse.lua"
 )
+LUA_RAIDERIO_FALLBACK_REUSE_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_raiderio_fallback_reuse.lua"
+)
 LUA_NUMERIC_BOUNDARIES_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_numeric_boundaries.lua"
 )
@@ -3166,6 +3169,17 @@ def test_payload_sanitizes_transport_strings_once_at_api_boundaries(pytestconfig
     assert output.startswith("ok transport-string-sanitization gsubs=")
 
 
+def test_raiderio_fallback_reuses_zero_summary_without_blocking_recovery(
+    pytestconfig,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_RAIDERIO_FALLBACK_REUSE_CHECK,
+    ).strip()
+
+    assert output.startswith("ok raiderio-fallback-reuse calls=")
+
+
 def test_large_qr_prefers_reliable_roster_fallback_before_raw(pytestconfig):
     assert _run_lua_script(
         pytestconfig,
@@ -3855,6 +3869,11 @@ def test_raiderio_summary_reuses_one_profile_lookup_per_member():
     assert "rioSummaryCache[cacheKey] = summary" in summary_body
     assert payload_body.count("_GetRaiderIOMPlusSummaryForCleanName(") == 1
     assert "_RaiderIODungeonMatchesActivity" in summary_body
+    assert "entryCreationKeyState.emptyRaiderIOMPlusSummary" in summary_body
+    lookup_idx = summary_body.index("local ok, profile = pcall(rio.GetProfile")
+    validate_idx = summary_body.index("profile = SafeTable(profile)", lookup_idx)
+    store_idx = summary_body.index("local function StoreRaiderIOSummary", validate_idx)
+    assert lookup_idx < validate_idx < store_idx
 
 
 def test_raiderio_summary_reports_best_keys_from_timed_runs_only():

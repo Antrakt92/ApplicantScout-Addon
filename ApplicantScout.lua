@@ -240,6 +240,19 @@ local entryCreationKeyState = {
     lastDeliverySnapshotSendCount = 0,
     groupTransportGen = 0,
     rioMPlusSummaryCache = {},
+    -- Read-only by convention: payload builders only serialize these zero fields.
+    emptyRaiderIOMPlusSummary = {
+        currentScore = 0,
+        mainScore = 0,
+        hasProfile = false,
+        bestKey = 0,
+        bestDungeonKey = 0,
+        timedAtOrAbove = 0,
+        timedAtOrAboveMinus1 = 0,
+        timedAtOrAboveMinus2 = 0,
+        completedAtOrAboveMinus1 = 0,
+        dungeonCount = 0,
+    },
     qrPaintJobGen = 0,
     qrPaintInProgress = false,
     qrCaptureInProgress = false,
@@ -2395,11 +2408,11 @@ local function _GetRaiderIOMPlusSummaryForCleanName(memberName, listingActivityI
     -- the raw LFG name can be secret-tagged, and RaiderIO's public API performs
     -- string parsing internally.
     if memberName == "" or memberName == "?" then
-        return _EmptyRaiderIOMPlusSummary(0, 0)
+        return entryCreationKeyState.emptyRaiderIOMPlusSummary
     end
     local rio = SafeTable(_G.RaiderIO)
     if not rio or type(rio.GetProfile) ~= "function" then
-        return _EmptyRaiderIOMPlusSummary(0, 0)
+        return entryCreationKeyState.emptyRaiderIOMPlusSummary
     end
 
     listingActivityID = math.floor(SafeNumber(listingActivityID, 0))
@@ -2413,22 +2426,24 @@ local function _GetRaiderIOMPlusSummaryForCleanName(memberName, listingActivityI
         .. "\031" .. tostring(targetKey)
     local cachedSummary = rioSummaryCache[cacheKey]
     if cachedSummary then return cachedSummary end
+
+    local ok, profile = pcall(rio.GetProfile, memberName)
+    if not ok or IsSecretValue(profile) then
+        return entryCreationKeyState.emptyRaiderIOMPlusSummary
+    end
+    profile = SafeTable(profile)
+    if not profile then return entryCreationKeyState.emptyRaiderIOMPlusSummary end
     local function StoreRaiderIOSummary(summary)
         rioSummaryCache[cacheKey] = summary
         return summary
     end
 
-    local ok, profile = pcall(rio.GetProfile, memberName)
-    if not ok then return _EmptyRaiderIOMPlusSummary(0, 0) end
-    profile = SafeTable(profile)
-    if not profile then return _EmptyRaiderIOMPlusSummary(0, 0) end
-
     local keystoneProfile = SafeTable(profile.mythicKeystoneProfile)
     if not keystoneProfile then
-        return StoreRaiderIOSummary(_EmptyRaiderIOMPlusSummary(0, 0))
+        return StoreRaiderIOSummary(entryCreationKeyState.emptyRaiderIOMPlusSummary)
     end
     if IsSecretValue(keystoneProfile.blocked) or keystoneProfile.blocked then
-        return StoreRaiderIOSummary(_EmptyRaiderIOMPlusSummary(0, 0))
+        return StoreRaiderIOSummary(entryCreationKeyState.emptyRaiderIOMPlusSummary)
     end
 
     local current = SafeTable(keystoneProfile.mplusCurrent)
@@ -4114,6 +4129,8 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.ClampUInt8 = _ClampUInt8
     _G.ApplicantScoutFixtureHarness.BuildPayload = BuildPayload
     _G.ApplicantScoutFixtureHarness.BuildRosterPayloadRows = BuildRosterPayloadRows
+    _G.ApplicantScoutFixtureHarness.GetRaiderIOMPlusSummaryForCleanName =
+        _GetRaiderIOMPlusSummaryForCleanName
     _G.ApplicantScoutFixtureHarness.HashSnapshot = HashSnapshot
     _G.ApplicantScoutFixtureHarness.StartSession = StartSession
     _G.ApplicantScoutFixtureHarness.EndSession = EndSession
