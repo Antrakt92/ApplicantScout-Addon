@@ -240,6 +240,8 @@ local entryCreationKeyState = {
     lastDeliverySnapshotSendCount = 0,
     groupTransportGen = 0,
     rioMPlusSummaryCache = {},
+    cleanUnknownLabel = nil,
+    cleanUnknownObjectLabel = nil,
     -- Read-only by convention: payload builders only serialize these zero fields.
     emptyRaiderIOMPlusSummary = {
         currentScore = 0,
@@ -2518,9 +2520,17 @@ local function _IsPlaceholderCleanUnitName(name)
     local sep = name:find("-", 1, true)
     local base = sep and name:sub(1, sep - 1) or name
     if base == "" or base == "?" then return true end
-    local unknownObject = SafeStr(_G.UNKNOWNOBJECT, "")
+    local unknownObject = entryCreationKeyState.cleanUnknownObjectLabel
+    if unknownObject == nil and type(_G.UNKNOWNOBJECT) == "string" then
+        unknownObject = SafeStr(_G.UNKNOWNOBJECT, "")
+        entryCreationKeyState.cleanUnknownObjectLabel = unknownObject
+    end
     if unknownObject ~= "" and base == unknownObject then return true end
-    local unknown = SafeStr(_G.UNKNOWN, "")
+    local unknown = entryCreationKeyState.cleanUnknownLabel
+    if unknown == nil and type(_G.UNKNOWN) == "string" then
+        unknown = SafeStr(_G.UNKNOWN, "")
+        entryCreationKeyState.cleanUnknownLabel = unknown
+    end
     if unknown ~= "" and base == unknown then return true end
     return base == "Unknown" or base == "UNKNOWN" or base == "UNKNOWNOBJECT"
 end

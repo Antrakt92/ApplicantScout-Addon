@@ -56,6 +56,9 @@ LUA_ROSTER_SERIALIZATION_REUSE_CHECK = (
 LUA_TRANSPORT_STRING_SANITIZATION_REUSE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_transport_string_sanitization_reuse.lua"
 )
+LUA_PLACEHOLDER_LABEL_REUSE_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_placeholder_label_reuse.lua"
+)
 LUA_RAIDERIO_FALLBACK_REUSE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_raiderio_fallback_reuse.lua"
 )
@@ -3180,6 +3183,15 @@ def test_payload_sanitizes_transport_strings_once_at_api_boundaries(pytestconfig
     ).strip()
 
     assert output.startswith("ok transport-string-sanitization gsubs=")
+
+
+def test_placeholder_labels_are_sanitized_once_per_ui_lifetime(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_PLACEHOLDER_LABEL_REUSE_CHECK,
+    ).strip()
+
+    assert output.startswith("ok placeholder-label-reuse first=")
 
 
 def test_raiderio_fallback_reuses_zero_summary_without_blocking_recovery(
