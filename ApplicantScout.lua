@@ -1808,19 +1808,12 @@ end
 
 entryCreationKeyState.GetApplicantMemberInfoForTransport = function(apiID, memberIndex)
     if not (C_LFGList and type(C_LFGList.GetApplicantMemberInfo) == "function") then
-        return nil
+        return false
     end
     local ok, name, class, _, _, ilvl, _, _, _, _, role, _, score, _, _, _, specID =
         pcall(C_LFGList.GetApplicantMemberInfo, apiID, memberIndex)
-    if not ok then return nil end
-    return {
-        name = name,
-        class = class,
-        ilvl = ilvl,
-        role = role,
-        score = score,
-        specID = specID,
-    }
+    if not ok then return false end
+    return true, name, class, ilvl, role, score, specID
 end
 
 -- Big-endian uint packing
@@ -4013,7 +4006,8 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     local leaderQuietSignature = table.concat(leaderQuietOut)
 
     -- Applicants — filter out DEAD_STATUSES + sort by ID for hash stability
-    local validApps = {}
+    local validAppIDs, validAppAPITokens = {}, {}
+    local validAppMemberCounts, validAppOrder = {}, {}
     local cleanApplicantIDs = SafeTable(applicantIDs) or {}
     for _, rawID in ipairs(cleanApplicantIDs) do
         local id, info, apiID = entryCreationKeyState.GetApplicantInfoForTransport(rawID)
@@ -4022,11 +4016,17 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
             local memberCount = math.floor(SafeNumber(info.numMembers, 0))
             if memberCount > 5 then memberCount = 5 end
             if memberCount > 0 and not APP_DEAD_STATUSES[status] then
-                table.insert(validApps, { id = id, apiID = apiID or id, members = memberCount })
+                local appIndex = #validAppIDs + 1
+                validAppIDs[appIndex] = id
+                validAppAPITokens[appIndex] = apiID or id
+                validAppMemberCounts[appIndex] = memberCount
+                validAppOrder[appIndex] = appIndex
             end
         end
     end
-    table.sort(validApps, function(a, b) return a.id < b.id end)
+    table.sort(validAppOrder, function(a, b)
+        return validAppIDs[a] < validAppIDs[b]
+    end)
 
     -- Wire format v2: emit one block per group member (was: only the leader).
     -- Single-pass shadow-table approach — count is derived from successfully-
@@ -4046,21 +4046,24 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     --   u8 rio_dungeon_count, u8 role, len-prefixed name.
     local memberOut = {}
     local emittedCount = 0
-    for _, app in ipairs(validApps) do
-        for m = 1, app.members do
-            local memberInfo =
-                entryCreationKeyState.GetApplicantMemberInfoForTransport(app.apiID, m)
-            local memberName = SafeStr(memberInfo and memberInfo.name, "")
-            if memberInfo and not _IsPlaceholderCleanUnitName(memberName) then
-                local classToken = SafeEnumKey(memberInfo.class, "")
-                local roleToken = SafeEnumKey(memberInfo.role, "DAMAGER")
-                table.insert(memberOut, _Uint32BE(app.id))
+    for _, appIndex in ipairs(validAppOrder) do
+        local appID = validAppIDs[appIndex]
+        local apiToken = validAppAPITokens[appIndex]
+        for m = 1, validAppMemberCounts[appIndex] do
+            local memberOK, rawMemberName, memberClass, memberILvl,
+                  memberRole, memberScore, memberSpecID =
+                entryCreationKeyState.GetApplicantMemberInfoForTransport(apiToken, m)
+            local memberName = SafeStr(rawMemberName, "")
+            if memberOK and not _IsPlaceholderCleanUnitName(memberName) then
+                local classToken = SafeEnumKey(memberClass, "")
+                local roleToken = SafeEnumKey(memberRole, "DAMAGER")
+                table.insert(memberOut, _Uint32BE(appID))
                 table.insert(memberOut, string.char(m))
                 table.insert(memberOut, string.char(CLASS_NAME_TO_ID[classToken] or 0))
-                table.insert(memberOut, _Uint16BE(SafeNumber(memberInfo.specID, 0)))
-                table.insert(memberOut, _Uint16BE(SafeRoundedNumber(memberInfo.ilvl, 0)))
+                table.insert(memberOut, _Uint16BE(SafeNumber(memberSpecID, 0)))
+                table.insert(memberOut, _Uint16BE(SafeRoundedNumber(memberILvl, 0)))
                 table.insert(memberOut, _Uint16BE(_ClampUInt16(
-                    SafeRoundedNumber(memberInfo.score, 0)
+                    SafeRoundedNumber(memberScore, 0)
                 )))
                 local rioSummary = _GetRaiderIOMPlusSummaryForCleanName(
                     _RaiderIOProfileLookupNameFromCleanName(memberName, playerRealm),
@@ -4105,7 +4108,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     end
     entryCreationKeyState.lastPayloadRosterCount = rosterCount
     entryCreationKeyState.lastPayloadRosterIncomplete = rosterIncomplete
-    if cleanEntry and #validApps == 0
+    if cleanEntry and #validAppOrder == 0
        and rosterCount == 5
        and rosterQuietSignature
        and not rosterQuietInRaid
@@ -4156,6 +4159,13 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.ClampUInt16 = _ClampUInt16
     _G.ApplicantScoutFixtureHarness.ClampUInt8 = _ClampUInt8
     _G.ApplicantScoutFixtureHarness.BuildPayload = BuildPayload
+    _G.ApplicantScoutFixtureHarness.SetApplicantTransportAdapters = function(
+        infoAdapter,
+        memberAdapter
+    )
+        entryCreationKeyState.GetApplicantInfoForTransport = infoAdapter
+        entryCreationKeyState.GetApplicantMemberInfoForTransport = memberAdapter
+    end
     _G.ApplicantScoutFixtureHarness.BuildRosterPayloadRows = BuildRosterPayloadRows
     _G.ApplicantScoutFixtureHarness.GetRaiderIOMPlusSummaryForCleanName =
         _GetRaiderIOMPlusSummaryForCleanName
@@ -6243,9 +6253,13 @@ SlashCmdList.APSCOUT = function(msg)
         for i = 1, math.min(3, #applicants) do
             local rawID = applicants[i]
             local id, info, apiID = entryCreationKeyState.GetApplicantInfoForTransport(rawID)
-            local memberInfo = nil
+            local memberName, memberClass, memberILvl,
+                  memberRole, memberScore, memberSpecID
             if id and id > 0 then
-                memberInfo = entryCreationKeyState.GetApplicantMemberInfoForTransport(
+                local _memberOK
+                _memberOK, memberName, memberClass, memberILvl,
+                    memberRole, memberScore, memberSpecID =
+                    entryCreationKeyState.GetApplicantMemberInfoForTransport(
                     apiID or id,
                     1
                 )
@@ -6254,19 +6268,19 @@ SlashCmdList.APSCOUT = function(msg)
                   i, SafeDiag(id), tostring(IsSecretValue(rawID)),
                   info and SafeDiag(_GetApplicantApplicationStatus(info)) or "n/a"))
             print(string.format("    name=%s(s=%s) class=%s(s=%s) specID=%s(s=%s)",
-                  SafeDiag(memberInfo and memberInfo.name),
-                  tostring(IsSecretValue(memberInfo and memberInfo.name)),
-                  SafeDiag(memberInfo and memberInfo.class),
-                  tostring(IsSecretValue(memberInfo and memberInfo.class)),
-                  SafeDiag(memberInfo and memberInfo.specID),
-                  tostring(IsSecretValue(memberInfo and memberInfo.specID))))
+                  SafeDiag(memberName),
+                  tostring(IsSecretValue(memberName)),
+                  SafeDiag(memberClass),
+                  tostring(IsSecretValue(memberClass)),
+                  SafeDiag(memberSpecID),
+                  tostring(IsSecretValue(memberSpecID))))
             print(string.format("    ilvl=%s(s=%s) score=%s(s=%s) role=%s(s=%s)",
-                  SafeDiag(memberInfo and memberInfo.ilvl),
-                  tostring(IsSecretValue(memberInfo and memberInfo.ilvl)),
-                  SafeDiag(memberInfo and memberInfo.score),
-                  tostring(IsSecretValue(memberInfo and memberInfo.score)),
-                  SafeDiag(memberInfo and memberInfo.role),
-                  tostring(IsSecretValue(memberInfo and memberInfo.role))))
+                  SafeDiag(memberILvl),
+                  tostring(IsSecretValue(memberILvl)),
+                  SafeDiag(memberScore),
+                  tostring(IsSecretValue(memberScore)),
+                  SafeDiag(memberRole),
+                  tostring(IsSecretValue(memberRole))))
         end
     elseif msg == "reset" then
         -- Queue a fresh snapshot on the next eligible scan-tick. Clears dedup

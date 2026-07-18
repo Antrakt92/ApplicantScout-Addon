@@ -59,6 +59,9 @@ LUA_TRANSPORT_STRING_SANITIZATION_REUSE_CHECK = (
 LUA_PLACEHOLDER_LABEL_REUSE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_placeholder_label_reuse.lua"
 )
+LUA_TRANSPORT_RECORD_REUSE_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_transport_record_reuse.lua"
+)
 LUA_RAIDERIO_FALLBACK_REUSE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_raiderio_fallback_reuse.lua"
 )
@@ -984,7 +987,9 @@ def test_payload_v7_appends_leader_keystone_before_applicants():
         "local leaderKeystone = entryCreationKeyState.ResolveLeaderKeystoneContext()"
     )
     pack_idx = payload_body.index("leaderKeystone.challengeMapID")
-    applicants_idx = payload_body.index("local validApps = {}")
+    applicants_idx = payload_body.index(
+        "local validAppIDs, validAppAPITokens = {}, {}"
+    )
     assert leader_idx < pack_idx < applicants_idx
     assert "string.char(_ClampUInt8(leaderKeystone.level))" in payload_body
     assert "_PackCleanLenStr(out, leaderKeystone.playerName)" in payload_body
@@ -1185,7 +1190,7 @@ def test_full_party_quiet_signature_requires_empty_resolved_non_raid_roster():
 
     assert "entryCreationKeyState.lastPayloadQuietFullPartySignature = nil" in payload_body
     assert "rosterQuietSignature, rosterQuietHasUnknownSpec, rosterQuietInRaid" in payload_body
-    assert "cleanEntry and #validApps == 0" in payload_body
+    assert "cleanEntry and #validAppOrder == 0" in payload_body
     assert "rosterCount == 5" in payload_body
     assert "not rosterQuietInRaid" in payload_body
     assert "not rosterQuietHasUnknownSpec" in payload_body
@@ -1580,9 +1585,9 @@ def test_applicant_payload_skips_secret_placeholder_names():
         "local function HashSnapshot(payload)",
     )
 
-    assert 'local memberName = SafeStr(memberInfo and memberInfo.name, "")' in payload_body
+    assert 'local memberName = SafeStr(rawMemberName, "")' in payload_body
     assert (
-        "if memberInfo and not _IsPlaceholderCleanUnitName(memberName) then"
+        "if memberOK and not _IsPlaceholderCleanUnitName(memberName) then"
         in payload_body
     )
 
@@ -2875,11 +2880,31 @@ def test_applicant_member_reads_share_one_guarded_adapter():
     )
 
     assert "pcall(C_LFGList.GetApplicantMemberInfo, apiID, memberIndex)" in adapter_body
-    assert "if not ok then return nil end" in adapter_body
+    assert "if not ok then return false end" in adapter_body
     assert "entryCreationKeyState.GetApplicantMemberInfoForTransport" in payload_body
     assert "entryCreationKeyState.GetApplicantMemberInfoForTransport" in taint_body
     assert "C_LFGList.GetApplicantMemberInfo(" not in payload_body
     assert "C_LFGList.GetApplicantMemberInfo(" not in taint_body
+
+
+def test_applicant_transport_avoids_per_row_record_tables():
+    source = _lua_source()
+    adapter_body = _slice_between(
+        source,
+        "entryCreationKeyState.GetApplicantMemberInfoForTransport = function(",
+        "-- Big-endian uint packing",
+    )
+    payload_body = _slice_between(
+        source,
+        BUILD_PAYLOAD_ANCHOR,
+        "local function HashSnapshot(payload)",
+    )
+
+    assert "return true, name, class, ilvl, role, score, specID" in adapter_body
+    assert "return {" not in adapter_body
+    assert "local validAppIDs, validAppAPITokens" in payload_body
+    assert "local validAppMemberCounts, validAppOrder" in payload_body
+    assert "{ id = id, apiID = apiID" not in payload_body
 
 
 def test_lfg_updates_are_polled_instead_of_registered_on_tainted_event_stack():
@@ -3164,7 +3189,7 @@ def test_applicant_payload_appends_one_serialized_member_block(pytestconfig):
         LUA_APPLICANT_SERIALIZATION_REUSE_CHECK,
     ).strip()
 
-    assert output.startswith("ok applicant-serialization-reuse rows=40 inserts=800")
+    assert output.startswith("ok applicant-serialization-reuse rows=40 inserts=760")
 
 
 def test_payload_reuses_player_realm_for_bare_applicant_names(pytestconfig):
@@ -3192,6 +3217,15 @@ def test_placeholder_labels_are_sanitized_once_per_ui_lifetime(pytestconfig):
     ).strip()
 
     assert output.startswith("ok placeholder-label-reuse first=")
+
+
+def test_transport_reuses_flat_applicant_and_member_records(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_TRANSPORT_RECORD_REUSE_CHECK,
+    ).strip()
+
+    assert output.startswith("ok transport-record-reuse rows=39")
 
 
 def test_raiderio_fallback_reuses_zero_summary_without_blocking_recovery(

@@ -35,7 +35,7 @@ local payload = assert(harness.BuildPayload)({
 }, applicantIDs, false)
 table.insert = originalInsert
 
-assert(insertCount == 800, string.format(
+assert(insertCount == 760, string.format(
     "applicant payload used %d table inserts instead of one final member block",
     insertCount
 ))
