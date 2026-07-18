@@ -3716,13 +3716,12 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
     local rosterOut = {}
     local emittedCount = 0
     local rows = {}
-    local rosterQuietOut = {}
     local rosterQuietHasUnknownSpec = false
     local groupCount = math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))
     local inRaid = IsInRaid and IsInRaid() or false
     local expectedRosterCount = 0
     if groupCount <= 0 then
-        return rosterOut, emittedCount, "", false, inRaid, false
+        return "", emittedCount, "", false, inRaid, false
     end
 
     if inRaid then
@@ -3782,29 +3781,15 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
         _PackLenStr(rosterOut, row.name)
         emittedCount = emittedCount + 1
         if row.specID <= 0 then rosterQuietHasUnknownSpec = true end
-        table.insert(rosterQuietOut, string.char(_ClampUInt8(row.unitIndex)))
-        table.insert(rosterQuietOut, string.char(_ClampUInt8(row.flags)))
-        table.insert(rosterQuietOut, string.char(_ClampUInt8(row.subgroup)))
-        table.insert(rosterQuietOut, string.char(_ClampUInt8(row.classID)))
-        table.insert(rosterQuietOut, _Uint16BE(row.specID))
-        table.insert(rosterQuietOut, _Uint16BE(row.ilvl))
-        table.insert(rosterQuietOut, currentScoreBytes)
-        table.insert(rosterQuietOut, mainScoreBytes)
-        table.insert(rosterQuietOut, string.char(rioSummary.hasProfile and 1 or 0))
-        table.insert(rosterQuietOut, string.char(rioSummary.bestKey))
-        table.insert(rosterQuietOut, string.char(rioSummary.bestDungeonKey))
-        table.insert(rosterQuietOut, string.char(rioSummary.timedAtOrAbove))
-        table.insert(rosterQuietOut, string.char(rioSummary.timedAtOrAboveMinus1))
-        table.insert(rosterQuietOut, string.char(rioSummary.timedAtOrAboveMinus2))
-        table.insert(rosterQuietOut, string.char(rioSummary.completedAtOrAboveMinus1))
-        table.insert(rosterQuietOut, string.char(rioSummary.dungeonCount))
-        table.insert(rosterQuietOut, string.char(_ClampUInt8(row.role)))
-        _PackLenStr(rosterQuietOut, row.name)
     end
 
     local rosterIncomplete = emittedCount < expectedRosterCount
         or (not inRaid and rosterQuietHasUnknownSpec)
-    return rosterOut, emittedCount, table.concat(rosterQuietOut),
+    -- SYNC: the quiet signature intentionally covers the exact companion-visible
+    -- roster block. Reuse the serialized bytes so the 0.5s transport poll does
+    -- not rebuild or copy every field a second time.
+    local rosterPayload = table.concat(rosterOut)
+    return rosterPayload, emittedCount, rosterPayload,
            rosterQuietHasUnknownSpec, inRaid, rosterIncomplete
 end
 
@@ -4078,12 +4063,12 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     end
     entryCreationKeyState.lastPayloadApplicantCount = emittedCount
 
-    local rosterOut, rosterCount = {}, 0
+    local rosterPayload, rosterCount = "", 0
     local rosterIncomplete = false
     local rosterQuietSignature, rosterQuietHasUnknownSpec, rosterQuietInRaid =
         nil, false, false
     if not terminalClear and not rosterUnavailable then
-        rosterOut, rosterCount, rosterQuietSignature,
+        rosterPayload, rosterCount, rosterQuietSignature,
         rosterQuietHasUnknownSpec, rosterQuietInRaid, rosterIncomplete =
             BuildRosterPayloadRows(
                 listingActivityIDForRio,
@@ -4108,9 +4093,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
         entryCreationKeyState.lastPayloadQuietFullPartySignature = table.concat(quietOut)
     end
     table.insert(out, _Uint16BE(rosterCount))
-    for _, chunk in ipairs(rosterOut) do
-        table.insert(out, chunk)
-    end
+    table.insert(out, rosterPayload)
 
     -- Concat, patch length field, append CRC32
     local body = table.concat(out)
@@ -4135,6 +4118,7 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.ClampUInt16 = _ClampUInt16
     _G.ApplicantScoutFixtureHarness.ClampUInt8 = _ClampUInt8
     _G.ApplicantScoutFixtureHarness.BuildPayload = BuildPayload
+    _G.ApplicantScoutFixtureHarness.BuildRosterPayloadRows = BuildRosterPayloadRows
     _G.ApplicantScoutFixtureHarness.HashSnapshot = HashSnapshot
     _G.ApplicantScoutFixtureHarness.StartSession = StartSession
     _G.ApplicantScoutFixtureHarness.EndSession = EndSession

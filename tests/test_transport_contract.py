@@ -47,6 +47,9 @@ LUA_RAID19_APPLICANT_QR_CHECK = (
 LUA_PLAYER_REALM_LOOKUP_REUSE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_player_realm_lookup_reuse.lua"
 )
+LUA_ROSTER_SERIALIZATION_REUSE_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_roster_serialization_reuse.lua"
+)
 LUA_NUMERIC_BOUNDARIES_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_numeric_boundaries.lua"
 )
@@ -812,7 +815,7 @@ def test_roster_payload_rows_skip_solo_player_when_not_grouped():
     player_idx = roster_body.index('_BuildRosterRow("player", 1, 1, false)')
 
     assert group_idx < solo_guard_idx < player_idx
-    assert "return rosterOut, emittedCount" in roster_body[solo_guard_idx:player_idx]
+    assert 'return "", emittedCount, ""' in roster_body[solo_guard_idx:player_idx]
 
 
 def test_roster_name_falls_back_to_visible_unit_name_when_full_name_is_missing():
@@ -946,7 +949,7 @@ def test_payload_v6_appends_current_group_roster_after_applicants():
     applicants_idx = payload_body.index("for _, chunk in ipairs(memberOut) do")
     roster_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
     assert applicants_idx < roster_idx
-    assert "for _, chunk in ipairs(rosterOut) do" in payload_body
+    assert "table.insert(out, rosterPayload)" in payload_body
 
 
 def test_payload_v7_appends_leader_keystone_before_applicants():
@@ -1167,13 +1170,13 @@ def test_full_party_quiet_signature_requires_empty_resolved_non_raid_roster():
     assert "not rosterQuietInRaid" in payload_body
     assert "not rosterQuietHasUnknownSpec" in payload_body
     assert "entryCreationKeyState.lastPayloadQuietFullPartySignature =" in payload_body
-    assert "local rosterQuietOut = {}" in roster_body
+    assert "local rosterPayload = table.concat(rosterOut)" in roster_body
     assert "rosterQuietHasUnknownSpec = true" in roster_body
     assert "row.name" in roster_body
     assert "row.classID" in roster_body
     assert "row.specID" in roster_body
     assert "row.role" in roster_body
-    assert "table.concat(rosterQuietOut)" in roster_body
+    assert "return rosterPayload, emittedCount, rosterPayload" in roster_body
 
 
 def test_repeat_full_party_quiet_snapshot_is_suppressed_before_qr_paint():
@@ -1268,8 +1271,9 @@ def test_quiet_full_party_signature_uses_collision_safe_encoding():
     assert 'string.format(\n            "%d:%d:%s' not in roster_body
     assert "listingQuietOut" in payload_body
     assert "_PackLenStr(listingQuietOut, dungeonName)" in payload_body
-    assert "rosterQuietOut" in roster_body
-    assert "_PackLenStr(rosterQuietOut, row.name)" in roster_body
+    assert "rosterQuietOut" not in roster_body
+    assert "_PackLenStr(rosterOut, row.name)" in roster_body
+    assert "local rosterPayload = table.concat(rosterOut)" in roster_body
 
 
 def test_quiet_full_party_signature_covers_companion_visible_roster_fields():
@@ -1279,7 +1283,8 @@ def test_quiet_full_party_signature_covers_companion_visible_roster_fields():
         "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
         "-- CRC32 IEEE-802.3",
     )
-    quiet_idx = roster_body.index("local rosterQuietOut = {}")
+    serialize_idx = roster_body.index("for _, row in ipairs(rows) do")
+    payload_idx = roster_body.index("local rosterPayload = table.concat(rosterOut)")
 
     expected_fields = [
         "row.unitIndex",
@@ -1303,8 +1308,10 @@ def test_quiet_full_party_signature_covers_companion_visible_roster_fields():
     ]
 
     for field in expected_fields:
-        assert field in roster_body[quiet_idx:]
+        assert field in roster_body[serialize_idx:payload_idx]
     assert roster_body.count("_GetRaiderIOMPlusSummary(") == 1
+    assert roster_body.count("_PackLenStr(rosterOut, row.name)") == 1
+    assert "return rosterPayload, emittedCount, rosterPayload" in roster_body
 
 
 def test_quiet_full_party_signature_covers_leader_keystone_block():
@@ -1574,7 +1581,7 @@ def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
         "local payload = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
         in screenshot_body
     )
-    assert "local rosterOut, rosterCount = {}, 0" in payload_body
+    assert 'local rosterPayload, rosterCount = "", 0' in payload_body
     assert "local rosterIncomplete = false" in payload_body
     assert "if not terminalClear and not rosterUnavailable then" in payload_body
     roster_call_idx = payload_body.index("BuildRosterPayloadRows(")
@@ -1583,7 +1590,7 @@ def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
     )
     count_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
     assert terminal_guard_idx < roster_call_idx < count_idx
-    assert "for _, chunk in ipairs(rosterOut) do" in payload_body
+    assert "table.insert(out, rosterPayload)" in payload_body
 
 
 def test_payload_v9_header_flags_distinguish_terminal_and_lfg_unavailable():
@@ -1793,7 +1800,7 @@ def test_party_roster_with_unknown_spec_stays_incomplete_until_clear_data():
 
     unknown_spec_idx = roster_body.index("if row.specID <= 0 then")
     incomplete_idx = roster_body.index("local rosterIncomplete =")
-    return_idx = roster_body.index("return rosterOut, emittedCount", incomplete_idx)
+    return_idx = roster_body.index("return rosterPayload, emittedCount", incomplete_idx)
 
     assert unknown_spec_idx < incomplete_idx < return_idx
     assert "or (not inRaid and rosterQuietHasUnknownSpec)" in roster_body[
@@ -3109,6 +3116,15 @@ def test_raid19_with_applicant_keeps_full_roster_inside_qr_budget(pytestconfig):
     output = _run_lua_script(pytestconfig, LUA_RAID19_APPLICANT_QR_CHECK).strip()
 
     assert output.startswith("ok raid19-applicant-qr payload=")
+
+
+def test_roster_payload_serializes_each_row_once(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_ROSTER_SERIALIZATION_REUSE_CHECK,
+    ).strip()
+
+    assert output.startswith("ok roster-serialization-reuse rows=40 inserts=800 bytes=")
 
 
 def test_payload_reuses_player_realm_for_bare_applicant_names(pytestconfig):
