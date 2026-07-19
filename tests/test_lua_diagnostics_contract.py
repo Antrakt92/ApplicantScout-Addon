@@ -164,6 +164,7 @@ def test_luals_config_keeps_unknown_global_and_field_diagnostics_enabled():
         "C_LFGList",
         "C_Timer",
         "CreateFrame",
+        "GetServerTime",
         "Screenshot",
         "UnitGUID",
     ):

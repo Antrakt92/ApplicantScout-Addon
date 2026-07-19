@@ -27,6 +27,7 @@
     "GetInspectSpecialization",
     "GetNumGroupMembers",
     "GetRaidRosterInfo",
+    "GetServerTime",
     "GetSpecialization",
     "GetSpecializationInfo",
     "GetSpecializationRoleByID",
