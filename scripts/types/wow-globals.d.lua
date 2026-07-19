@@ -38,6 +38,11 @@ LFGListFrame = nil
 LibStub = nil
 ---@type any
 PVEFrame = nil
+
+---@param sidePanelName string
+---@param selection? string
+function PVEFrame_ToggleFrame(sidePanelName, selection) end
+
 ---@type any
 RaiderIO = nil
 

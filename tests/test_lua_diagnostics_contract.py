@@ -179,6 +179,7 @@ def test_luals_workspace_owns_exact_wow_global_declarations():
         "hooksecurefunc",
         "LFGListFrame",
         "PVEFrame",
+        "PVEFrame_ToggleFrame",
         "UNKNOWNOBJECT",
     ):
         assert re.search(rf"(?:function {name}\b|\n{name} = )", declarations)
