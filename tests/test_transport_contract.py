@@ -271,6 +271,56 @@ def test_interaction_suppression_defers_non_force_payloads_before_dedup():
     assert "return" in suppression_block
 
 
+def test_interaction_suppression_is_rechecked_before_lease_and_capture():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
+        "-- LFG entry creation",
+    )
+
+    callback_idx = screenshot_body.index("local function OnQRPaintComplete(paintOK)")
+    lease_idx = screenshot_body.index(
+        "local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()",
+        callback_idx,
+    )
+    prelease_guard_idx = screenshot_body.index(
+        "if not force and _qrSuppressedByInteraction then",
+        callback_idx,
+    )
+    prelease_refresh = screenshot_body[callback_idx:prelease_guard_idx]
+    prelease_guard = screenshot_body[prelease_guard_idx:lease_idx]
+
+    settle_idx = screenshot_body.index(
+        "C_Timer.After(forceVisibleShotDelay, function()",
+        lease_idx,
+    )
+    capture_guard_idx = screenshot_body.index(
+        "if not force and _qrSuppressedByInteraction then",
+        settle_idx,
+    )
+    capture_refresh = screenshot_body[settle_idx:capture_guard_idx]
+    screenshot_idx = screenshot_body.index(
+        "local screenshotOK = pcall(Screenshot)",
+        capture_guard_idx,
+    )
+    capture_guard = screenshot_body[capture_guard_idx:screenshot_idx]
+
+    assert callback_idx < prelease_guard_idx < lease_idx
+    assert "_TryHookInfoPanels()" in prelease_refresh
+    assert "_RecomputeInteractionSuppression()" in prelease_refresh
+    assert "pendingShotDirty = true" in prelease_guard
+    assert "entryCreationKeyState.ClearQRTransportJob(jobGen)" in prelease_guard
+    assert "return" in prelease_guard
+    assert settle_idx < capture_guard_idx < screenshot_idx
+    assert "_TryHookInfoPanels()" in capture_refresh
+    assert "_RecomputeInteractionSuppression()" in capture_refresh
+    assert "pendingShotDirty = true" in capture_guard
+    assert "_ReleaseForceVisibleShotLease(forceVisibleShotGen)" in capture_guard
+    assert "entryCreationKeyState.ClearQRTransportJob(jobGen)" in capture_guard
+    assert "return" in capture_guard
+
+
 def test_non_force_snapshot_waits_for_active_qr_job_before_lfg_reads():
     source = _lua_source()
     screenshot_body = _slice_between(
@@ -1481,7 +1531,8 @@ def test_terminal_clear_callback_guard_does_not_gate_manual_force_snapshots():
     guard_block = screenshot_body[schedule_idx:shot_idx]
 
     assert "terminalClearSessionGen" in guard_block
-    assert "_qrSuppressedByInteraction" not in guard_block
+    assert "if not force and _qrSuppressedByInteraction then" in guard_block
+    assert "if _qrSuppressedByInteraction then" not in guard_block
     assert "ApplicantScoutDB and ApplicantScoutDB.enabled" not in guard_block
 
 
@@ -3099,6 +3150,49 @@ def test_qr_capture_lifecycle_survives_poll_during_settle_window(pytestconfig):
     output = _run_lua_script(pytestconfig, LUA_QR_CAPTURE_LIFECYCLE_CHECK).strip()
 
     assert output.startswith("ok qr-capture-lifecycle mode=applicants shots=")
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "interaction-during-paint",
+        "interaction-during-settle",
+        "info-panel-during-settle",
+    ],
+)
+def test_interaction_opened_during_async_qr_work_defers_non_force_capture(
+    pytestconfig,
+    mode,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        mode,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode={mode} shots=2 attempts=2"
+    )
+
+
+@pytest.mark.parametrize(
+    ("mode", "shots"),
+    [("interaction-force", 1), ("interaction-terminal", 4)],
+)
+def test_force_capture_paths_bypass_interaction_suppression(
+    pytestconfig,
+    mode,
+    shots,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        mode,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode={mode} shots={shots} attempts={shots}"
+    )
 
 
 def test_roster_only_snapshot_gets_one_bounded_redundant_capture(pytestconfig):

@@ -5067,6 +5067,19 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             return
         end
 
+        -- An interaction can open while QR encoding/painting yields across
+        -- frames. Non-force work must remain pending instead of acquiring a
+        -- lease that makes the QR cover the newly opened Blizzard panel.
+        if not force then
+            _TryHookInfoPanels()
+            _RecomputeInteractionSuppression()
+        end
+        if not force and _qrSuppressedByInteraction then
+            pendingShotDirty = true
+            entryCreationKeyState.ClearQRTransportJob(jobGen)
+            return
+        end
+
         entryCreationKeyState.qrCaptureInProgress = true
         local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()
         local completedPaintGen = entryCreationKeyState.qrPaintJobGen
@@ -5084,6 +5097,20 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 return
             end
             if entryCreationKeyState.qrPaintJobGen ~= completedPaintGen then
+                _ReleaseForceVisibleShotLease(forceVisibleShotGen)
+                return
+            end
+            -- Suppression may also begin during the framebuffer settle delay,
+            -- after the lease was acquired. Release it and rebuild the latest
+            -- payload after the interaction closes; force/terminal shots keep
+            -- their explicit bypass semantics.
+            if not force then
+                _TryHookInfoPanels()
+                _RecomputeInteractionSuppression()
+            end
+            if not force and _qrSuppressedByInteraction then
+                pendingShotDirty = true
+                entryCreationKeyState.ClearQRTransportJob(jobGen)
                 _ReleaseForceVisibleShotLease(forceVisibleShotGen)
                 return
             end
@@ -5267,6 +5294,8 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
                 entryCreationKeyState.terminalClearDispatchCount or 0,
             terminalClearRetryScheduled =
                 entryCreationKeyState.terminalClearRetryScheduled == true,
+            lastEmittedApplicantCount =
+                entryCreationKeyState.lastEmittedApplicantCount or 0,
             sessionActive = isSessionActive == true,
         }
     end

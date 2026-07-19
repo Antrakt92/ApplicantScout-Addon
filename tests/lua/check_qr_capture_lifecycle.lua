@@ -5,7 +5,12 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "screenshot-failure"
        or fixture_mode == "screenshot-always-fail"
        or fixture_mode == "terminal-clear-failure"
-       or fixture_mode == "terminal-clear-always-fail",
+       or fixture_mode == "terminal-clear-always-fail"
+       or fixture_mode == "interaction-during-paint"
+       or fixture_mode == "interaction-during-settle"
+       or fixture_mode == "info-panel-during-settle"
+       or fixture_mode == "interaction-force"
+       or fixture_mode == "interaction-terminal",
     "unsupported fixture mode: " .. tostring(fixture_mode))
 local roster_only = fixture_mode == "roster-only"
 local transient_screenshot_failure = fixture_mode == "screenshot-failure"
@@ -13,6 +18,11 @@ local persistent_screenshot_failure = fixture_mode == "screenshot-always-fail"
 local terminal_clear_failure = fixture_mode == "terminal-clear-failure"
 local terminal_clear_always_fail = fixture_mode == "terminal-clear-always-fail"
 local terminal_clear_mode = terminal_clear_failure or terminal_clear_always_fail
+local interaction_during_paint = fixture_mode == "interaction-during-paint"
+local interaction_during_settle = fixture_mode == "interaction-during-settle"
+local info_panel_during_settle = fixture_mode == "info-panel-during-settle"
+local interaction_force = fixture_mode == "interaction-force"
+local interaction_terminal = fixture_mode == "interaction-terminal"
 
 -- Default mode reproduces the live report: two people and five applicants.
 -- Roster-only mode keeps a full party and removes every applicant.
@@ -57,6 +67,12 @@ local screenshot_attempts = 0
 local terminal_failure_started = false
 local terminal_failure_count = 0
 local pre_terminal_hash = nil
+local interaction_opened = false
+local interaction_deferred_checked = false
+local interaction_closed = false
+local interaction_opened_at = nil
+local interaction_shots_before = nil
+local interaction_terminal_started = false
 
 GetTime = function() return now end
 local cvars = {
@@ -199,6 +215,16 @@ event_frame.scripts.OnEvent(event_frame, "PLAYER_ENTERING_WORLD")
 assert(cvars.screenshotFormat == "png" and cvars.screenshotQuality == "3",
     "PLAYER_ENTERING_WORLD changed screenshot CVars before a capture")
 
+local function send_interaction_event(event)
+    assert(event_frame.events[event], "interaction event was not registered: " .. event)
+    event_frame.scripts.OnEvent(event_frame, event)
+end
+
+if interaction_force then
+    send_interaction_event("MERCHANT_SHOW")
+    SlashCmdList.APSCOUT("shotnow")
+end
+
 local function drain_due_timers()
     local made_progress = true
     local safety = 10000
@@ -223,10 +249,69 @@ for _ = 1, 360 do
     now = now + frame_step
     drain_due_timers()
     for _, ticker in ipairs(tickers) do
-        if not ticker.cancelled and ticker.next_due <= now then
+        local hold_info_panel_poll = info_panel_during_settle
+            and interaction_opened and not interaction_deferred_checked
+        if not ticker.cancelled and ticker.next_due <= now and not hold_info_panel_poll then
             ticker.next_due = ticker.next_due + ticker.period
             ticker.callback()
         end
+    end
+
+    if (interaction_during_paint or interaction_during_settle or info_panel_during_settle)
+       and not interaction_opened then
+        local state = harness.QRTransportState()
+        local reached_phase = interaction_during_paint
+            and state.paintInProgress and not state.captureInProgress
+            or (interaction_during_settle or info_panel_during_settle)
+                and state.captureInProgress and state.forceVisible
+        if reached_phase then
+            interaction_opened = true
+            interaction_opened_at = now
+            interaction_shots_before = #screenshot_times
+            if info_panel_during_settle then
+                WorldMapFrame = frame_stub("WorldMapFrame")
+                WorldMapFrame.shown = true
+            else
+                send_interaction_event("MERCHANT_SHOW")
+            end
+        end
+    end
+    if interaction_opened
+       and not interaction_deferred_checked
+       and (interaction_during_paint or interaction_during_settle or info_panel_during_settle) then
+        local state = harness.QRTransportState()
+        if not state.paintInProgress and not state.captureInProgress then
+            assert(#screenshot_times == interaction_shots_before,
+                "non-force capture ran after interaction suppression began")
+            assert(state.pendingShotDirty,
+                "interaction-deferred payload was not retained as pending")
+            assert(not state.forceVisible and not state.qrFrameShown,
+                "interaction deferral left the QR visibility lease active")
+            applicant_ids = { 42, 43 }
+            interaction_deferred_checked = true
+        end
+    end
+    if interaction_deferred_checked
+       and not interaction_closed
+       and now - interaction_opened_at >= 0.75 then
+        if info_panel_during_settle then
+            WorldMapFrame.shown = false
+        else
+            send_interaction_event("MERCHANT_CLOSED")
+        end
+        interaction_closed = true
+    end
+
+    if interaction_terminal
+       and not interaction_terminal_started
+       and #screenshot_times == 2 then
+        interaction_terminal_started = true
+        send_interaction_event("MERCHANT_SHOW")
+        applicant_ids = {}
+        GetNumGroupMembers = function() return 0 end
+        C_LFGList.HasActiveEntryInfo = function() return false end
+        C_LFGList.GetActiveEntryInfo = function() return nil end
+        harness.EndSession()
     end
 
     if transient_screenshot_failure
@@ -338,6 +423,47 @@ elseif terminal_clear_always_fail then
         "persistent terminal clear exceeded or missed its dispatch budget")
     assert(state.lastSnapshotHash == pre_terminal_hash,
         "failed terminal captures committed a false delivery hash")
+elseif interaction_during_paint or interaction_during_settle or info_panel_during_settle then
+    local state = harness.QRTransportState()
+    assert(interaction_opened and interaction_deferred_checked and interaction_closed,
+        "interaction race checkpoints did not complete")
+    assert(#screenshot_times == 2 and screenshot_attempts == 2,
+        string.format("interaction deferral produced shots=%d attempts=%d, expected 2/2",
+            #screenshot_times, screenshot_attempts))
+    assert(not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown,
+        "interaction-deferred transport did not settle after suppression closed")
+    assert(state.lastEmittedApplicantCount == 2,
+        "interaction retry did not rebuild the latest applicant payload")
+elseif interaction_force then
+    local state = harness.QRTransportState()
+    assert(#screenshot_times == 1 and screenshot_attempts == 1,
+        "explicit force capture did not bypass interaction suppression exactly once")
+    assert(state.sessionActive
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown,
+        "explicit force capture left the suppressed QR active")
+elseif interaction_terminal then
+    local state = harness.QRTransportState()
+    assert(interaction_terminal_started,
+        "terminal interaction checkpoint did not start")
+    assert(#screenshot_times == 4 and screenshot_attempts == 4,
+        string.format("terminal interaction produced shots=%d attempts=%d, expected 4/4",
+            #screenshot_times, screenshot_attempts))
+    assert(not state.sessionActive
+           and not state.pendingShotDirty
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown
+           and not state.terminalClearRetryScheduled,
+        "terminal force capture did not settle while interaction remained open")
+    assert(state.terminalClearDispatchCount == 2,
+        "terminal clear did not retain its bounded redundant dispatch")
 elseif roster_only then
     assert(#screenshot_times == 2, string.format(
         "changed roster-only snapshot got %d captures instead of exactly two",
