@@ -4,6 +4,7 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,12 @@ LUA_LIBKEYSTONE_DISABLED_CHECK = (
 LUA_QR_RUN_CHUNKING_CHECK = REPO_ROOT / "tests" / "lua" / "check_qr_run_chunking.lua"
 LUA_QR_CAPTURE_LIFECYCLE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_qr_capture_lifecycle.lua"
+)
+LUA_QR_OVERFLOW_ENVELOPE_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_qr_overflow_envelope.lua"
+)
+LUA_QR_OVERFLOW_GENERATOR = (
+    REPO_ROOT / "tests" / "lua" / "generate_aps1_v10_fragments.lua"
 )
 LUA_SCREENSHOT_CVAR_RECOVERY_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_screenshot_cvar_recovery.lua"
@@ -140,6 +147,21 @@ def _companion_payload_parser(pytestconfig):
     return _try_parse_appscout_payload
 
 
+def _companion_candidate_parser(pytestconfig):
+    raw_companion_root = pytestconfig.getoption("--companion-root")
+    companion_root = Path(raw_companion_root) if raw_companion_root else DEFAULT_COMPANION_ROOT
+    assert companion_root.exists(), (
+        "ApplicantScout-Companion checkout is required for fragment parser tests; "
+        "pass --companion-root <path> when using a non-sibling checkout"
+    )
+    companion_src = companion_root / "src"
+    if str(companion_src) not in sys.path:
+        sys.path.insert(0, str(companion_src))
+    from applicant_scout.screenshot import _try_parse_appscout_candidate
+
+    return _try_parse_appscout_candidate
+
+
 def _companion_transport_constants(pytestconfig):
     raw_companion_root = pytestconfig.getoption("--companion-root")
     companion_root = Path(raw_companion_root) if raw_companion_root else DEFAULT_COMPANION_ROOT
@@ -229,7 +251,7 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
         "if not PaintQR(matrix, runs, renderRunCount, jobGen, OnQRPaintComplete) then"
     )
     build_idx = body.index(
-        "BuildQRMatrix(\n        payload,\n        canTryRosterUnavailableFallback,"
+        "BuildQRMatrix(\n        payload,\n        reliableHexOnly and not overflowInUse,"
     )
 
     assert payload_idx < job_idx < callback_idx < lease_idx < screenshot_idx
@@ -1269,7 +1291,9 @@ def test_repeat_full_party_quiet_snapshot_is_suppressed_before_qr_paint():
     quiet_idx = screenshot_body.index(
         "local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature"
     )
-    throttle_idx = screenshot_body.index("if not force and now - lastShotTime < SHOT_THROTTLE_S")
+    throttle_idx = screenshot_body.index(
+        "if not force and now - lastShotTime < minShotInterval"
+    )
     job_idx = screenshot_body.index(
         "local jobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1"
     )
@@ -1709,7 +1733,7 @@ def test_payload_v9_can_omit_roster_with_explicit_flag():
     assert "entryCreationKeyState.lastPayloadRosterUnavailable = rosterUnavailable == true" in payload_body
 
 
-def test_qr_build_failure_falls_back_to_roster_unavailable_payload():
+def test_qr_build_failure_fragments_complete_payload_without_roster_omission():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
@@ -1717,31 +1741,33 @@ def test_qr_build_failure_falls_back_to_roster_unavailable_payload():
         "-- LFG entry creation",
     )
 
-    fallback_gate_idx = screenshot_body.index("local canTryRosterUnavailableFallback =")
+    reliable_gate_idx = screenshot_body.index("local reliableHexOnly =")
     full_matrix_idx = screenshot_body.index(
-        "BuildQRMatrix(\n        payload,\n        canTryRosterUnavailableFallback,",
-        fallback_gate_idx,
+        "BuildQRMatrix(\n        payload,\n        reliableHexOnly and not overflowInUse,",
+        reliable_gate_idx,
     )
-    fallback_idx = screenshot_body.index(
-        "BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, true)",
-        fallback_gate_idx,
+    overflow_idx = screenshot_body.index(
+        "entryCreationKeyState.StartQROverflowTransport(",
+        reliable_gate_idx,
     )
-    fallback_hash_idx = screenshot_body.index(
-        "payload, fallbackHash =",
-        fallback_gate_idx,
+    terminal_failure_idx = screenshot_body.index(
+        "if not matrix then",
+        overflow_idx,
     )
-    fallback_matrix_idx = screenshot_body.index(
-        "BuildQRMatrix(payload, false, false, jobGen, OnQRBuildComplete)",
-        fallback_hash_idx,
+    paint_idx = screenshot_body.index(
+        "if not PaintQR(",
+        terminal_failure_idx,
     )
-    failed_hash_idx = screenshot_body.index("lastSnapshotHash = h", fallback_matrix_idx)
+    terminal_failure_block = screenshot_body[terminal_failure_idx:paint_idx]
 
-    assert fallback_gate_idx < fallback_hash_idx < fallback_idx < fallback_matrix_idx
-    assert fallback_matrix_idx < full_matrix_idx
-    assert fallback_matrix_idx < failed_hash_idx
-    assert "entryCreationKeyState.lastPayloadRosterCount > 0" in screenshot_body[
-        fallback_gate_idx:full_matrix_idx
-    ]
+    assert reliable_gate_idx < overflow_idx < terminal_failure_idx < full_matrix_idx
+    assert "lastSnapshotHash = h" not in terminal_failure_block
+    assert "pendingShotDirty = dirtySinceBuildStarted and true or false" in terminal_failure_block
+    assert (
+        "BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, true)"
+        not in screenshot_body
+    )
+    assert "Capacity pressure must never pretend that an available roster vanished" in screenshot_body
 
 
 def test_terminal_clear_payload_suppresses_leader_key_block():
@@ -3152,6 +3178,39 @@ def test_qr_capture_lifecycle_survives_poll_during_settle_window(pytestconfig):
     assert output.startswith("ok qr-capture-lifecycle mode=applicants shots=")
 
 
+def test_qr_overflow_captures_complete_200_row_snapshot_twice(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "overflow",
+    ).strip()
+
+    assert output.splitlines()[-1].startswith(
+        "ok qr-capture-lifecycle mode=overflow shots="
+    )
+
+
+def test_qr_overflow_envelope_is_bounded_and_byte_exact(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_OVERFLOW_ENVELOPE_CHECK,
+    ).strip()
+
+    assert output.startswith("ok qr-overflow-envelope chunks=8 matrix=")
+
+
+def test_terminal_clear_preempts_qr_overflow_generation(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "overflow-terminal",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=overflow-terminal shots=4 attempts=4"
+    )
+
+
 @pytest.mark.parametrize(
     "mode",
     [
@@ -3385,11 +3444,11 @@ def test_payload_finalization_reuses_crc_scan_and_avoids_large_patch_copy(
     assert output.startswith("ok payload-finalization byte_calls=")
 
 
-def test_large_qr_prefers_reliable_roster_fallback_before_raw(pytestconfig):
+def test_large_qr_reliable_hex_gate_skips_raw_before_fragment(pytestconfig):
     assert _run_lua_script(
         pytestconfig,
         LUA_LARGE_QR_ROSTER_FALLBACK_CHECK,
-    ).strip() == "ok large-qr-prefers-roster-fallback"
+    ).strip() == "ok large-qr-reliable-hex-gate"
 
 
 def test_large_qr_payloads_try_hex_low_correction_before_raw_byte_mode():
@@ -3415,7 +3474,7 @@ def test_large_qr_payloads_try_hex_low_correction_before_raw_byte_mode():
     )
 
     assert hex_idx < threshold_idx < hex_l_idx < raw_l_idx
-    prefer_idx = build_body.index("if not preferRosterUnavailable then", hex_l_idx)
+    prefer_idx = build_body.index("if not reliableHexOnly then", hex_l_idx)
     assert hex_l_idx < prefer_idx < raw_l_idx
 
 
@@ -3549,6 +3608,71 @@ def test_roster_member_rejoin_refreshes_cached_payload_identity(pytestconfig):
 
     assert (before.spec_id, before.ilvl, before.role) == (256, 704, 1)
     assert (after.spec_id, after.ilvl, after.role) == (258, 799, 2)
+
+
+@pytest.mark.requires_companion
+def test_lua_v10_fragments_reconstruct_exact_v9_snapshot_in_companion(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_QR_OVERFLOW_GENERATOR)
+    frames = [bytes.fromhex(line) for line in output.splitlines() if line.strip()]
+    assert len(frames) > 2
+
+    parse_candidate = _companion_candidate_parser(pytestconfig)
+    fragments = []
+    for frame in frames:
+        candidate, error = parse_candidate(frame)
+        assert error is None
+        assert candidate is not None and hasattr(candidate, "chunk")
+        fragments.append(candidate)
+
+    first = fragments[0]
+    assert len(fragments) == first.chunk_count
+    assert {fragment.stream_id for fragment in fragments} == {first.stream_id}
+    assert {fragment.generation for fragment in fragments} == {first.generation}
+    assert {fragment.inner_total_len for fragment in fragments} == {
+        first.inner_total_len
+    }
+    assert {fragment.inner_crc32 for fragment in fragments} == {first.inner_crc32}
+    assert {fragment.chunk_index for fragment in fragments} == set(
+        range(first.chunk_count)
+    )
+
+    inner = b"".join(
+        fragment.chunk for fragment in sorted(
+            fragments,
+            key=lambda fragment: fragment.chunk_index,
+        )
+    )
+    assert len(inner) == first.inner_total_len
+    parse_payload = _companion_payload_parser(pytestconfig)
+    snapshot, error = parse_payload(inner)
+    assert error is None
+    assert snapshot is not None
+    assert len(snapshot.applicants) == 200
+    assert len(snapshot.roster) == 40
+
+    # Exercise the real companion authority boundary as well as its parser.
+    # This catches drift in metadata/trailer CRC semantics that independent
+    # producer and consumer fixtures can otherwise accidentally normalize.
+    from applicant_scout import screenshot as screenshot_mod
+
+    assembler = screenshot_mod._SnapshotFragmentAssembler()
+    outcome = None
+    for index, (frame, fragment) in enumerate(zip(frames, fragments, strict=True)):
+        source = screenshot_mod.SnapshotSource(
+            mtime_ns=index + 1,
+            file_id=f"lua-v10-{index}",
+            size=len(frame),
+        )
+        outcome = assembler.accept_fragment(
+            replace(fragment, source=source),
+            Path(f"lua-v10-{index}.jpg"),
+        )
+        assert outcome.error_reason is None
+        if index < len(fragments) - 1:
+            assert outcome.snapshot is None
+    assert outcome is not None and outcome.snapshot is not None
+    assert len(outcome.snapshot.applicants) == 200
+    assert len(outcome.snapshot.roster) == 40
 
 
 @pytest.mark.requires_companion

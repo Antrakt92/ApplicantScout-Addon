@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Fixed
+
+- Applicant backlogs that exceed both the QR capacity and texture-render budget
+  now use a bounded, repeated fragment sequence for one complete snapshot
+  instead of being recorded as delivered while the companion remains stale.
+- Complete snapshot serialization now fails closed at the APS1 length boundary
+  instead of wrapping the wire length, and overflow screenshots are paced so
+  consecutive parts cannot reuse one second-scale screenshot generation.
+
+### Notes
+
+- Normal and terminal snapshots remain compact APS1 v9. Oversized snapshots use
+  APS1 v10 fragment envelopes and require a companion version that supports
+  complete pre-apply reassembly.
+
 ## 0.6.1 - 18-Jul-2026 - Companion 0.10.1 transport and usability update
 
 This paired addon + companion release keeps APS1 v9 unchanged while making QR

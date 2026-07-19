@@ -10,7 +10,9 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "interaction-during-settle"
        or fixture_mode == "info-panel-during-settle"
        or fixture_mode == "interaction-force"
-       or fixture_mode == "interaction-terminal",
+       or fixture_mode == "interaction-terminal"
+       or fixture_mode == "overflow"
+       or fixture_mode == "overflow-terminal",
     "unsupported fixture mode: " .. tostring(fixture_mode))
 local roster_only = fixture_mode == "roster-only"
 local transient_screenshot_failure = fixture_mode == "screenshot-failure"
@@ -23,6 +25,9 @@ local interaction_during_settle = fixture_mode == "interaction-during-settle"
 local info_panel_during_settle = fixture_mode == "info-panel-during-settle"
 local interaction_force = fixture_mode == "interaction-force"
 local interaction_terminal = fixture_mode == "interaction-terminal"
+local overflow_mode = fixture_mode == "overflow"
+    or fixture_mode == "overflow-terminal"
+local overflow_terminal = fixture_mode == "overflow-terminal"
 
 -- Default mode reproduces the live report: two people and five applicants.
 -- Roster-only mode keeps a full party and removes every applicant.
@@ -35,6 +40,10 @@ GetNumGroupMembers = function() return roster_only and 5 or 2 end
 IsInRaid = function() return false end
 
 local applicant_ids = roster_only and {} or { 42, 43, 44, 45, 46 }
+if overflow_mode then
+    applicant_ids = {}
+    for id = 1, 40 do applicant_ids[#applicant_ids + 1] = id end
+end
 C_LFGList.HasActiveEntryInfo = function() return true end
 C_LFGList.GetActiveEntryInfo = function()
     return {
@@ -46,12 +55,16 @@ C_LFGList.GetActiveEntryInfo = function()
 end
 C_LFGList.GetApplicants = function() return applicant_ids end
 C_LFGList.GetApplicantInfo = function(id)
-    return { applicantID = id, applicationStatus = "applied", numMembers = 1 }
+    return {
+        applicantID = id,
+        applicationStatus = "applied",
+        numMembers = overflow_mode and 5 or 1,
+    }
 end
 C_LFGList.GetApplicantMemberInfo = function(id, member_index)
-    if member_index ~= 1 then return nil end
+    if member_index < 1 or member_index > (overflow_mode and 5 or 1) then return nil end
     local suffix = tostring(id)
-    return "Applicant" .. suffix .. "-Ravencrest", "PALADIN", nil, nil,
+    return "Applicant" .. suffix .. "Member" .. tostring(member_index) .. "-Ravencrest", "PALADIN", nil, nil,
         700 + id / 100, nil, nil, nil, nil, "DAMAGER", nil, 2500 + id,
         nil, nil, nil, 70
 end
@@ -245,7 +258,7 @@ end
 local transient_failure_checked = false
 local transient_restore_checked = false
 local transient_failure_at = nil
-for _ = 1, 360 do
+for _ = 1, overflow_mode and 2500 or 360 do
     now = now + frame_step
     drain_due_timers()
     for _, ticker in ipairs(tickers) do
@@ -307,6 +320,16 @@ for _ = 1, 360 do
        and #screenshot_times == 2 then
         interaction_terminal_started = true
         send_interaction_event("MERCHANT_SHOW")
+        applicant_ids = {}
+        GetNumGroupMembers = function() return 0 end
+        C_LFGList.HasActiveEntryInfo = function() return false end
+        C_LFGList.GetActiveEntryInfo = function() return nil end
+        harness.EndSession()
+    end
+    if overflow_terminal
+       and not interaction_terminal_started
+       and #screenshot_times == 2 then
+        interaction_terminal_started = true
         applicant_ids = {}
         GetNumGroupMembers = function() return 0 end
         C_LFGList.HasActiveEntryInfo = function() return false end
@@ -423,6 +446,36 @@ elseif terminal_clear_always_fail then
         "persistent terminal clear exceeded or missed its dispatch budget")
     assert(state.lastSnapshotHash == pre_terminal_hash,
         "failed terminal captures committed a false delivery hash")
+elseif overflow_terminal then
+    local state = harness.QRTransportState()
+    assert(interaction_terminal_started,
+        "overflow terminal checkpoint did not start")
+    assert(#screenshot_times == 4 and screenshot_attempts == 4,
+        string.format("overflow terminal produced shots=%d attempts=%d, expected 4/4",
+            #screenshot_times, screenshot_attempts))
+    assert(not state.sessionActive
+           and state.overflowState == nil
+           and state.deliverySnapshotHash == nil
+           and state.deliverySnapshotSendCount == 0
+           and state.terminalClearDispatchCount == 2,
+        "terminal clear did not cancel overflow and establish final state")
+elseif overflow_mode then
+    local state = harness.QRTransportState()
+    assert(state.overflowState == nil,
+        "overflow transport did not finish both bounded passes")
+    assert(state.lastSnapshotHash ~= nil
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2,
+        "overflow completion did not commit one logical delivery")
+    assert(state.lastEmittedApplicantCount == 200,
+        string.format("overflow restored %d applicant rows instead of 200",
+            state.lastEmittedApplicantCount))
+    assert(#screenshot_times > 4 and #screenshot_times % 2 == 0,
+        "overflow did not capture two complete multi-frame passes")
+    for index = 2, #screenshot_times do
+        assert(screenshot_times[index] - screenshot_times[index - 1] >= 1.04,
+            "overflow screenshots were not paced onto distinct second-scale files")
+    end
 elseif interaction_during_paint or interaction_during_settle or info_panel_during_settle then
     local state = harness.QRTransportState()
     assert(interaction_opened and interaction_deferred_checked and interaction_closed,

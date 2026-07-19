@@ -160,8 +160,10 @@ through the slash commands below.
 - WoW Retail Midnight: Interface `120007, 120100`.
 - Latest ApplicantScout addon release.
 - Latest ApplicantScout Companion release.
-- Wire payload: compact v9 (`APS1`) with optional RaiderIO, raid/M+ roster,
-  leader-keystone context, and partial snapshot handling.
+- Wire payload: compact v9 (`APS1`) snapshots with optional RaiderIO, raid/M+
+  roster, leader-keystone context, and partial snapshot handling. Backlogs that
+  exceed one reliable QR use bounded v10 fragment envelopes and are applied by
+  the companion only after the complete v9 snapshot is reconstructed.
 - Classic-era clients are not supported.
 
 ## Troubleshooting

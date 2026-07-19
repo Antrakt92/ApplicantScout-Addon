@@ -238,6 +238,21 @@ local entryCreationKeyState = {
     NONTERMINAL_SNAPSHOT_MIN_SENDS = 2,
     lastDeliverySnapshotHash = nil,
     lastDeliverySnapshotSendCount = 0,
+    -- Overflow snapshots are transmitted as bounded APS1 v10 fragment
+    -- envelopes containing one frozen, complete v9 payload. Keep this state on
+    -- the existing table: the file is close to Lua 5.1's 200-local limit.
+    QR_OVERFLOW_WIRE_VERSION = 0x0A,
+    QR_OVERFLOW_FRAGMENT_BYTES = 640,
+    QR_OVERFLOW_MAX_FRAGMENTS = 128,
+    QR_OVERFLOW_MIN_SENDS = 2,
+    QR_OVERFLOW_SHOT_INTERVAL_S = 1.05,
+    qrOverflowStreamID = nil,
+    qrOverflowGenerationCounter = 0,
+    qrOverflowState = nil,
+    qrOverflowSupersededCount = 0,
+    qrOverflowLastFailure = nil,
+    lastPayloadBuildError = nil,
+    lastPayloadTotalBytes = 0,
     groupTransportGen = 0,
     rioMPlusSummaryCache = {},
     cleanUnknownLabel = nil,
@@ -593,6 +608,8 @@ StartSession = function()
     entryCreationKeyState.lastEmittedApplicantCount = 0
     entryCreationKeyState.lastDeliverySnapshotHash = nil
     entryCreationKeyState.lastDeliverySnapshotSendCount = 0
+    entryCreationKeyState.ClearQROverflowTransport("session-start")
+    entryCreationKeyState.qrOverflowLastFailure = nil
     entryCreationKeyState.ClearScreenshotFailureState()
     entryCreationKeyState.terminalClearDispatchCount = 0
     entryCreationKeyState.terminalClearSessionGen = nil
@@ -654,6 +671,9 @@ EndSession = function()
     entryCreationKeyState.terminalClearDispatchCount = 0
     entryCreationKeyState.terminalClearSessionGen = sessionGen
     entryCreationKeyState.terminalClearRetryScheduled = false
+    -- Terminal clear is a small complete v9 frame and is an ordering barrier.
+    -- Cancel any in-flight multipart generation before it can finish later.
+    entryCreationKeyState.ClearQROverflowTransport("terminal-clear")
     MaybeTriggerScreenshot(true, nil, true)
     entryCreationKeyState.lastQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
@@ -4003,6 +4023,8 @@ end
 -- and their exact djb2 snapshot hash; one-result Lua callers receive the bytes.
 local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, rosterUnavailable)
     local out = {}
+    entryCreationKeyState.lastPayloadBuildError = nil
+    entryCreationKeyState.lastPayloadTotalBytes = 0
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadApplicantCount = 0
     entryCreationKeyState.lastPayloadRosterCount = 0
@@ -4296,7 +4318,15 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     -- bytes need to be folded into the hash afterward.
     local bodyLength = 0
     for i = 1, #out do bodyLength = bodyLength + #out[i] end
-    out[lengthChunkIndex] = _Uint16BE(bodyLength + 4)
+    local totalLength = bodyLength + 4
+    entryCreationKeyState.lastPayloadTotalBytes = totalLength
+    if totalLength > 65535 then
+        entryCreationKeyState.lastPayloadBuildError =
+            "complete snapshot exceeds APS1 uint16 length limit (" ..
+            tostring(totalLength) .. " bytes)"
+        return nil, nil
+    end
+    out[lengthChunkIndex] = _Uint16BE(totalLength)
     local crc, snapshotHash = _CRC32AndSnapshotHash(out)
     local crcBytes = _Uint32BE(crc)
     for i = 1, #crcBytes do
@@ -4304,6 +4334,152 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     end
     out[#out + 1] = crcBytes
     return table.concat(out), snapshotHash
+end
+
+entryCreationKeyState.ClearQROverflowTransport = function(reason)
+    local state = entryCreationKeyState.qrOverflowState
+    if state and reason == "superseded" then
+        entryCreationKeyState.qrOverflowSupersededCount =
+            (entryCreationKeyState.qrOverflowSupersededCount or 0) + 1
+    end
+    entryCreationKeyState.qrOverflowState = nil
+end
+
+entryCreationKeyState.EnsureQROverflowStreamID = function()
+    if entryCreationKeyState.qrOverflowStreamID then
+        return entryCreationKeyState.qrOverflowStreamID
+    end
+    -- A new addon load is a new producer stream. GetServerTime supplies a
+    -- wall-clock epoch while GetTime's millisecond component distinguishes a
+    -- rapid /reload inside the same second. The companion uses screenshot
+    -- source ordering when streams change; this value is identity, not trust.
+    local serverSeconds = math.floor(SafeNumber(
+        GetServerTime and GetServerTime(), 0
+    ))
+    local clientMillis = math.floor(SafeNumber(
+        GetTime and GetTime(), 0
+    ) * 1000)
+    local streamID = (serverSeconds * 1009 + clientMillis * 9176 + 1) % 4294967296
+    if streamID == 0 then streamID = 1 end
+    entryCreationKeyState.qrOverflowStreamID = streamID
+    return streamID
+end
+
+entryCreationKeyState.ReadUint32BE = function(value, offset)
+    offset = offset or 1
+    return string.byte(value, offset) * 16777216
+        + string.byte(value, offset + 1) * 65536
+        + string.byte(value, offset + 2) * 256
+        + string.byte(value, offset + 3)
+end
+
+entryCreationKeyState.StartQROverflowTransport = function(
+    logicalPayload,
+    logicalHash,
+    dirtyGeneration,
+    applicantCount,
+    rosterIncomplete,
+    quietSignature
+)
+    if type(logicalPayload) ~= "string" or #logicalPayload < 13 then
+        return nil, "complete APS1 payload is unavailable"
+    end
+    if #logicalPayload > 65535 then
+        return nil, "complete APS1 payload exceeds 65535 bytes"
+    end
+    local chunkBytes = entryCreationKeyState.QR_OVERFLOW_FRAGMENT_BYTES
+    local chunkCount = math.ceil(#logicalPayload / chunkBytes)
+    if chunkCount < 2 then
+        return nil, "overflow payload unexpectedly fits one fragment"
+    end
+    if chunkCount > entryCreationKeyState.QR_OVERFLOW_MAX_FRAGMENTS then
+        return nil, "overflow requires " .. tostring(chunkCount) ..
+            " fragments (max " ..
+            tostring(entryCreationKeyState.QR_OVERFLOW_MAX_FRAGMENTS) .. ")"
+    end
+    local generation =
+        ((entryCreationKeyState.qrOverflowGenerationCounter or 0) + 1)
+        % 4294967296
+    if generation == 0 then generation = 1 end
+    entryCreationKeyState.qrOverflowGenerationCounter = generation
+    local state = {
+        streamID = entryCreationKeyState.EnsureQROverflowStreamID(),
+        generation = generation,
+        logicalPayload = logicalPayload,
+        logicalHash = logicalHash,
+        logicalCRC = entryCreationKeyState.ReadUint32BE(
+            logicalPayload,
+            #logicalPayload - 3
+        ),
+        logicalBytes = #logicalPayload,
+        chunkCount = chunkCount,
+        chunkIndex = 0,
+        pass = 1,
+        queuedNewer = false,
+        dirtyGeneration = dirtyGeneration or 0,
+        applicantCount = applicantCount or 0,
+        rosterIncomplete = rosterIncomplete == true,
+        quietSignature = quietSignature,
+        failure = nil,
+    }
+    entryCreationKeyState.qrOverflowState = state
+    entryCreationKeyState.qrOverflowLastFailure = nil
+    return state, nil
+end
+
+entryCreationKeyState.BuildQROverflowFragment = function(state)
+    if type(state) ~= "table" or type(state.logicalPayload) ~= "string" then
+        return nil, "overflow state is unavailable"
+    end
+    local index = math.floor(SafeNumber(state.chunkIndex, 0))
+    local count = math.floor(SafeNumber(state.chunkCount, 0))
+    if index < 0 or index >= count then
+        return nil, "overflow fragment index is out of range"
+    end
+    local chunkBytes = entryCreationKeyState.QR_OVERFLOW_FRAGMENT_BYTES
+    local first = index * chunkBytes + 1
+    local chunk = string.sub(state.logicalPayload, first, first + chunkBytes - 1)
+    local out = {
+        "APS1",
+        string.char(entryCreationKeyState.QR_OVERFLOW_WIRE_VERSION),
+        "\0\0",
+        "\0",
+        "\0",
+        _Uint32BE(state.streamID),
+        _Uint32BE(state.generation),
+        _Uint16BE(index),
+        _Uint16BE(count),
+        _Uint16BE(state.logicalBytes),
+        _Uint32BE(state.logicalCRC),
+        chunk,
+    }
+    local totalLength = 31 + #chunk
+    out[3] = _Uint16BE(totalLength)
+    local crc = _CRC32AndSnapshotHash(out)
+    out[#out + 1] = _Uint32BE(crc)
+    return table.concat(out), nil
+end
+
+entryCreationKeyState.AdvanceQROverflowTransport = function(state)
+    if state ~= entryCreationKeyState.qrOverflowState then
+        return false, false
+    end
+    state.chunkIndex = state.chunkIndex + 1
+    if state.chunkIndex < state.chunkCount then
+        return false, false
+    end
+    state.chunkIndex = 0
+    local completedPass = state.pass
+    if state.queuedNewer then
+        entryCreationKeyState.ClearQROverflowTransport("superseded")
+        return true, false
+    end
+    state.pass = state.pass + 1
+    if state.pass > entryCreationKeyState.QR_OVERFLOW_MIN_SENDS then
+        entryCreationKeyState.ClearQROverflowTransport("complete")
+        return true, true
+    end
+    return completedPass > 0, false
 end
 
 -- Independent djb2 oracle for fixtures. Runtime receives the same hash from
@@ -4334,6 +4510,14 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.GetRaiderIOMPlusSummaryForCleanName =
         _GetRaiderIOMPlusSummaryForCleanName
     _G.ApplicantScoutFixtureHarness.HashSnapshot = HashSnapshot
+    _G.ApplicantScoutFixtureHarness.StartQROverflowTransport =
+        entryCreationKeyState.StartQROverflowTransport
+    _G.ApplicantScoutFixtureHarness.BuildQROverflowFragment =
+        entryCreationKeyState.BuildQROverflowFragment
+    _G.ApplicantScoutFixtureHarness.AdvanceQROverflowTransport =
+        entryCreationKeyState.AdvanceQROverflowTransport
+    _G.ApplicantScoutFixtureHarness.ClearQROverflowTransport =
+        entryCreationKeyState.ClearQROverflowTransport
     _G.ApplicantScoutFixtureHarness.StartSession = StartSession
     _G.ApplicantScoutFixtureHarness.EndSession = EndSession
     _G.ApplicantScoutFixtureHarness.EnsureRosterInspectBatchBeforeSnapshot =
@@ -4629,7 +4813,7 @@ end
 local function BuildQRMatrix(
     payload,
     suppressFailurePrint,
-    preferRosterUnavailable,
+    reliableHexOnly,
     jobGen,
     onComplete
 )
@@ -4651,11 +4835,11 @@ local function BuildQRMatrix(
         if #payload > entryCreationKeyState.QR_LARGE_PAYLOAD_BYTES then
             table.insert(attempts, { kind = "hex", data = hex, ec_level = 1, size = #hex, unit = "hex" })
             -- Raw byte-mode can fit a smaller matrix but has corrupted large
-            -- APS1 payloads in live JPG captures. When this full snapshot has
-            -- both applicants and roster rows, return failure after hex so the
-            -- caller can build the reliable roster-unavailable hex payload.
-            -- Raw remains the final emergency path for that smaller fallback.
-            if not preferRosterUnavailable then
+            -- APS1 payloads in live JPG captures. Runtime transport therefore
+            -- uses hex-only for large full frames and fragments exact logical
+            -- bytes if that reliable representation cannot fit. The optional
+            -- raw attempt remains available to explicit fixture/support calls.
+            if not reliableHexOnly then
                 table.insert(attempts, { kind = "raw", data = payload, ec_level = 1, size = #payload, unit = "bytes" })
             end
         else
@@ -4923,7 +5107,10 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     end
 
     local now = GetTime()
-    if not force and now - lastShotTime < SHOT_THROTTLE_S then
+    local minShotInterval = entryCreationKeyState.qrOverflowState
+        and entryCreationKeyState.QR_OVERFLOW_SHOT_INTERVAL_S
+        or SHOT_THROTTLE_S
+    if not force and now - lastShotTime < minShotInterval then
         pendingShotDirty = true
         return
     end
@@ -4955,8 +5142,67 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     end
 
     local payload, h = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
-    local payloadDirtyGeneration =
+    local latestPayload, latestHash = payload, h
+    local latestDirtyGeneration =
         entryCreationKeyState.transportDirtyGeneration or 0
+    local logicalPayload = latestPayload
+    payload = latestPayload
+    h = latestHash
+    local payloadDirtyGeneration = latestDirtyGeneration
+    local payloadApplicantCount = entryCreationKeyState.lastPayloadApplicantCount
+    local payloadRosterIncomplete = entryCreationKeyState.lastPayloadRosterIncomplete
+    local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature
+    local overflowState = entryCreationKeyState.qrOverflowState
+    local overflowInUse = false
+
+    if terminalClear and overflowState then
+        entryCreationKeyState.ClearQROverflowTransport("terminal-clear")
+        overflowState = nil
+    elseif overflowState then
+        -- Freeze one complete logical generation until at least one full pass
+        -- has been captured. Rapid applicant churn is queued instead of
+        -- repeatedly abandoning partial generations that the companion can
+        -- never assemble.
+        local newerQueued =
+            latestPayload == nil or latestHash ~= overflowState.logicalHash
+        if newerQueued and overflowState.pass > 1 then
+            -- The first complete pass is already recoverable. Do not spend a
+            -- whole redundant pass on stale bytes once a newer logical state
+            -- is known; start its normal/full-or-fragment path immediately.
+            entryCreationKeyState.ClearQROverflowTransport("superseded")
+            overflowState = nil
+        else
+            overflowState.queuedNewer = newerQueued
+        end
+    end
+    if overflowState then
+        logicalPayload = overflowState.logicalPayload
+        h = overflowState.logicalHash
+        payloadDirtyGeneration = overflowState.dirtyGeneration
+        payloadApplicantCount = overflowState.applicantCount
+        payloadRosterIncomplete = overflowState.rosterIncomplete
+        quietSignature = overflowState.quietSignature
+        payload = entryCreationKeyState.BuildQROverflowFragment(overflowState)
+        if not payload then
+            overflowState.failure = "could not build overflow fragment"
+            entryCreationKeyState.qrOverflowLastFailure = overflowState.failure
+            pendingShotDirty = false
+            return
+        end
+        overflowInUse = true
+    elseif latestPayload == nil then
+        local reason = entryCreationKeyState.lastPayloadBuildError
+            or "complete snapshot serialization failed"
+        lastQREncodeMode = "logical-failed"
+        lastQREncodeBytes = entryCreationKeyState.lastPayloadTotalBytes or 0
+        lastQREncodeError = reason
+        entryCreationKeyState.qrOverflowLastFailure = reason
+        pendingShotDirty = false
+        if APSPrint and entryCreationKeyState.ShouldPrintQREncodeFailure() then
+            APSPrint("QR transport failed: " .. reason)
+        end
+        return
+    end
 
     if force then
         -- Explicit support/terminal shots always get a fresh bounded attempt.
@@ -4997,7 +5243,6 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         return
     end
 
-    local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature
     if not force and quietSignature then
         if entryCreationKeyState.lastQuietFullPartySignature == quietSignature
            and not resendSameNonterminalSnapshot then
@@ -5028,13 +5273,12 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
 
     -- Encode payload, analyze its row-RLE runs, then paint. The job generation
     -- cancels stale callbacks while each heavy stage yields to a fresh frame.
-    local canTryRosterUnavailableFallback =
-       not force
-       and not terminalClear
-       and not lfgUnavailable
-       and not entryCreationKeyState.lastPayloadRosterUnavailable
-       and entryCreationKeyState.lastPayloadApplicantCount > 0
-       and entryCreationKeyState.lastPayloadRosterCount > 0
+    -- Large raw byte-mode frames have produced corrupt JPG decodes in live
+    -- clients. Require the reliable hex/L path for them; if it cannot fit or
+    -- render, transmit the frozen complete payload as bounded v10 fragments.
+    -- Capacity pressure must never pretend that an available roster vanished.
+    local reliableHexOnly = overflowInUse
+        or #payload > entryCreationKeyState.QR_LARGE_PAYLOAD_BYTES
     local jobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
     entryCreationKeyState.qrPaintJobGen = jobGen
     entryCreationKeyState.qrPaintInProgress = true
@@ -5055,8 +5299,13 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             dirtyDuringPaint
             or (entryCreationKeyState.transportDirtyGeneration or 0) ~= payloadDirtyGeneration
         if not paintOK then
-            -- Same retry-suppression rationale as above.
-            lastSnapshotHash = h
+            -- Paint failure is not delivery. Keep dedup state unchanged; a
+            -- stable deterministic failure remains visible in status and can
+            -- be retried explicitly without spinning the ticker forever.
+            if overflowInUse and overflowState then
+                overflowState.failure = "fragment paint failed"
+                entryCreationKeyState.qrOverflowLastFailure = overflowState.failure
+            end
             pendingShotDirty = dirtySincePaintStarted and true or false
             entryCreationKeyState.ClearQRTransportJob(jobGen)
             if terminalClearSessionGen then
@@ -5083,8 +5332,6 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         entryCreationKeyState.qrCaptureInProgress = true
         local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()
         local completedPaintGen = entryCreationKeyState.qrPaintJobGen
-        local payloadApplicantCount = entryCreationKeyState.lastPayloadApplicantCount
-        local payloadRosterIncomplete = entryCreationKeyState.lastPayloadRosterIncomplete
 
         -- PaintQR above just updated the textures. Always wait the settle window
         -- after a successful repaint so texture updates reach the GPU framebuffer
@@ -5159,44 +5406,76 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 return
             end
             entryCreationKeyState.ClearScreenshotFailureState()
-            if not force and quietSignature then
-                entryCreationKeyState.lastQuietFullPartySignature = quietSignature
+            local overflowPassCompleted, overflowDeliveryCompleted = false, false
+            if overflowInUse and overflowState then
+                overflowState.failure = nil
+                entryCreationKeyState.qrOverflowLastFailure = nil
+                overflowPassCompleted, overflowDeliveryCompleted =
+                    entryCreationKeyState.AdvanceQROverflowTransport(overflowState)
             end
-            entryCreationKeyState.lastEmittedApplicantCount = payloadApplicantCount
-            if not dirtySincePayload then
-                entryCreationKeyState.ClearRosterCompositionChanged()
-            end
-            lastSnapshotHash = h
-            if not terminalClear then
-                if entryCreationKeyState.lastDeliverySnapshotHash == h then
-                    entryCreationKeyState.lastDeliverySnapshotSendCount =
-                        (entryCreationKeyState.lastDeliverySnapshotSendCount or 0) + 1
+
+            if not overflowInUse or overflowDeliveryCompleted then
+                if not force and quietSignature then
+                    entryCreationKeyState.lastQuietFullPartySignature = quietSignature
+                end
+                entryCreationKeyState.lastEmittedApplicantCount = payloadApplicantCount
+                if not dirtySincePayload then
+                    entryCreationKeyState.ClearRosterCompositionChanged()
+                end
+                lastSnapshotHash = h
+                if not terminalClear then
+                    if overflowDeliveryCompleted then
+                        entryCreationKeyState.lastDeliverySnapshotHash = h
+                        entryCreationKeyState.lastDeliverySnapshotSendCount =
+                            entryCreationKeyState.QR_OVERFLOW_MIN_SENDS
+                    elseif entryCreationKeyState.lastDeliverySnapshotHash == h then
+                        entryCreationKeyState.lastDeliverySnapshotSendCount =
+                            (entryCreationKeyState.lastDeliverySnapshotSendCount or 0) + 1
+                    else
+                        entryCreationKeyState.lastDeliverySnapshotHash = h
+                        entryCreationKeyState.lastDeliverySnapshotSendCount = 1
+                    end
                 else
-                    entryCreationKeyState.lastDeliverySnapshotHash = h
-                    entryCreationKeyState.lastDeliverySnapshotSendCount = 1
+                    entryCreationKeyState.lastDeliverySnapshotHash = nil
+                    entryCreationKeyState.lastDeliverySnapshotSendCount = 0
+                end
+                pendingShotDirty = false
+                if not force and payloadRosterIncomplete then
+                    local retryScheduled =
+                        entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S)
+                    pendingShotDirty = dirtySincePayload or not retryScheduled
+                elseif dirtySincePayload then
+                    pendingShotDirty = true
+                elseif not force
+                   and not terminalClear
+                   and ((entryCreationKeyState.lastDeliverySnapshotSendCount or 0)
+                        < entryCreationKeyState.NONTERMINAL_SNAPSHOT_MIN_SENDS) then
+                    pendingShotDirty = true
+                else
+                    entryCreationKeyState.ClearRosterLoadRetryState()
                 end
             else
-                entryCreationKeyState.lastDeliverySnapshotHash = nil
-                entryCreationKeyState.lastDeliverySnapshotSendCount = 0
-            end
-            pendingShotDirty = false
-            if not force and payloadRosterIncomplete then
-                local retryScheduled =
-                    entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S)
-                pendingShotDirty = dirtySincePayload or not retryScheduled
-            elseif dirtySincePayload then
+                -- Every fragment capture is only progress toward one complete
+                -- logical delivery. Keep the same generation pending until a
+                -- full pass (and, when unchanged, its bounded redundant pass)
+                -- has been captured. If a newer snapshot was queued, the
+                -- first completed pass retires this generation and rebuilds it.
                 pendingShotDirty = true
-            elseif not force
-               and not terminalClear
-               and ((entryCreationKeyState.lastDeliverySnapshotSendCount or 0)
-                    < entryCreationKeyState.NONTERMINAL_SNAPSHOT_MIN_SENDS) then
-                pendingShotDirty = true
-            else
-                entryCreationKeyState.ClearRosterLoadRetryState()
+                if overflowPassCompleted
+                   and entryCreationKeyState.qrOverflowState == nil then
+                    pendingShotDirty = true
+                end
             end
             if ApplicantScoutDB and ApplicantScoutDB.debug then
-                print(string.format("|cff999999[APS-debug]|r CAP qr_size=%dpx hash=%x t=%.2f",
-                      qrCurrentSize, h, GetTime()))
+                local overflowProgress = overflowInUse and overflowState
+                    and string.format(
+                        " fragment=%d/%d pass=%d",
+                        math.min(overflowState.chunkIndex + 1, overflowState.chunkCount),
+                        overflowState.chunkCount,
+                        overflowState.pass
+                    ) or ""
+                print(string.format("|cff999999[APS-debug]|r CAP qr_size=%dpx hash=%x t=%.2f%s",
+                      qrCurrentSize, h, GetTime(), overflowProgress))
             end
             entryCreationKeyState.ClearQRTransportJob(jobGen)
             if terminalClearSessionGen then
@@ -5217,30 +5496,46 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         end
     end
 
-    local fallbackHash = nil
-    local fallbackInUse = false
     local OnQRBuildComplete
     OnQRBuildComplete = function(matrix, runs, renderRunCount)
         if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
-        if not matrix and canTryRosterUnavailableFallback then
-            canTryRosterUnavailableFallback = false
-            payload, fallbackHash =
-                BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, true)
-            fallbackInUse = true
-            quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature
-            BuildQRMatrix(payload, false, false, jobGen, OnQRBuildComplete)
-            return
+        if not matrix and not overflowInUse and not terminalClear then
+            local startedState, startError =
+                entryCreationKeyState.StartQROverflowTransport(
+                    logicalPayload,
+                    h,
+                    payloadDirtyGeneration,
+                    payloadApplicantCount,
+                    payloadRosterIncomplete,
+                    quietSignature
+                )
+            if startedState then
+                overflowState = startedState
+                overflowInUse = true
+                payload, startError =
+                    entryCreationKeyState.BuildQROverflowFragment(startedState)
+                if payload then
+                    quietSignature = startedState.quietSignature
+                    BuildQRMatrix(payload, false, true, jobGen, OnQRBuildComplete)
+                    return
+                end
+            end
+            entryCreationKeyState.qrOverflowLastFailure =
+                startError or "overflow transport could not start"
         end
         if not matrix then
-            -- Stamp the failed hash so identical-payload re-scans don't re-spam
-            -- the failure. Preserve a change that arrived while this async job
-            -- was running so the ticker drains the newest state next.
+            -- Build failure is not delivery. Preserve a change that arrived
+            -- while this async job was running, but do not spin indefinitely
+            -- on a stable deterministic QR/library failure.
             local dirtySinceBuildStarted =
                 (entryCreationKeyState.qrPaintDirtyDuringPaint and not force)
                 or (entryCreationKeyState.transportDirtyGeneration or 0) ~= payloadDirtyGeneration
             entryCreationKeyState.ClearQRTransportJob(jobGen)
-            lastSnapshotHash = h
             pendingShotDirty = dirtySinceBuildStarted and true or false
+            if overflowInUse and overflowState then
+                overflowState.failure = lastQREncodeError or "fragment QR build failed"
+                entryCreationKeyState.qrOverflowLastFailure = overflowState.failure
+            end
             if terminalClearSessionGen then
                 entryCreationKeyState.ScheduleTerminalClearRetry(
                     terminalClearSessionGen
@@ -5248,15 +5543,13 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             end
             return
         end
-        if fallbackInUse and ApplicantScoutDB and ApplicantScoutDB.debug then
-            print(string.format(
-                "|cff999999[APS-debug]|r QR roster fallback full_hash=%x fallback_hash=%x",
-                h, fallbackHash))
-        end
         if not PaintQR(matrix, runs, renderRunCount, jobGen, OnQRPaintComplete) then
             entryCreationKeyState.ClearQRTransportJob(jobGen)
-            lastSnapshotHash = h
             pendingShotDirty = false
+            if overflowInUse and overflowState then
+                overflowState.failure = "fragment paint did not start"
+                entryCreationKeyState.qrOverflowLastFailure = overflowState.failure
+            end
             if terminalClearSessionGen then
                 entryCreationKeyState.ScheduleTerminalClearRetry(
                     terminalClearSessionGen
@@ -5267,8 +5560,8 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
 
     BuildQRMatrix(
         payload,
-        canTryRosterUnavailableFallback,
-        canTryRosterUnavailableFallback,
+        reliableHexOnly and not overflowInUse,
+        reliableHexOnly,
         jobGen,
         OnQRBuildComplete
     )
@@ -5296,6 +5589,10 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
                 entryCreationKeyState.terminalClearRetryScheduled == true,
             lastEmittedApplicantCount =
                 entryCreationKeyState.lastEmittedApplicantCount or 0,
+            overflowState = entryCreationKeyState.qrOverflowState,
+            overflowLastFailure = entryCreationKeyState.qrOverflowLastFailure,
+            overflowSupersededCount =
+                entryCreationKeyState.qrOverflowSupersededCount or 0,
             sessionActive = isSessionActive == true,
         }
     end
@@ -6273,6 +6570,30 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
     print("  last delivery snapshot sends: "
           .. tostring(entryCreationKeyState.lastDeliverySnapshotSendCount or 0)
           .. "/" .. tostring(entryCreationKeyState.NONTERMINAL_SNAPSHOT_MIN_SENDS))
+    local overflowState = entryCreationKeyState.qrOverflowState
+    if overflowState then
+        print(string.format(
+            "  overflow transport: fragmented stream=%u generation=%u frame=%d/%d pass=%d/%d queued-newer=%s bytes=%d",
+            overflowState.streamID,
+            overflowState.generation,
+            overflowState.chunkIndex + 1,
+            overflowState.chunkCount,
+            overflowState.pass,
+            entryCreationKeyState.QR_OVERFLOW_MIN_SENDS,
+            tostring(overflowState.queuedNewer == true),
+            overflowState.logicalBytes
+        ))
+    else
+        print("  overflow transport: idle")
+    end
+    print("  overflow superseded generations: "
+          .. tostring(entryCreationKeyState.qrOverflowSupersededCount or 0))
+    print("  overflow last failure: "
+          .. tostring(entryCreationKeyState.qrOverflowLastFailure or "none"))
+    print("  last logical payload: "
+          .. tostring(entryCreationKeyState.lastPayloadTotalBytes or 0)
+          .. " bytes (error: "
+          .. tostring(entryCreationKeyState.lastPayloadBuildError or "none") .. ")")
     print("  last shot time: " .. (lastShotTime > 0
           and string.format("%.1fs ago", GetTime() - lastShotTime) or "never"))
     print("  pending throttled shot: " .. tostring(pendingShotDirty))

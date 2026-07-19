@@ -21,9 +21,9 @@ local function drain_timers()
 end
 
 -- Hex for this payload needs 6056 row runs, just over the 6000 budget, while
--- raw byte-mode needs only 4446. The full roster path must report failure so
--- MaybeTriggerScreenshot can build a reliable roster-unavailable hex payload
--- instead of painting the smaller but live-corrupting raw QR.
+-- raw byte-mode needs only 4446. The reliable large-frame path must report
+-- failure so MaybeTriggerScreenshot can fragment the complete snapshot instead
+-- of painting the smaller but live-corrupting raw QR.
 local payload = string.rep(string.char(0xAB), 1200)
 local preferred_matrix = "not-called"
 harness.SetQRPaintJobGeneration(41)
@@ -31,7 +31,7 @@ harness.BuildQRMatrixAsync(payload, true, true, 41, function(matrix)
     preferred_matrix = matrix
 end)
 drain_timers()
-assert(preferred_matrix == nil, "full snapshot used raw before roster fallback")
+assert(preferred_matrix == nil, "reliable large-frame path used raw before fragmentation")
 
 local emergency_matrix = nil
 local emergency_runs = nil
@@ -48,4 +48,4 @@ assert(#emergency_matrix == 117, "unexpected raw fallback matrix size")
 assert(#emergency_runs == 4446 * 4, "unexpected raw fallback run buffer size")
 assert(emergency_run_count == 4446, "unexpected raw fallback logical run count")
 
-print("ok large-qr-prefers-roster-fallback")
+print("ok large-qr-reliable-hex-gate")
