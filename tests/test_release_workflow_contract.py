@@ -403,7 +403,10 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
         release,
     )
     assert re.search(r"(?m)^    runs-on: ubuntu-latest\s*$", release)
-    assert re.search(r"(?m)^    permissions:\n      contents: write\s*$", release)
+    assert re.search(
+        r"(?m)^    permissions:\n      actions: read\n      contents: write\s*$",
+        release,
+    )
 
     version_step = _step_block(preflight, "Check release version")
     companion_checkout = _step_block(preflight, "Checkout paired companion")
@@ -459,13 +462,14 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     assert "WAGO_API_TOKEN" not in preflight
     assert "GITHUB_OAUTH" not in preflight
     assert "uses: BigWigsMods/packager@" not in preflight
-    assert "uses: BigWigsMods/packager@" in release
+    assert "uses: BigWigsMods/packager@" not in release
 
 
 def test_release_requires_verified_exact_tag_marketplace_package_before_upload():
     workflow = _workflow_source()
     marketplace = _job_block(workflow, "marketplace-package")
     release = _job_block(workflow, "release")
+    marketplace_release = _job_block(workflow, "marketplace-release")
 
     assert "needs: [preflight, marketplace-package]" in release
     assert re.search(r"(?m)^    permissions:\n      contents: read\s*$", marketplace)
@@ -483,7 +487,15 @@ def test_release_requires_verified_exact_tag_marketplace_package_before_upload()
         marketplace,
         "Validate exact-tag marketplace archive contract",
     )
-    upload = _step_block(release, "Package and release")
+    metadata = _step_block(marketplace, "Create exact-tag GitHub release metadata")
+    artifact_upload = _step_block(
+        marketplace, "Upload verified exact-tag release bundle"
+    )
+    artifact_download = _step_block(
+        release, "Download verified exact-tag release bundle"
+    )
+    github_publish = _step_block(release, "Publish verified immutable GitHub release")
+    upload = _step_block(marketplace_release, "Publish exact tag to marketplaces")
     release_identity = _step_block(
         release,
         "Verify release tag is reachable from origin/main",
@@ -509,21 +521,36 @@ def test_release_requires_verified_exact_tag_marketplace_package_before_upload()
         release_identity
     )
     assert '"$release_commit" != "$marketplace_commit"' in release_identity
+    assert "scripts/create_release_metadata.py" in metadata
+    assert "actions/upload-artifact@" in artifact_upload
+    assert "include-hidden-files: true" in artifact_upload
+    assert "actions/download-artifact@" in artifact_download
+    assert "gh release create" in github_publish
+    assert "--draft" in github_publish
+    assert "gh release edit" in github_publish
+    assert "immutable" in github_publish
     assert "CF_API_KEY: ${{ secrets.CF_API_KEY }}" in upload
     assert "WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}" in upload
+    assert "GITHUB_OAUTH" not in marketplace_release
+    assert "contents: read" in marketplace_release
     assert "pandoc: false" in upload
     _assert_order(
         marketplace,
         "Record exact marketplace package commit",
         "Build exact-tag marketplace package without uploading",
         "Validate exact-tag marketplace archive contract",
+        "Create exact-tag GitHub release metadata",
+        "Upload verified exact-tag release bundle",
     )
     _assert_order(
         release,
         "Verify release tag is reachable from origin/main",
         "Refuse existing release",
         "Revalidate paired immutable release identity",
-        "Package and release",
+        "Require intended marketplace credentials before publication",
+        "Verify immutable release policy",
+        "Download verified exact-tag release bundle",
+        "Publish verified immutable GitHub release",
     )
 
 
@@ -567,7 +594,10 @@ def test_release_job_requires_tag_commit_reachable_from_origin_main():
         "Verify release tag is reachable from origin/main",
         "Refuse existing release",
         "Revalidate paired immutable release identity",
-        "Package and release",
+        "Require intended marketplace credentials before publication",
+        "Verify immutable release policy",
+        "Download verified exact-tag release bundle",
+        "Publish verified immutable GitHub release",
     )
 
 
@@ -585,7 +615,7 @@ def test_release_workflow_requires_published_companion_assets_before_packaging()
     assert "-PublishedReleaseWaitSeconds 0" in revalidation
     assert "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in revalidation
     assert release.index("Revalidate paired immutable release identity") < release.index(
-        "BigWigsMods/packager"
+        "Publish verified immutable GitHub release"
     )
 
 
@@ -598,30 +628,121 @@ def test_release_job_refuses_existing_release_without_failing_open_on_gh_errors(
     assert "$status" in guard
     assert "not found" in guard
     assert "Could not determine whether release" in guard
-    assert guard.index("gh release view") < release.index("BigWigsMods/packager")
+    assert guard.index("gh release view") < release.index(
+        "Publish verified immutable GitHub release"
+    )
+
+
+def test_release_rejects_reruns_before_checkout_and_serializes_tags():
+    workflow = _workflow_source()
+    preflight = _job_block(workflow, "preflight")
+    release = _job_block(workflow, "release")
+    marketplace_release = _job_block(workflow, "marketplace-release")
+    rerun_guard = _step_block(preflight, "Reject ambiguous release rerun")
+    writer_rerun_guard = _step_block(
+        release, "Reject ambiguous GitHub publication rerun"
+    )
+    marketplace_rerun_guard = _step_block(
+        marketplace_release, "Reject ambiguous marketplace rerun"
+    )
+
+    assert "group: applicantscout-addon-release" in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert "github.run_attempt != 1" in rerun_guard
+    assert "github.run_attempt != 1" in writer_rerun_guard
+    assert "github.run_attempt != 1" in marketplace_rerun_guard
+    _assert_order(preflight, "Reject ambiguous release rerun", "Checkout addon")
+    _assert_order(
+        release, "Reject ambiguous GitHub publication rerun", "Checkout"
+    )
+    _assert_order(
+        marketplace_release,
+        "Reject ambiguous marketplace rerun",
+        "Checkout exact immutable release tag",
+    )
+
+
+def test_release_requires_immutable_policy_before_draft_publication():
+    workflow = _workflow_source()
+    release = _job_block(workflow, "release")
+    credentials = _step_block(
+        release, "Require intended marketplace credentials before publication"
+    )
+    policy = _step_block(release, "Verify immutable release policy")
+    publish = _step_block(release, "Publish verified immutable GitHub release")
+
+    assert "IMMUTABLE_RELEASES_READ_TOKEN" in policy
+    assert "CF_API_KEY" in credentials
+    assert "WAGO_API_TOKEN" in credentials
+    assert "immutable-releases" in policy
+    assert ".enabled -isnot [bool]" in policy
+    assert "releases/latest" in publish
+    assert "must be newer than latest stable" in publish
+    assert "--draft" in publish
+    assert "@($Draft.assets).Count -ne $Expected.Count" in publish
+    assert "$Published.immutable -is [bool]" in publish
+    assert publish.count("-RequirePublishedPairedCompanionAssets") == 3
+    assert "Exact release refs changed while GitHub publication" in publish
+    _assert_order(
+        release,
+        "Require intended marketplace credentials before publication",
+        "Verify immutable release policy",
+        "Download verified exact-tag release bundle",
+        "Publish verified immutable GitHub release",
+    )
+
+
+def test_third_party_packager_has_read_only_token_and_explicit_channels():
+    workflow = _workflow_source()
+    release = _job_block(workflow, "release")
+    marketplace_release = _job_block(workflow, "marketplace-release")
+    credentials = _step_block(
+        marketplace_release, "Recheck intended marketplace credentials"
+    )
+
+    assert "BigWigsMods/packager@" not in release
+    assert re.search(
+        r"(?m)^    permissions:\n      contents: read\s*$", marketplace_release
+    )
+    assert "CF_API_KEY" in credentials
+    assert "WAGO_API_TOKEN" in credentials
+    assert "GITHUB_OAUTH" not in marketplace_release
+    _assert_order(
+        marketplace_release,
+        "Recheck intended marketplace credentials",
+        "Publish exact tag to marketplaces",
+    )
 
 
 def test_release_job_keeps_marketplace_publish_checkout_at_repo_root():
     workflow = _workflow_source()
     release = _job_block(workflow, "release")
+    marketplace_release = _job_block(workflow, "marketplace-release")
     checkout = _step_block(release, "Checkout")
+    marketplace_checkout = _step_block(
+        marketplace_release, "Checkout exact immutable release tag"
+    )
 
     assert "path:" not in checkout
-    assert "uses: BigWigsMods/packager@" in release
+    assert "path:" not in marketplace_checkout
+    assert "persist-credentials: false" in checkout
+    assert "persist-credentials: false" in marketplace_checkout
+    assert "uses: BigWigsMods/packager@" not in release
+    assert "uses: BigWigsMods/packager@" in marketplace_release
 
 
 def test_curseforge_verifier_is_separate_read_only_post_release_job():
     workflow = _workflow_source()
-    release = _job_block(workflow, "release")
+    marketplace_release = _job_block(workflow, "marketplace-release")
     verifier = _job_block(workflow, "verify-curseforge")
     verify_step = _step_block(
         verifier, "Verify CurseForge public release propagation"
     )
 
-    assert "needs: release" in verifier
+    assert "needs: marketplace-release" in verifier
     assert "contents: read" in verifier
     assert "secrets." not in verifier
-    assert "BigWigsMods/packager@" in release
+    assert "BigWigsMods/packager@" in marketplace_release
     assert "BigWigsMods/packager@" not in verifier
     assert "scripts/verify_curseforge_release.py" in verify_step
     assert "--project-id 1541576" in verify_step
@@ -1234,9 +1355,11 @@ def test_release_workflow_pins_external_actions_to_commit_shas():
 
     assert Counter(action for action, _ in action_refs) == Counter(
         {
-            "actions/checkout": 5,
+            "actions/checkout": 6,
             "actions/setup-python": 2,
             "BigWigsMods/packager": 2,
+            "actions/upload-artifact": 1,
+            "actions/download-artifact": 1,
         }
     )
     for action, ref in action_refs:

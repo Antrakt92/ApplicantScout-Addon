@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*'
 
+concurrency:
+  group: applicantscout-addon-release
+  cancel-in-progress: false
+
 jobs:
   preflight:
     if: ${{ github.event.created == true && github.event.forced == false && github.event.deleted == false }}
@@ -12,6 +16,11 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Reject ambiguous release rerun
+        if: ${{ github.run_attempt != 1 }}
+        shell: pwsh
+        run: throw "Tag release reruns are blocked because marketplace upload outcomes may be partial or ambiguous."
+
       - name: Checkout addon
         # actions/checkout v6 pinned to the upstream tag commit.
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -179,18 +188,44 @@ jobs:
       - name: Validate exact-tag marketplace archive contract
         run: python3 scripts/check_addon_archive.py --release-dir .release
 
+      - name: Create exact-tag GitHub release metadata
+        run: >-
+          python3 scripts/create_release_metadata.py
+          --release-dir .release
+          --tag "$GITHUB_REF_NAME"
+
+      - name: Upload verified exact-tag release bundle
+        # actions/upload-artifact v7.0.1 pinned to the upstream release commit.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: applicantscout-addon-release-${{ steps.marketplace-identity.outputs.commit }}
+          path: |
+            .release/ApplicantScout-${{ github.ref_name }}.zip
+            .release/release.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     needs: [preflight, marketplace-package]
     if: ${{ github.event.created == true && github.event.forced == false && github.event.deleted == false }}
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
     steps:
+      - name: Reject ambiguous GitHub publication rerun
+        if: ${{ github.run_attempt != 1 }}
+        run: |
+          echo "::error::GitHub publication reruns are blocked; inspect the exact release state and recover forward."
+          exit 1
+
       - name: Checkout
         # actions/checkout v6 pinned to the upstream tag commit.
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Verify release tag is reachable from origin/main
         run: |
@@ -245,18 +280,211 @@ jobs:
           -RequirePublishedPairedCompanionAssets
           -PublishedReleaseWaitSeconds 0
 
-      - name: Package and release
-        # BigWigsMods/packager v2 pinned to the peeled commit from the upstream tag.
+      - name: Require intended marketplace credentials before publication
+        shell: pwsh
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CF_API_KEY) -or
+              [string]::IsNullOrWhiteSpace($env:WAGO_API_TOKEN)) {
+            throw "CF_API_KEY and WAGO_API_TOKEN are both required before immutable GitHub publication."
+          }
+
+      - name: Verify immutable release policy
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.IMMUTABLE_RELEASES_READ_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            throw "IMMUTABLE_RELEASES_READ_TOKEN is required to verify repository release policy."
+          }
+          $Policy = gh api "repos/$env:GITHUB_REPOSITORY/immutable-releases" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or
+              $null -eq $Policy -or
+              $Policy.enabled -isnot [bool] -or
+              -not $Policy.enabled) {
+            throw "Repository release immutability must be enabled before publishing $env:GITHUB_REF_NAME."
+          }
+
+      - name: Download verified exact-tag release bundle
+        # actions/download-artifact v8.0.1 pinned to the upstream release commit.
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: applicantscout-addon-release-${{ needs.marketplace-package.outputs.commit }}
+          path: ${{ runner.temp }}/applicantscout-addon-release
+
+      - name: Publish verified immutable GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ReleaseDir = Join-Path $env:RUNNER_TEMP "applicantscout-addon-release"
+          python3 scripts/check_addon_archive.py --release-dir $ReleaseDir
+          if ($LASTEXITCODE -ne 0) {
+            throw "Downloaded release archive failed validation."
+          }
+          $Version = $env:GITHUB_REF_NAME.Substring(1)
+          $ZipName = "ApplicantScout-v$Version.zip"
+          $ZipPath = Join-Path $ReleaseDir $ZipName
+          $MetadataPath = Join-Path $ReleaseDir "release.json"
+          foreach ($Path in @($ZipPath, $MetadataPath)) {
+            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+              throw "Verified release bundle is missing: $Path"
+            }
+          }
+
+          .\scripts\check-release-version.ps1 `
+            -Tag $env:GITHUB_REF_NAME `
+            -RequirePublishedPairedCompanionAssets `
+            -PublishedReleaseWaitSeconds 0
+          if ($LASTEXITCODE -ne 0) {
+            throw "Exact release refs changed before GitHub draft creation."
+          }
+
+          $LatestTag = (gh api "repos/$env:GITHUB_REPOSITORY/releases/latest" --jq .tag_name).Trim()
+          if ($LASTEXITCODE -ne 0 -or $LatestTag -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw "Could not resolve the latest stable addon release."
+          }
+          if ([version]$Version -le [version]$LatestTag.Substring(1)) {
+            throw "Release $env:GITHUB_REF_NAME must be newer than latest stable $LatestTag."
+          }
+
+          gh release create $env:GITHUB_REF_NAME `
+            $ZipPath `
+            $MetadataPath `
+            --repo $env:GITHUB_REPOSITORY `
+            --verify-tag `
+            --draft `
+            --title $env:GITHUB_REF_NAME `
+            --notes-file CHANGELOG.md
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub draft creation failed for $env:GITHUB_REF_NAME."
+          }
+
+          $Expected = @{
+            $ZipName = $ZipPath
+            "release.json" = $MetadataPath
+          }
+          $Draft = gh release view $env:GITHUB_REF_NAME `
+            --repo $env:GITHUB_REPOSITORY `
+            --json tagName,isDraft,isPrerelease,assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or
+              $Draft.tagName -cne $env:GITHUB_REF_NAME -or
+              -not [bool]$Draft.isDraft -or
+              [bool]$Draft.isPrerelease -or
+              @($Draft.assets).Count -ne $Expected.Count) {
+            throw "GitHub draft does not match the exact release identity and asset count."
+          }
+          foreach ($Name in $Expected.Keys) {
+            $Assets = @($Draft.assets | Where-Object { $_.name -ceq $Name })
+            if ($Assets.Count -ne 1) {
+              throw "GitHub draft does not contain exactly one $Name asset."
+            }
+            $Path = $Expected[$Name]
+            $Hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $Size = (Get-Item -LiteralPath $Path).Length
+            if ([string]$Assets[0].digest -cne "sha256:$Hash" -or [long]$Assets[0].size -ne $Size) {
+              throw "GitHub draft asset digest or size mismatch: $Name"
+            }
+          }
+
+          .\scripts\check-release-version.ps1 `
+            -Tag $env:GITHUB_REF_NAME `
+            -RequirePublishedPairedCompanionAssets `
+            -PublishedReleaseWaitSeconds 0
+          if ($LASTEXITCODE -ne 0) {
+            throw "Exact release refs changed before immutable publication."
+          }
+
+          gh release edit $env:GITHUB_REF_NAME `
+            --repo $env:GITHUB_REPOSITORY `
+            --draft=false `
+            --prerelease=false `
+            --latest
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub refused to publish $env:GITHUB_REF_NAME."
+          }
+
+          $Deadline = (Get-Date).AddSeconds(60)
+          do {
+            $Published = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME" | ConvertFrom-Json
+            if ($LASTEXITCODE -eq 0 -and
+                $Published.tag_name -ceq $env:GITHUB_REF_NAME -and
+                $Published.draft -is [bool] -and -not $Published.draft -and
+                $Published.prerelease -is [bool] -and -not $Published.prerelease -and
+                $Published.immutable -is [bool] -and $Published.immutable -and
+                @($Published.assets).Count -eq $Expected.Count) {
+              $Valid = $true
+              foreach ($Name in $Expected.Keys) {
+                $Assets = @($Published.assets | Where-Object { $_.name -ceq $Name })
+                $Path = $Expected[$Name]
+                $Hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+                $Size = (Get-Item -LiteralPath $Path).Length
+                if ($Assets.Count -ne 1 -or
+                    [string]$Assets[0].digest -cne "sha256:$Hash" -or
+                    [long]$Assets[0].size -ne $Size) {
+                  $Valid = $false
+                  break
+                }
+              }
+              if ($Valid) {
+                .\scripts\check-release-version.ps1 `
+                  -Tag $env:GITHUB_REF_NAME `
+                  -RequirePublishedPairedCompanionAssets `
+                  -PublishedReleaseWaitSeconds 0
+                if ($LASTEXITCODE -ne 0) {
+                  throw "Exact release refs changed while GitHub publication was becoming immutable."
+                }
+                Write-Host "Published immutable GitHub release matches the verified exact-tag bundle."
+                exit 0
+              }
+            }
+            Start-Sleep -Seconds 5
+          } while ((Get-Date) -lt $Deadline)
+          throw "Published GitHub release did not become immutable or match the verified bundle."
+
+  marketplace-release:
+    needs: release
+    if: ${{ github.event.created == true && github.event.forced == false && github.event.deleted == false }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Reject ambiguous marketplace rerun
+        if: ${{ github.run_attempt != 1 }}
+        run: |
+          echo "::error::Marketplace reruns are blocked because prior upload outcomes may be partial or ambiguous."
+          exit 1
+
+      - name: Checkout exact immutable release tag
+        # actions/checkout v6 pinned to the upstream tag commit.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Recheck intended marketplace credentials
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
+        run: |
+          if [[ -z "$CF_API_KEY" || -z "$WAGO_API_TOKEN" ]]; then
+            echo "::error::CF_API_KEY and WAGO_API_TOKEN are both required for the intended addon release channels."
+            exit 1
+          fi
+
+      - name: Publish exact tag to marketplaces
+        # BigWigsMods/packager v2 pinned to the peeled upstream commit.
         uses: BigWigsMods/packager@6d50adb6e8517eefef63f4afb16a6518166a6b28
         with:
           pandoc: false
         env:
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
           WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
-          GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
 
   verify-curseforge:
-    needs: release
+    needs: marketplace-release
     if: ${{ github.event.created == true && github.event.forced == false && github.event.deleted == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
