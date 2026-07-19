@@ -305,6 +305,8 @@ local entryCreationKeyState = {
     AUTO_HI_NEW_PARTY_MEMBER_DELAY_S = 10,
     AUTO_HI_RETRY_DELAY_S = 1.0,
     AUTO_HI_MAX_RETRIES = 5,
+    AUTO_HI_PARTY_SAMPLE_RETRY_DELAY_S = 0.5,
+    AUTO_HI_PARTY_SAMPLE_MAX_RETRIES = 5,
     autoHiLastSendStatus = "never",
     autoHiEditBoxSyncing = false,
     autoHiGroupStateKnown = false,
@@ -316,6 +318,11 @@ local entryCreationKeyState = {
     autoHiGroupRetryGeneration = nil,
     autoHiKnownPartyGUIDs = {},
     autoHiKnownPartyMembersPrimed = false,
+    autoHiPendingNewPartyGUIDs = {},
+    autoHiNewPartyGreetingScheduledGeneration = nil,
+    autoHiPartySampleRetryToken = 0,
+    autoHiPartySampleRetryScheduled = false,
+    autoHiPartySamplePending = false,
     autoHiNewPartyMemberGen = 0,
     autoHiNewPartyRetryToken = 0,
     autoHiNewPartyRetryDeadline = nil,
@@ -765,6 +772,12 @@ entryCreationKeyState.ClearAutoHiRuntimeState = function()
     entryCreationKeyState.autoHiWasInSoloGroup = false
     entryCreationKeyState.autoHiKnownPartyGUIDs = {}
     entryCreationKeyState.autoHiKnownPartyMembersPrimed = false
+    entryCreationKeyState.autoHiPendingNewPartyGUIDs = {}
+    entryCreationKeyState.autoHiNewPartyGreetingScheduledGeneration = nil
+    entryCreationKeyState.autoHiPartySampleRetryToken =
+        entryCreationKeyState.autoHiPartySampleRetryToken + 1
+    entryCreationKeyState.autoHiPartySampleRetryScheduled = false
+    entryCreationKeyState.autoHiPartySamplePending = false
 end
 
 entryCreationKeyState.AutoHiContextReady = function(kind, generation)
@@ -786,6 +799,9 @@ entryCreationKeyState.ScheduleAutoHiSendRetry = function(kind, generation, attem
         entryCreationKeyState.autoHiLastSendStatus =
             kind .. " failed: " .. tostring(reason or "unknown")
         entryCreationKeyState.ClearAutoHiSendRetry(kind)
+        if kind == "new-party" then
+            entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+        end
         return false
     end
     attempt = math.floor(SafeNumber(attempt, 1))
@@ -793,14 +809,23 @@ entryCreationKeyState.ScheduleAutoHiSendRetry = function(kind, generation, attem
         entryCreationKeyState.autoHiLastSendStatus =
             kind .. " exhausted: " .. tostring(reason or "unknown")
         entryCreationKeyState.ClearAutoHiSendRetry(kind)
+        if kind == "new-party" then
+            entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+        end
         return false
     end
     if not (C_Timer and C_Timer.After) then
         entryCreationKeyState.autoHiLastSendStatus = kind .. " retry unavailable"
+        if kind == "new-party" then
+            entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+        end
         return false
     end
     if not entryCreationKeyState.AutoHiContextReady(kind, generation) then
         entryCreationKeyState.ClearAutoHiSendRetry(kind)
+        if kind == "new-party" then
+            entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+        end
         return false
     end
 
@@ -828,6 +853,9 @@ entryCreationKeyState.ScheduleAutoHiSendRetry = function(kind, generation, attem
         if retryToken ~= entryCreationKeyState[tokenField] then return end
         entryCreationKeyState[deadlineField] = nil
         if not entryCreationKeyState.AutoHiContextReady(kind, generation) then
+            if kind == "new-party" then
+                entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+            end
             return
         end
         entryCreationKeyState.TrySendAutoHiWithRetry(kind, generation, attempt + 1)
@@ -838,6 +866,9 @@ end
 entryCreationKeyState.TrySendAutoHiWithRetry = function(kind, generation, attempt)
     if not entryCreationKeyState.AutoHiContextReady(kind, generation) then
         entryCreationKeyState.ClearAutoHiSendRetry(kind)
+        if kind == "new-party" then
+            entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+        end
         return false, "inactive"
     end
     local message = entryCreationKeyState.NormalizeAutoHiMessage(
@@ -845,12 +876,18 @@ entryCreationKeyState.TrySendAutoHiWithRetry = function(kind, generation, attemp
     )
     if message == "" then
         entryCreationKeyState.ClearAutoHiSendRetry(kind)
+        if kind == "new-party" then
+            entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+        end
         return false, "empty-message"
     end
     local ok, reason = entryCreationKeyState.SendAutoHiChatMessage(message)
     if ok then
         entryCreationKeyState.autoHiLastSendStatus = kind .. " sent"
         entryCreationKeyState.ClearAutoHiSendRetry(kind)
+        if kind == "new-party" then
+            entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+        end
         return true
     end
     return entryCreationKeyState.ScheduleAutoHiSendRetry(
@@ -874,18 +911,72 @@ end
 
 entryCreationKeyState.CollectAutoHiPartyMemberGUIDs = function()
     local guids = {}
-    if entryCreationKeyState.AutoHiGroupMemberCount() <= 0 then return guids end
-    if IsInRaid and IsInRaid() then return guids end
-    for i = 1, 4 do
+    local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()
+    if groupMemberCount <= 0 then return guids, false end
+    if IsInRaid and IsInRaid() then return guids, false end
+    local expectedPartyMembers = math.min(math.max(groupMemberCount - 1, 0), 4)
+    local complete = true
+    for i = 1, expectedPartyMembers do
         local guid = entryCreationKeyState.UnitGUIDForRoster("party" .. i)
-        if guid ~= "" then
+        if guid ~= "" and not guids[guid] then
             guids[guid] = true
+        else
+            complete = false
         end
     end
-    return guids
+    return guids, complete
+end
+
+entryCreationKeyState.HasPendingAutoHiNewPartyMembers = function()
+    for _ in pairs(entryCreationKeyState.autoHiPendingNewPartyGUIDs) do
+        return true
+    end
+    return false
+end
+
+entryCreationKeyState.ClearAutoHiPendingNewPartyMembers = function()
+    entryCreationKeyState.autoHiPendingNewPartyGUIDs = {}
+    entryCreationKeyState.autoHiNewPartyGreetingScheduledGeneration = nil
+end
+
+entryCreationKeyState.ClearAutoHiPartySampleRetry = function()
+    entryCreationKeyState.autoHiPartySampleRetryToken =
+        entryCreationKeyState.autoHiPartySampleRetryToken + 1
+    entryCreationKeyState.autoHiPartySampleRetryScheduled = false
+    entryCreationKeyState.autoHiPartySamplePending = false
+end
+
+entryCreationKeyState.ScheduleAutoHiPartySampleRetry = function(attempt)
+    entryCreationKeyState.autoHiPartySamplePending = true
+    if entryCreationKeyState.autoHiPartySampleRetryScheduled then return true end
+    attempt = math.floor(SafeNumber(attempt, 0))
+    if attempt >= entryCreationKeyState.AUTO_HI_PARTY_SAMPLE_MAX_RETRIES then
+        return false
+    end
+    if not (C_Timer and C_Timer.After) then return false end
+
+    entryCreationKeyState.autoHiPartySampleRetryToken =
+        entryCreationKeyState.autoHiPartySampleRetryToken + 1
+    local retryToken = entryCreationKeyState.autoHiPartySampleRetryToken
+    entryCreationKeyState.autoHiPartySampleRetryScheduled = true
+    C_Timer.After(entryCreationKeyState.AUTO_HI_PARTY_SAMPLE_RETRY_DELAY_S, function()
+        if retryToken ~= entryCreationKeyState.autoHiPartySampleRetryToken then
+            return
+        end
+        entryCreationKeyState.autoHiPartySampleRetryScheduled = false
+        if not entryCreationKeyState.IsPartyContextForAutoHiNewMembers() then
+            entryCreationKeyState.ResetAutoHiPartyMembers()
+            return
+        end
+        entryCreationKeyState.ScheduleAutoHiForNewPartyMembers(attempt + 1)
+    end)
+    return true
 end
 
 entryCreationKeyState.ResetAutoHiPartyMembers = function()
+    entryCreationKeyState.ClearAutoHiPartySampleRetry()
+    entryCreationKeyState.ClearAutoHiSendRetry("new-party")
+    entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
     entryCreationKeyState.autoHiKnownPartyGUIDs = {}
     entryCreationKeyState.autoHiKnownPartyMembersPrimed = false
     entryCreationKeyState.autoHiNewPartyMemberGen =
@@ -897,32 +988,46 @@ entryCreationKeyState.PrimeAutoHiPartyMembers = function()
         entryCreationKeyState.ResetAutoHiPartyMembers()
         return
     end
-    entryCreationKeyState.autoHiKnownPartyGUIDs =
+    local currentGUIDs, sampleComplete =
         entryCreationKeyState.CollectAutoHiPartyMemberGUIDs()
+    if not sampleComplete then
+        entryCreationKeyState.ScheduleAutoHiPartySampleRetry(0)
+        return false
+    end
+    entryCreationKeyState.ClearAutoHiPartySampleRetry()
+    entryCreationKeyState.ClearAutoHiSendRetry("new-party")
+    entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+    entryCreationKeyState.autoHiKnownPartyGUIDs = currentGUIDs
     entryCreationKeyState.autoHiKnownPartyMembersPrimed = true
     entryCreationKeyState.autoHiNewPartyMemberGen =
         entryCreationKeyState.autoHiNewPartyMemberGen + 1
+    return true
 end
 
 entryCreationKeyState.UpdateAutoHiPartyMembers = function(currentGUIDs)
     local previousGUIDs = entryCreationKeyState.autoHiKnownPartyGUIDs or {}
+    local pendingNewGUIDs = entryCreationKeyState.autoHiPendingNewPartyGUIDs
     local changed = false
     local hasNew = false
     for guid in pairs(currentGUIDs) do
         if not previousGUIDs[guid] then
             changed = true
             hasNew = true
+            pendingNewGUIDs[guid] = true
         end
     end
     for guid in pairs(previousGUIDs) do
         if not currentGUIDs[guid] then
             changed = true
+            pendingNewGUIDs[guid] = nil
         end
     end
     entryCreationKeyState.autoHiKnownPartyGUIDs = currentGUIDs
     if changed then
+        entryCreationKeyState.ClearAutoHiSendRetry("new-party")
         entryCreationKeyState.autoHiNewPartyMemberGen =
             entryCreationKeyState.autoHiNewPartyMemberGen + 1
+        entryCreationKeyState.autoHiNewPartyGreetingScheduledGeneration = nil
     end
     return changed, hasNew
 end
@@ -934,7 +1039,11 @@ entryCreationKeyState.SyncAutoHiInitialGroupState = function()
     if entryCreationKeyState.autoHiGroupStateKnown
        and entryCreationKeyState.autoHiWasInGroup == isGrouped
        and entryCreationKeyState.autoHiWasInSoloGroup == isSoloGroup then
-        entryCreationKeyState.PrimeAutoHiPartyMembers()
+        if entryCreationKeyState.autoHiKnownPartyMembersPrimed then
+            entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()
+        else
+            entryCreationKeyState.PrimeAutoHiPartyMembers()
+        end
         return
     end
     entryCreationKeyState.autoHiGroupStateKnown = true
@@ -1004,36 +1113,91 @@ entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
     end)
 end
 
-entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()
+entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function(sampleAttempt)
     if not entryCreationKeyState.IsPartyContextForAutoHiNewMembers() then
         entryCreationKeyState.ResetAutoHiPartyMembers()
         return
     end
-    local currentGUIDs = entryCreationKeyState.CollectAutoHiPartyMemberGUIDs()
+    local currentGUIDs, sampleComplete =
+        entryCreationKeyState.CollectAutoHiPartyMemberGUIDs()
+    if not sampleComplete then
+        -- Preserve both the last complete baseline and any clean pending
+        -- joiners. A bounded retry handles ordinary unit-token propagation;
+        -- PLAYER_REGEN_ENABLED provides another recovery edge for combat
+        -- secret GUIDs after the short retry budget is exhausted.
+        entryCreationKeyState.ScheduleAutoHiPartySampleRetry(sampleAttempt or 0)
+        return
+    end
+    entryCreationKeyState.ClearAutoHiPartySampleRetry()
     if not entryCreationKeyState.autoHiKnownPartyMembersPrimed then
+        entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+        entryCreationKeyState.ClearAutoHiSendRetry("new-party")
         entryCreationKeyState.autoHiKnownPartyGUIDs = currentGUIDs
         entryCreationKeyState.autoHiKnownPartyMembersPrimed = true
         entryCreationKeyState.autoHiNewPartyMemberGen =
             entryCreationKeyState.autoHiNewPartyMemberGen + 1
         return
     end
-    local changed, hasNew =
-        entryCreationKeyState.UpdateAutoHiPartyMembers(currentGUIDs)
-    if not (changed and hasNew) then return end
+    entryCreationKeyState.UpdateAutoHiPartyMembers(currentGUIDs)
+    if not entryCreationKeyState.HasPendingAutoHiNewPartyMembers() then return end
 
-    if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
-    if not ApplicantScoutDB.autoHiGreetNewPartyMembers then return end
+    if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then
+        entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+        return
+    end
+    if not ApplicantScoutDB.autoHiGreetNewPartyMembers then
+        entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+        return
+    end
     if entryCreationKeyState.NormalizeAutoHiMessage(
         ApplicantScoutDB.autoHiMessage
-    ) == "" then return end
-    if not (C_Timer and C_Timer.After) then return end
+    ) == "" then
+        entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+        return
+    end
+    if not (C_Timer and C_Timer.After) then
+        entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+        return
+    end
 
     local groupGen = entryCreationKeyState.autoHiNewPartyMemberGen
+    if entryCreationKeyState.autoHiNewPartyGreetingScheduledGeneration
+       == groupGen then return end
+    entryCreationKeyState.autoHiNewPartyGreetingScheduledGeneration = groupGen
     C_Timer.After(entryCreationKeyState.AUTO_HI_NEW_PARTY_MEMBER_DELAY_S, function()
         if groupGen ~= entryCreationKeyState.autoHiNewPartyMemberGen then return end
-        if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
-        if not ApplicantScoutDB.autoHiGreetNewPartyMembers then return end
-        if not entryCreationKeyState.IsPartyForAutoHiNewMembers() then return end
+        if entryCreationKeyState.autoHiNewPartyGreetingScheduledGeneration
+           ~= groupGen then return end
+        entryCreationKeyState.autoHiNewPartyGreetingScheduledGeneration = nil
+        if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then
+            entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+            return
+        end
+        if not ApplicantScoutDB.autoHiGreetNewPartyMembers then
+            entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+            return
+        end
+        if not entryCreationKeyState.IsPartyContextForAutoHiNewMembers() then
+            entryCreationKeyState.ResetAutoHiPartyMembers()
+            return
+        end
+
+        local confirmedGUIDs, confirmedComplete =
+            entryCreationKeyState.CollectAutoHiPartyMemberGUIDs()
+        if not confirmedComplete then
+            entryCreationKeyState.ScheduleAutoHiPartySampleRetry(0)
+            return
+        end
+        entryCreationKeyState.ClearAutoHiPartySampleRetry()
+        local confirmedChanged =
+            entryCreationKeyState.UpdateAutoHiPartyMembers(confirmedGUIDs)
+        if confirmedChanged then
+            entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()
+            return
+        end
+        if not entryCreationKeyState.HasPendingAutoHiNewPartyMembers() then
+            return
+        end
 
         entryCreationKeyState.TrySendAutoHiWithRetry("new-party", groupGen, 1)
     end)
@@ -4197,6 +4361,14 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.LastPayloadRosterIncomplete = function()
         return entryCreationKeyState.lastPayloadRosterIncomplete == true
     end
+    _G.ApplicantScoutFixtureHarness.PrimeAutoHiPartyMembers =
+        entryCreationKeyState.PrimeAutoHiPartyMembers
+    _G.ApplicantScoutFixtureHarness.ResetAutoHiPartyMembers =
+        entryCreationKeyState.ResetAutoHiPartyMembers
+    _G.ApplicantScoutFixtureHarness.ScheduleAutoHiForNewPartyMembers =
+        entryCreationKeyState.ScheduleAutoHiForNewPartyMembers
+    _G.ApplicantScoutFixtureHarness.SyncAutoHiInitialGroupState =
+        entryCreationKeyState.SyncAutoHiInitialGroupState
 end
 
 -- Resolve QR encoder reference (set by libs/qrencode.lua via addon namespace).
@@ -5415,6 +5587,9 @@ local EVENT_HANDLERS = {
                 MarkDirty("inspect")
             end
         end
+        if entryCreationKeyState.autoHiPartySamplePending then
+            entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()
+        end
     end,
     INSPECT_READY                    = function(_, guid)
         _OnRosterInspectReady(guid)
@@ -5582,6 +5757,7 @@ _SetEnabled = function(flag)
     end
     if flag then
         ApplicantScoutDB.enabled = true
+        entryCreationKeyState.SyncAutoHiInitialGroupState()
         scanDirty = true  -- next 0.25s tick recovers session if listing active
         APSPrint("enabled — will emit during LFG hosting")
     else
@@ -5592,6 +5768,10 @@ _SetEnabled = function(flag)
     if enabledCheckbox then
         enabledCheckbox:SetChecked(flag)
     end
+end
+
+if type(_G.ApplicantScoutFixtureHarness) == "table" then
+    _G.ApplicantScoutFixtureHarness.SetEnabled = _SetEnabled
 end
 
 -- Apply ApplicantScoutDB.debug + emit feedback for both slash and settings UI.
@@ -5929,6 +6109,10 @@ _AttachSettingsPanel = function()
     autoHiNewPartyMembersCheckbox:SetPoint("LEFT", autoHiEditBox, "RIGHT", 10, 0)
     autoHiNewPartyMembersCheckbox:SetScript("OnClick", function(self)
         ApplicantScoutDB.autoHiGreetNewPartyMembers = not not self:GetChecked()
+        if not ApplicantScoutDB.autoHiGreetNewPartyMembers then
+            entryCreationKeyState.ClearAutoHiSendRetry("new-party")
+            entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
+        end
     end)
     autoHiNewPartyMembersCheckbox:SetHitRectInsets(0, -130, 0, 0)
     local autoHiNewPartyMembersLabel = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")

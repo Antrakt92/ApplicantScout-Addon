@@ -71,6 +71,9 @@ LUA_PAYLOAD_FINALIZATION_REUSE_CHECK = (
 LUA_NUMERIC_BOUNDARIES_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_numeric_boundaries.lua"
 )
+LUA_AUTO_HI_PARTY_SAMPLING_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_auto_hi_party_sampling.lua"
+)
 LUA_GOLDEN_CASES = (
     (None, "aps1_v8_lua_golden.hex"),
     ("leader-key", "aps1_v8_lua_leader_key_golden.hex"),
@@ -2249,7 +2252,7 @@ def test_auto_hi_group_send_retries_bounded_when_lockdown_blocks_send():
     group_body = _slice_between(
         source,
         "entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()",
-        "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()",
+        "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function(sampleAttempt)",
     )
 
     assert "AUTO_HI_RETRY_DELAY_S" in source
@@ -2306,12 +2309,19 @@ def test_auto_hi_new_party_members_is_opt_in_party_only_and_guid_tracked():
     assert "if IsInRaid and IsInRaid() then return false end" in auto_hi_body
     assert "return entryCreationKeyState.AutoHiGroupMemberCount() > 1" in auto_hi_body
     assert "entryCreationKeyState.CollectAutoHiPartyMemberGUIDs = function()" in auto_hi_body
-    assert "if entryCreationKeyState.AutoHiGroupMemberCount() <= 0 then return guids end" in auto_hi_body
-    assert "for i = 1, 4 do" in auto_hi_body
+    assert "if groupMemberCount <= 0 then return guids, false end" in auto_hi_body
+    assert "local expectedPartyMembers = math.min(math.max(groupMemberCount - 1, 0), 4)" in auto_hi_body
+    assert "for i = 1, expectedPartyMembers do" in auto_hi_body
     assert 'local guid = entryCreationKeyState.UnitGUIDForRoster("party" .. i)' in auto_hi_body
+    assert "return guids, complete" in auto_hi_body
     assert "entryCreationKeyState.autoHiKnownPartyGUIDs" in auto_hi_body
     assert "entryCreationKeyState.PrimeAutoHiPartyMembers()" in auto_hi_body
-    assert "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()" in auto_hi_body
+    assert (
+        "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function(sampleAttempt)"
+        in auto_hi_body
+    )
+    assert "local currentGUIDs, sampleComplete" in auto_hi_body
+    assert "if not sampleComplete then" in auto_hi_body
     assert "ApplicantScoutDB.autoHiGreetNewPartyMembers" in auto_hi_body
     assert "AUTO_HI_NEW_PARTY_MEMBER_DELAY_S = 10" in source
     assert (
@@ -2323,6 +2333,11 @@ def test_auto_hi_new_party_members_is_opt_in_party_only_and_guid_tracked():
     assert "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()" in events_body
 
 
+def test_auto_hi_party_sampling_preserves_baseline_until_complete(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_AUTO_HI_PARTY_SAMPLING_CHECK).strip()
+    assert output == "auto-hi-party-sampling-ok"
+
+
 def test_auto_hi_new_party_member_send_retries_bounded_when_lockdown_blocks_send():
     source = _lua_source()
     auto_hi_body = _slice_between(
@@ -2332,7 +2347,7 @@ def test_auto_hi_new_party_member_send_retries_bounded_when_lockdown_blocks_send
     )
     new_party_body = _slice_between(
         source,
-        "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function()",
+        "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function(sampleAttempt)",
         CHECK_SESSION_TRANSITION_ANCHOR,
     )
 
@@ -2341,7 +2356,8 @@ def test_auto_hi_new_party_member_send_retries_bounded_when_lockdown_blocks_send
     assert 'kind == "new-party"' in auto_hi_body
     assert "generation ~= entryCreationKeyState.autoHiNewPartyMemberGen" in auto_hi_body
     assert "not ApplicantScoutDB.autoHiGreetNewPartyMembers" in auto_hi_body
-    assert "not entryCreationKeyState.IsPartyForAutoHiNewMembers()" in auto_hi_body
+    assert "return entryCreationKeyState.IsPartyForAutoHiNewMembers()" in auto_hi_body
+    assert "not entryCreationKeyState.IsPartyContextForAutoHiNewMembers()" in auto_hi_body
     assert (
         'entryCreationKeyState.TrySendAutoHiWithRetry("new-party", groupGen, 1)'
         in new_party_body
