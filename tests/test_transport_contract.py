@@ -2207,8 +2207,33 @@ def test_settings_panel_watcher_is_singleton_until_runtime_attachment(pytestconf
     ).strip()
 
     assert output.splitlines()[-1] == (
-        "ok settings-attach-watcher singleton=1 retired=1 attached=1 tools=0"
+        "ok settings-attach-watcher singleton=1 retired=1 attached=1 tools=0 "
+        "parent-opens=3"
     )
+
+
+def test_settings_toggle_uses_blizzard_gate_before_showing_child():
+    source = _lua_source()
+    settings_body = _slice_between(
+        source,
+        "entryCreationKeyState.ToggleSettingsPanel = function()",
+        "-- slash commands",
+    )
+    slash_body = source[source.index("SlashCmdList.APSCOUT = function(msg)") :]
+
+    assert "if parent:IsShown() and settingsFrame:IsShown() then" in settings_body
+    assert 'pcall(togglePVEFrame, "GroupFinderFrame", "LFGListPVEStub")' in settings_body
+    assert "if not ok or not parent:IsShown() then" in settings_body
+    assert settings_body.index("parent:IsShown()") < settings_body.index("settingsFrame:Show()")
+    assert "ShowUIPanel" not in settings_body
+    assert "PVEFrame_ShowFrame" not in settings_body
+    config_branch = _slice_between(
+        slash_body,
+        'elseif msg == "config" or msg == "settings" then',
+        'elseif msg == "status" then',
+    )
+    assert "entryCreationKeyState.ToggleSettingsPanel()" in config_branch
+    assert "settingsFrame:IsShown()" not in config_branch
 
 
 def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():

@@ -2,10 +2,11 @@ local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 
 local frames = {}
 
-local function new_widget(name)
+local function new_widget(name, parent)
     local methods = {}
     local widget = {
         name = name,
+        parent = parent,
         events = {},
         scripts = {},
         shown = false,
@@ -78,8 +79,8 @@ local function new_widget(name)
     return widget
 end
 
-CreateFrame = function(_kind, name, _parent, template)
-    local frame = new_widget(name)
+CreateFrame = function(_kind, name, parent, template)
+    local frame = new_widget(name, parent)
     frames[#frames + 1] = frame
     if name then
         _G[name] = frame
@@ -133,12 +134,44 @@ assert(_G.ApplicantScoutSettingsFrame ~= nil,
     "settings frame was not created after PVEFrame loaded")
 
 local framesAfterAttach = #frames
+local parentOpenCalls = 0
+PVEFrame_ToggleFrame = function(sidePanelName, selection)
+    assert(sidePanelName == "GroupFinderFrame", "settings used wrong PVE side panel")
+    assert(selection == "LFGListPVEStub", "settings used wrong Group Finder selection")
+    parentOpenCalls = parentOpenCalls + 1
+    PVEFrame:Show()
+end
 SlashCmdList.APSCOUT("config")
 local finalState = harness.SettingsAttachState()
 assert(finalState.attached and finalState.watcher == nil,
     "attached settings panel recreated a watcher")
 assert(#frames == framesAfterAttach,
     "opening the attached settings panel created another frame")
+local settingsFrame = assert(_G.ApplicantScoutSettingsFrame)
+assert(parentOpenCalls == 1 and PVEFrame:IsShown() and settingsFrame:IsShown(),
+    "config did not open the hidden PVE parent and settings child")
+
+SlashCmdList.APSCOUT("config")
+assert(parentOpenCalls == 1 and PVEFrame:IsShown() and not settingsFrame:IsShown(),
+    "second config did not hide only the visible settings child")
+
+settingsFrame:Show()
+PVEFrame:Hide()
+assert(settingsFrame:IsShown() and not PVEFrame:IsShown(),
+    "fixture did not reproduce a shown child under a hidden parent")
+SlashCmdList.APSCOUT("config")
+assert(parentOpenCalls == 2 and PVEFrame:IsShown() and settingsFrame:IsShown(),
+    "config inverted the toggle instead of recovering effective visibility")
+
+PVEFrame:Hide()
+PVEFrame_ToggleFrame = function(sidePanelName, selection)
+    assert(sidePanelName == "GroupFinderFrame", "failed open used wrong PVE side panel")
+    assert(selection == "LFGListPVEStub", "failed open used wrong Group Finder selection")
+    parentOpenCalls = parentOpenCalls + 1
+end
+SlashCmdList.APSCOUT("config")
+assert(parentOpenCalls == 3 and not PVEFrame:IsShown() and settingsFrame:IsShown(),
+    "failed parent open changed the child's own visibility state")
 
 local toolButtonNames = {
     "ApplicantScoutSettingsStatusButton",
@@ -151,4 +184,4 @@ for _, name in ipairs(toolButtonNames) do
     assert(_G[name] == nil, name .. " should not be exposed in the settings UI")
 end
 
-print("ok settings-attach-watcher singleton=1 retired=1 attached=1 tools=0")
+print("ok settings-attach-watcher singleton=1 retired=1 attached=1 tools=0 parent-opens=3")

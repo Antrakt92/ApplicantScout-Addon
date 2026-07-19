@@ -6143,6 +6143,41 @@ _AttachSettingsPanel = function()
     settingsFrameAttached = true  -- LAST: any earlier failure leaves false → retry next PLAYER_LOGIN
 end
 
+entryCreationKeyState.ToggleSettingsPanel = function()
+    if not settingsFrameAttached then _AttachSettingsPanel() end
+    local parent = _G.PVEFrame
+    if not settingsFrame or not parent then
+        APSPrint("settings unavailable — PVEFrame not loaded; open LFG window once and retry")
+        return false, "unavailable"
+    end
+
+    -- IsShown() only reports the child's own flag. A shown child of a hidden
+    -- PVEFrame is not visible, so only treat the panel as open when both flags
+    -- are true. Otherwise the next slash toggle would hide an invisible child.
+    if parent:IsShown() and settingsFrame:IsShown() then
+        settingsFrame:Hide()
+        return false, "hidden"
+    end
+
+    if not parent:IsShown() then
+        local togglePVEFrame = _G.PVEFrame_ToggleFrame
+        if type(togglePVEFrame) ~= "function" then
+            APSPrint("settings unavailable — Group Finder open helper is missing")
+            return false, "parent-helper-unavailable"
+        end
+        -- Toggle only while the parent is hidden. This preserves Blizzard's
+        -- eligibility checks without risking a toggle that closes an open PVEFrame.
+        local ok = pcall(togglePVEFrame, "GroupFinderFrame", "LFGListPVEStub")
+        if not ok or not parent:IsShown() then
+            APSPrint("settings unavailable — Group Finder could not be opened")
+            return false, "parent-open-failed"
+        end
+    end
+
+    settingsFrame:Show()
+    return true, "shown"
+end
+
 
 -- ───────────────────────────────────────────────────────────
 -- slash commands
@@ -6407,17 +6442,7 @@ SlashCmdList.APSCOUT = function(msg)
     elseif msg == "competitive off" or msg == "nocompetitive" then
         _SetAutoMPlusPlaystyle(AUTO_MPLUS_PLAYSTYLE_DISABLED)
     elseif msg == "config" or msg == "settings" then
-        -- Toggle settings panel visibility. Lazy-attach if PLAYER_LOGIN race
-        -- left settingsFrameAttached=false (PVEFrame still loading). Open via
-        -- this slash remains available when the parent LFG window is hidden.
-        if not settingsFrameAttached then _AttachSettingsPanel() end
-        if not settingsFrame then
-            APSPrint("settings unavailable — PVEFrame not loaded; open LFG window once and retry")
-        elseif settingsFrame:IsShown() then
-            settingsFrame:Hide()
-        else
-            settingsFrame:Show()
-        end
+        entryCreationKeyState.ToggleSettingsPanel()
     elseif msg == "status" then
         entryCreationKeyState.PrintTroubleshootingStatus()
     elseif msg == "taintcheck" then
