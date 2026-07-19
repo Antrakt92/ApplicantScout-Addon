@@ -1988,7 +1988,7 @@ def test_roster_load_retry_callback_requires_current_token_and_session():
     retry_body = _slice_between(
         source,
         "entryCreationKeyState.ScheduleRosterLoadRetry = function(delay)",
-        "entryCreationKeyState.RosterUnitHasResolvedSpec = function(unit, guid)",
+        "entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()",
     )
 
     token_idx = retry_body.index("local retryToken = entryCreationKeyState.rosterLoadRetryToken")
@@ -2103,6 +2103,7 @@ def test_roster_item_level_uses_inspect_cache_for_non_self_units():
         "entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid, isSelf)"
         in request_body
     )
+    assert "entryCreationKeyState.RosterUnitHasResolvedSpec" not in source
     assert cache_idx < read_idx < request_idx
 
 
@@ -2630,7 +2631,7 @@ def test_roster_inspect_retry_scheduler_coalesces_duplicate_deadlines():
     retry_body = _slice_between(
         source,
         "entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)",
-        "entryCreationKeyState.RosterUnitHasResolvedSpec = function(unit, guid)",
+        "entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()",
     )
 
     assert "rosterInspectBatchRetryDeadline" in retry_body
@@ -2644,7 +2645,7 @@ def test_roster_inspect_retry_callback_requires_current_token():
     retry_body = _slice_between(
         source,
         "entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)",
-        "entryCreationKeyState.RosterUnitHasResolvedSpec = function(unit, guid)",
+        "entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()",
     )
 
     token_idx = retry_body.index("local retryToken = entryCreationKeyState.rosterInspectBatchRetryToken")

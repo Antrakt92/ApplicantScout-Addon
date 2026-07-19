@@ -3192,23 +3192,6 @@ entryCreationKeyState.ScheduleRosterLoadRetry = function(delay)
     return true
 end
 
-entryCreationKeyState.RosterUnitHasResolvedSpec = function(unit, guid)
-    if _UnitIsSelfForRoster(unit) then return true end
-    if guid ~= "" then
-        local cachedSpecID = _ClampUInt16(SafeNumber(rosterInspectSpecByGUID[guid], 0))
-        if cachedSpecID > 0 then return true end
-    end
-    if GetInspectSpecialization then
-        local ok, specID = pcall(GetInspectSpecialization, unit)
-        specID = ok and _ClampUInt16(SafeNumber(specID, 0)) or 0
-        if specID > 0 then
-            if guid ~= "" then rosterInspectSpecByGUID[guid] = specID end
-            return true
-        end
-    end
-    return false
-end
-
 entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()
     if not entryCreationKeyState.rosterInspectBatchDirtyPending then return true end
 
