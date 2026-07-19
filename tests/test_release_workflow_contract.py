@@ -79,6 +79,73 @@ CURRENT_ADDON_VERSION = _current_addon_version()
 CURRENT_ADDON_TAG = f"v{CURRENT_ADDON_VERSION}"
 CURRENT_COMPANION_VERSION = _current_paired_companion_version()
 CURRENT_COMPANION_TAG = f"v{CURRENT_COMPANION_VERSION}"
+CURRENT_CHECKOUT_COMMIT = subprocess.run(
+    ["git", "rev-parse", "HEAD"],
+    cwd=REPO_ROOT,
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout.strip()
+FAKE_COMPANION_COMMIT = "c" * 40
+
+
+def _valid_paired_release_fixture() -> tuple[dict[str, object], dict[str, object]]:
+    payload_names = [
+        f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}.exe",
+        f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}.exe.sha256",
+        f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}-portable.zip",
+    ]
+    files = [
+        {"name": name, "size": index + 10, "sha256": f"{index + 1:064x}"}
+        for index, name in enumerate(payload_names)
+    ]
+    manifest_name = (
+        f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}-release-manifest.json"
+    )
+    release = {
+        "tagName": CURRENT_COMPANION_TAG,
+        "isDraft": False,
+        "isPrerelease": False,
+        "isImmutable": True,
+        "assets": [
+            {
+                "name": file["name"],
+                "size": file["size"],
+                "digest": f"sha256:{file['sha256']}",
+                "apiUrl": (
+                    "https://api.github.com/repos/Antrakt92/"
+                    f"ApplicantScout-Companion/releases/assets/{index + 1}"
+                ),
+            }
+            for index, file in enumerate(files)
+        ]
+        + [
+            {
+                "name": manifest_name,
+                "size": 100,
+                "digest": "sha256:" + "f" * 64,
+                "apiUrl": (
+                    "https://api.github.com/repos/Antrakt92/"
+                    "ApplicantScout-Companion/releases/assets/99"
+                ),
+            }
+        ],
+    }
+    manifest = {
+        "schemaVersion": 2,
+        "repository": "Antrakt92/ApplicantScout-Companion",
+        "purpose": "Release",
+        "tag": CURRENT_COMPANION_TAG,
+        "commit": FAKE_COMPANION_COMMIT,
+        "pairedAddonTag": CURRENT_ADDON_TAG,
+        "pairedAddonCommit": CURRENT_CHECKOUT_COMMIT,
+        "workflowRunId": "1",
+        "workflowRunAttempt": 1,
+        "files": files,
+        "portableEntries": [],
+        "releaseCopy": {},
+    }
+    return release, manifest
 
 
 def _workflow_source() -> str:
@@ -264,20 +331,39 @@ def _fake_gh_release_view(
     exit_code: int = 0,
     expected_repo: str = "Antrakt92/ApplicantScout-Companion",
     expected_tag: str | None = None,
-    expected_json: str = "tagName,isDraft,isPrerelease,assets",
+    expected_json: str = "tagName,isDraft,isPrerelease,isImmutable,assets",
+    manifest_json: dict[str, object] | None = None,
+    companion_commit: str = FAKE_COMPANION_COMMIT,
+    addon_commit: str = CURRENT_CHECKOUT_COMMIT,
+    default_immutable: bool = True,
     stderr: str = "",
 ) -> Path:
     script = tmp_path / "fake-gh.ps1"
     args_path = tmp_path / "fake-gh-args.txt"
-    stdout = stdout_text if stdout_text is not None else json.dumps(release_json or {})
+    normalized_release = dict(release_json or {})
+    if default_immutable:
+        normalized_release.setdefault("isImmutable", True)
+    stdout = stdout_text if stdout_text is not None else json.dumps(normalized_release)
+    manifest_stdout = json.dumps(manifest_json) if manifest_json is not None else ""
     script.write_text(
         "\n".join(
             [
                 f"Set-Content -LiteralPath {str(args_path)!r} -Value ($args -join \"`n\") -Encoding UTF8",
-                "if ($args.Count -ne 7 -or $args[0] -ne 'release' -or $args[1] -ne 'view') {",
-                "    Write-Error 'unexpected gh invocation'",
-                "    exit 2",
+                "if ($args.Count -eq 4 -and $args[0] -eq 'api' -and $args[1] -eq '-H') {",
+                "    if ($args[2] -ne 'Accept: application/octet-stream' -or $args[3] -notmatch '/releases/assets/[0-9]+$') { Write-Error 'unexpected manifest download'; exit 2 }",
+                f"    if (-not {manifest_stdout!r}) {{ Write-Error 'manifest was not configured'; exit 2 }}",
+                f"    Write-Output {manifest_stdout!r}",
+                "    exit 0",
                 "}",
+                "if ($args.Count -eq 2 -and $args[0] -eq 'api' -and $args[1] -match '/git/ref/tags/') {",
+                "    $repo = if ($args[1] -match 'ApplicantScout-Companion') { 'companion' } elseif ($args[1] -match 'ApplicantScout-Addon') { 'addon' } else { 'wrong' }",
+                "    if ($repo -eq 'wrong') { Write-Error 'unexpected tag repo'; exit 2 }",
+                f"    $sha = if ($repo -eq 'companion') {{ {companion_commit!r} }} else {{ {addon_commit!r} }}",
+                "    $tag = ($args[1] -split '/git/ref/tags/', 2)[1]",
+                "    Write-Output (@{ ref = \"refs/tags/$tag\"; object = @{ type = 'commit'; sha = $sha } } | ConvertTo-Json -Compress)",
+                "    exit 0",
+                "}",
+                "if ($args.Count -ne 7 -or $args[0] -ne 'release' -or $args[1] -ne 'view') { Write-Error 'unexpected gh invocation'; exit 2 }",
                 f"if ($args[3] -ne '--repo' -or $args[4] -ne {expected_repo!r}) {{",
                 "    Write-Error 'unexpected gh repo'",
                 "    exit 2",
@@ -436,6 +522,7 @@ def test_release_requires_verified_exact_tag_marketplace_package_before_upload()
         release,
         "Verify release tag is reachable from origin/main",
         "Refuse existing release",
+        "Revalidate paired immutable release identity",
         "Package and release",
     )
 
@@ -479,6 +566,7 @@ def test_release_job_requires_tag_commit_reachable_from_origin_main():
         "Checkout",
         "Verify release tag is reachable from origin/main",
         "Refuse existing release",
+        "Revalidate paired immutable release identity",
         "Package and release",
     )
 
@@ -487,11 +575,18 @@ def test_release_workflow_requires_published_companion_assets_before_packaging()
     workflow = _workflow_source()
     preflight = _job_block(workflow, "preflight")
     release = _job_block(workflow, "release")
+    revalidation = _step_block(
+        release, "Revalidate paired immutable release identity"
+    )
 
     assert "RequirePublishedPairedCompanionAssets" in preflight
     assert "ApplicantScoutCompanionSetup-" not in release
-    assert "gh release view" in release
-    assert release.index("gh release view") < release.index("BigWigsMods/packager")
+    assert "-RequirePublishedPairedCompanionAssets" in revalidation
+    assert "-PublishedReleaseWaitSeconds 0" in revalidation
+    assert "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in revalidation
+    assert release.index("Revalidate paired immutable release identity") < release.index(
+        "BigWigsMods/packager"
+    )
 
 
 def test_release_job_refuses_existing_release_without_failing_open_on_gh_errors():
@@ -716,38 +811,44 @@ def test_shared_paired_release_policy_stays_in_sync(pytestconfig):
         ), f"Shared release-policy array drifted: ${name}"
 
 
+@pytest.mark.parametrize("addon_tag", [CURRENT_ADDON_TAG, CURRENT_ADDON_VERSION])
 def test_release_version_check_accepts_published_paired_companion_assets(
     tmp_path: Path,
+    addon_tag: str,
 ):
+    release_json, manifest_json = _valid_paired_release_fixture()
     gh = _fake_gh_release_view(
         tmp_path,
         expected_tag=CURRENT_COMPANION_TAG,
-        release_json={
-            "tagName": CURRENT_COMPANION_TAG,
-            "isDraft": False,
-            "isPrerelease": False,
-            "assets": [
-                {"name": f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}.exe"},
-                {
-                    "name": (
-                        f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}"
-                        ".exe.sha256"
-                    )
-                },
-                {
-                    "name": (
-                        f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}"
-                        "-portable.zip"
-                    )
-                },
-                {
-                    "name": (
-                        f"ApplicantScoutCompanion-{CURRENT_COMPANION_VERSION}"
-                        "-release-manifest.json"
-                    )
-                },
-            ],
-        },
+        release_json=release_json,
+        manifest_json=manifest_json,
+    )
+
+    result = _run_release_check(
+        "-Tag",
+        addon_tag,
+        "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath",
+        str(gh),
+        "-PublishedReleaseWaitSeconds",
+        "0",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("immutable", [False, None, "true", 1])
+def test_release_version_check_rejects_mutable_paired_companion_release(
+    tmp_path: Path,
+    immutable: object,
+):
+    release_json, manifest_json = _valid_paired_release_fixture()
+    release_json["isImmutable"] = immutable
+    gh = _fake_gh_release_view(
+        tmp_path,
+        expected_tag=CURRENT_COMPANION_TAG,
+        release_json=release_json,
+        manifest_json=manifest_json,
     )
 
     result = _run_release_check(
@@ -760,7 +861,113 @@ def test_release_version_check_accepts_published_paired_companion_assets(
         "0",
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "must be immutable" in (result.stdout + result.stderr)
+
+
+def test_release_version_check_rejects_missing_immutable_state(tmp_path: Path):
+    release_json, manifest_json = _valid_paired_release_fixture()
+    del release_json["isImmutable"]
+    gh = _fake_gh_release_view(
+        tmp_path,
+        expected_tag=CURRENT_COMPANION_TAG,
+        release_json=release_json,
+        manifest_json=manifest_json,
+        default_immutable=False,
+    )
+
+    result = _run_release_check(
+        "-Tag",
+        CURRENT_ADDON_TAG,
+        "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath",
+        str(gh),
+        "-PublishedReleaseWaitSeconds",
+        "0",
+    )
+
+    assert result.returncode != 0
+    assert "must be immutable" in (result.stdout + result.stderr)
+
+
+def test_release_version_check_rejects_moved_remote_addon_tag(tmp_path: Path):
+    release_json, manifest_json = _valid_paired_release_fixture()
+    gh = _fake_gh_release_view(
+        tmp_path,
+        expected_tag=CURRENT_COMPANION_TAG,
+        release_json=release_json,
+        manifest_json=manifest_json,
+        addon_commit="a" * 40,
+    )
+
+    result = _run_release_check(
+        "-Tag",
+        CURRENT_ADDON_TAG,
+        "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath",
+        str(gh),
+        "-PublishedReleaseWaitSeconds",
+        "0",
+    )
+
+    assert result.returncode != 0
+    assert "moved away from the release checkout" in (result.stdout + result.stderr)
+
+
+@pytest.mark.parametrize("field", ["pairedAddonTag", "pairedAddonCommit", "commit"])
+def test_release_version_check_rejects_mismatched_paired_manifest_identity(
+    tmp_path: Path,
+    field: str,
+):
+    release_json, manifest_json = _valid_paired_release_fixture()
+    manifest_json[field] = "wrong"
+    gh = _fake_gh_release_view(
+        tmp_path,
+        expected_tag=CURRENT_COMPANION_TAG,
+        release_json=release_json,
+        manifest_json=manifest_json,
+    )
+
+    result = _run_release_check(
+        "-Tag",
+        CURRENT_ADDON_TAG,
+        "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath",
+        str(gh),
+        "-PublishedReleaseWaitSeconds",
+        "0",
+    )
+
+    assert result.returncode != 0
+    assert "manifest" in (result.stdout + result.stderr)
+
+
+def test_release_version_check_rejects_manifest_asset_digest_mismatch(
+    tmp_path: Path,
+):
+    release_json, manifest_json = _valid_paired_release_fixture()
+    payload_asset = release_json["assets"][0]
+    assert isinstance(payload_asset, dict)
+    payload_asset["digest"] = "sha256:" + "0" * 64
+    gh = _fake_gh_release_view(
+        tmp_path,
+        expected_tag=CURRENT_COMPANION_TAG,
+        release_json=release_json,
+        manifest_json=manifest_json,
+    )
+
+    result = _run_release_check(
+        "-Tag",
+        CURRENT_ADDON_TAG,
+        "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath",
+        str(gh),
+        "-PublishedReleaseWaitSeconds",
+        "0",
+    )
+
+    assert result.returncode != 0
+    assert "does not match its immutable manifest" in (result.stdout + result.stderr)
 
 
 def test_release_version_check_rejects_unexpected_paired_companion_release_asset(

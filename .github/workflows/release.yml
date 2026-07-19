@@ -235,6 +235,16 @@ jobs:
             exit "$status"
           fi
 
+      - name: Revalidate paired immutable release identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          .\scripts\check-release-version.ps1
+          -Tag $env:GITHUB_REF_NAME
+          -RequirePublishedPairedCompanionAssets
+          -PublishedReleaseWaitSeconds 0
+
       - name: Package and release
         # BigWigsMods/packager v2 pinned to the peeled commit from the upstream tag.
         uses: BigWigsMods/packager@6d50adb6e8517eefef63f4afb16a6518166a6b28

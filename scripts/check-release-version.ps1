@@ -169,7 +169,7 @@ function Invoke-GitHubReleaseView {
 
     $ErrorPath = [System.IO.Path]::GetTempFileName()
     try {
-        $JsonLines = & $CliPath release view $ReleaseTag --repo $Repo --json "tagName,isDraft,isPrerelease,assets" 2> $ErrorPath
+        $JsonLines = & $CliPath release view $ReleaseTag --repo $Repo --json "tagName,isDraft,isPrerelease,isImmutable,assets" 2> $ErrorPath
         $ExitCode = $LASTEXITCODE
         $ErrorRaw = Get-Content -LiteralPath $ErrorPath -Raw -ErrorAction SilentlyContinue
         $ErrorText = if ($null -eq $ErrorRaw) { "" } else { $ErrorRaw.Trim() }
@@ -216,6 +216,9 @@ function Test-GitHubReleaseAssets {
     }
     if ($Release.isPrerelease) {
         throw "GitHub Release $ReleaseTag in $Repo is marked prerelease; publish the paired stable companion release before releasing ApplicantScout."
+    }
+    if ($Release.isImmutable -isnot [bool] -or -not $Release.isImmutable) {
+        throw "GitHub Release $ReleaseTag in $Repo must be immutable before releasing ApplicantScout."
     }
 
     $Assets = if ($null -eq $Release.assets) { @() } else { @($Release.assets) }
@@ -266,7 +269,7 @@ function Wait-GitHubReleaseAssets {
                 -ReleaseTag $ReleaseTag `
                 -ExpectedAssets $ExpectedAssets `
                 -ProtectedAssetPatterns $ProtectedAssetPatterns
-            return
+            return $Release
         }
         catch {
             $LastError = $_.Exception.Message
@@ -278,6 +281,195 @@ function Wait-GitHubReleaseAssets {
     } while ($true)
 
     throw $LastError
+}
+
+function Invoke-GitHubCliText {
+    param(
+        [string]$CliPath,
+        [string[]]$Arguments,
+        [string]$Description
+    )
+
+    $ErrorPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $OutputLines = & $CliPath @Arguments 2> $ErrorPath
+        $ExitCode = $LASTEXITCODE
+        $ErrorRaw = Get-Content -LiteralPath $ErrorPath -Raw -ErrorAction SilentlyContinue
+        $ErrorText = if ($null -eq $ErrorRaw) { "" } else { $ErrorRaw.Trim() }
+        if ($ExitCode -ne 0) {
+            $Message = "$Description failed with exit code $ExitCode."
+            if ($ErrorText) {
+                $Message = "$Message $ErrorText"
+            }
+            throw $Message
+        }
+
+        $OutputText = ($OutputLines -join "`n").Trim()
+        if (-not $OutputText) {
+            throw "$Description returned empty output."
+        }
+        return $OutputText
+    }
+    finally {
+        if (Test-Path -LiteralPath $ErrorPath) {
+            Remove-Item -LiteralPath $ErrorPath -Force
+        }
+    }
+}
+
+function Resolve-GitHubTagCommit {
+    param(
+        [string]$CliPath,
+        [string]$Repo,
+        [string]$ReleaseTag
+    )
+
+    $RefText = Invoke-GitHubCliText `
+        -CliPath $CliPath `
+        -Arguments @("api", "repos/$Repo/git/ref/tags/$ReleaseTag") `
+        -Description "Exact GitHub tag lookup for $Repo $ReleaseTag"
+    try {
+        $Ref = $RefText | ConvertFrom-Json
+    }
+    catch {
+        throw "Exact GitHub tag lookup returned malformed JSON for $Repo $ReleaseTag."
+    }
+    if ([string]$Ref.ref -cne "refs/tags/$ReleaseTag") {
+        throw "Exact GitHub tag lookup returned the wrong ref for $Repo $ReleaseTag."
+    }
+
+    $Object = $Ref.object
+    for ($Depth = 0; $Depth -lt 5; $Depth++) {
+        $ObjectType = [string]$Object.type
+        $ObjectSha = [string]$Object.sha
+        if ($ObjectSha -notmatch '^[0-9a-f]{40}$') {
+            throw "GitHub tag $ReleaseTag in $Repo returned an invalid object SHA."
+        }
+        if ($ObjectType -ceq "commit") {
+            return $ObjectSha
+        }
+        if ($ObjectType -cne "tag") {
+            throw "GitHub tag $ReleaseTag in $Repo points to unsupported object type: $ObjectType"
+        }
+
+        $TagText = Invoke-GitHubCliText `
+            -CliPath $CliPath `
+            -Arguments @("api", "repos/$Repo/git/tags/$ObjectSha") `
+            -Description "Annotated GitHub tag peel for $Repo $ReleaseTag"
+        try {
+            $TagObject = $TagText | ConvertFrom-Json
+        }
+        catch {
+            throw "Annotated GitHub tag lookup returned malformed JSON for $Repo $ReleaseTag."
+        }
+        $Object = $TagObject.object
+    }
+
+    throw "GitHub tag $ReleaseTag in $Repo exceeds the supported annotated-tag depth."
+}
+
+function Test-PublishedCompanionManifest {
+    param(
+        [string]$CliPath,
+        [object]$Release,
+        [string]$Repo,
+        [string]$ReleaseTag,
+        [string]$ManifestName,
+        [string[]]$ExpectedPayloadAssets,
+        [string]$AddonTag
+    )
+
+    $Assets = @($Release.assets)
+    $ManifestAssets = @($Assets | Where-Object { $_.name -ceq $ManifestName })
+    if ($ManifestAssets.Count -ne 1) {
+        throw "GitHub Release $ReleaseTag in $Repo must contain exactly one $ManifestName asset."
+    }
+    $ManifestAsset = $ManifestAssets[0]
+    $ManifestApiUrl = [string]$ManifestAsset.apiUrl
+    if ($ManifestApiUrl -notmatch '^https://api\.github\.com/repos/Antrakt92/ApplicantScout-Companion/releases/assets/[0-9]+$') {
+        throw "GitHub Release $ReleaseTag in $Repo returned an invalid manifest asset API URL."
+    }
+
+    $ManifestText = Invoke-GitHubCliText `
+        -CliPath $CliPath `
+        -Arguments @("api", "-H", "Accept: application/octet-stream", $ManifestApiUrl) `
+        -Description "Paired companion release manifest download"
+    try {
+        $Manifest = $ManifestText | ConvertFrom-Json
+    }
+    catch {
+        throw "Paired companion release manifest is malformed JSON."
+    }
+
+    if ($Manifest.schemaVersion -isnot [long] -and $Manifest.schemaVersion -isnot [int]) {
+        throw "Paired companion release manifest schemaVersion must be an integer."
+    }
+    if ([long]$Manifest.schemaVersion -ne 2) {
+        throw "Unsupported paired companion release manifest schemaVersion: $($Manifest.schemaVersion)"
+    }
+    if ([string]$Manifest.repository -cne $Repo -or [string]$Manifest.purpose -cne "Release") {
+        throw "Paired companion release manifest repository or purpose does not match the published release."
+    }
+    if ([string]$Manifest.tag -cne $ReleaseTag) {
+        throw "Paired companion release manifest tag does not match $ReleaseTag."
+    }
+
+    $CompanionCommit = Resolve-GitHubTagCommit `
+        -CliPath $CliPath `
+        -Repo $Repo `
+        -ReleaseTag $ReleaseTag
+    if ($CompanionCommit -notmatch '^[0-9a-f]{40}$' -or [string]$Manifest.commit -cne $CompanionCommit) {
+        throw "Paired companion release manifest commit does not match the immutable companion tag."
+    }
+
+    $AddonCommit = Resolve-GitHubTagCommit `
+        -CliPath $CliPath `
+        -Repo "Antrakt92/ApplicantScout-Addon" `
+        -ReleaseTag $AddonTag
+    $CheckoutCommit = (& git rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $CheckoutCommit -notmatch '^[0-9a-f]{40}$') {
+        throw "Could not resolve the addon release checkout commit."
+    }
+    if ($AddonCommit -cne $CheckoutCommit) {
+        throw "Remote addon tag $AddonTag moved away from the release checkout commit."
+    }
+    if ([string]$Manifest.pairedAddonTag -cne $AddonTag -or
+        [string]$Manifest.pairedAddonCommit -cne $AddonCommit) {
+        throw "Paired companion release manifest does not bind to addon $AddonTag at $AddonCommit."
+    }
+
+    $ManifestFiles = @($Manifest.files)
+    if ($ManifestFiles.Count -ne $ExpectedPayloadAssets.Count) {
+        throw "Paired companion release manifest file count does not match the published payload contract."
+    }
+    $SeenNames = @{}
+    foreach ($File in $ManifestFiles) {
+        $Name = [string]$File.name
+        if ($ExpectedPayloadAssets -cnotcontains $Name -or $SeenNames.ContainsKey($Name)) {
+            throw "Paired companion release manifest contains an unexpected or duplicate file: $Name"
+        }
+        $SeenNames[$Name] = $true
+        if ($File.size -isnot [long] -and $File.size -isnot [int]) {
+            throw "Paired companion release manifest size for $Name must be an integer."
+        }
+        if ([long]$File.size -lt 1 -or [string]$File.sha256 -notmatch '^[0-9a-f]{64}$') {
+            throw "Paired companion release manifest has invalid size or SHA-256 for $Name."
+        }
+        $MatchingAssets = @($Assets | Where-Object { $_.name -ceq $Name })
+        if ($MatchingAssets.Count -ne 1) {
+            throw "Published companion release does not contain exactly one payload asset named $Name."
+        }
+        $ReleaseAsset = $MatchingAssets[0]
+        if ([long]$ReleaseAsset.size -ne [long]$File.size -or
+            [string]$ReleaseAsset.digest -cne "sha256:$($File.sha256)") {
+            throw "Published companion asset metadata does not match its immutable manifest: $Name"
+        }
+    }
+    foreach ($ExpectedName in $ExpectedPayloadAssets) {
+        if (-not $SeenNames.ContainsKey($ExpectedName)) {
+            throw "Paired companion release manifest is missing payload file: $ExpectedName"
+        }
+    }
 }
 
 if ([string]::IsNullOrWhiteSpace($Tag)) {
@@ -365,19 +557,20 @@ if (-not [string]::IsNullOrWhiteSpace($PairedCompanionRefOutputPath)) {
 
 if ($RequirePublishedPairedCompanionAssets) {
     $PairedCompanionTag = "v$PairedCompanionVersion"
-    $ExpectedCompanionAssets = @(
+    $ExpectedCompanionPayloadAssets = @(
         "ApplicantScoutCompanionSetup-$PairedCompanionVersion.exe",
         "ApplicantScoutCompanionSetup-$PairedCompanionVersion.exe.sha256",
-        "ApplicantScoutCompanion-$PairedCompanionVersion-portable.zip",
-        "ApplicantScoutCompanion-$PairedCompanionVersion-release-manifest.json"
+        "ApplicantScoutCompanion-$PairedCompanionVersion-portable.zip"
     )
+    $CompanionManifestName = "ApplicantScoutCompanion-$PairedCompanionVersion-release-manifest.json"
+    $ExpectedCompanionAssets = @($ExpectedCompanionPayloadAssets) + @($CompanionManifestName)
     $ProtectedCompanionAssetPatterns = @(
         '^ApplicantScoutCompanionSetup-\d+\.\d+\.\d+\.exe$',
         '^ApplicantScoutCompanionSetup-\d+\.\d+\.\d+\.exe\.sha256$',
         '^ApplicantScoutCompanion-\d+\.\d+\.\d+-portable\.zip$',
         '^ApplicantScoutCompanion-\d+\.\d+\.\d+-release-manifest\.json$'
     )
-    Wait-GitHubReleaseAssets `
+    $PublishedCompanionRelease = Wait-GitHubReleaseAssets `
         -CliPath $GitHubCliPath `
         -Repo "Antrakt92/ApplicantScout-Companion" `
         -ReleaseTag $PairedCompanionTag `
@@ -385,6 +578,14 @@ if ($RequirePublishedPairedCompanionAssets) {
         -ProtectedAssetPatterns $ProtectedCompanionAssetPatterns `
         -WaitSeconds $PublishedReleaseWaitSeconds `
         -PollSeconds $PublishedReleasePollSeconds
+    Test-PublishedCompanionManifest `
+        -CliPath $GitHubCliPath `
+        -Release $PublishedCompanionRelease `
+        -Repo "Antrakt92/ApplicantScout-Companion" `
+        -ReleaseTag $PairedCompanionTag `
+        -ManifestName $CompanionManifestName `
+        -ExpectedPayloadAssets $ExpectedCompanionPayloadAssets `
+        -AddonTag "v$TagVersion"
 }
 
 Write-Host "Release version check passed: $TagName -> $TagVersion"
