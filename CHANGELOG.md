@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 0.7.1 - 20-Jul-2026 - Companion 0.11.1 QR capture recovery
+
+This paired addon + companion patch restores automatic applicant and Party
+updates when fractional UI scaling or a missed interaction-close event would
+otherwise leave the companion on stale data until `/reload`.
+
+### Fixed
+
+- QR modules are aligned to physical screen pixels and use the standard
+  four-module quiet zone, keeping dense JPG captures decodable across common
+  resolutions and UI scales.
+- World transitions clear stale merchant, bank, trade, auction, taxi, and quest
+  suppression state so a missing close event cannot block every later capture.
+- Companion `0.11.1` recovers older fractionally scaled top-left QR captures
+  while preserving screenshots that do not validate as ApplicantScout data.
+
+### Improved
+
+- Companion QR recovery checks the bounded top-left transport candidate before
+  a full-screen scan and avoids repeatedly rescanning unchanged manual images.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.11.1`.
+- APS1 payload compatibility is unchanged; normal and terminal snapshots remain
+  v9, with v10 used only for bounded overflow fragments.
+
 ## 0.7.0 - 20-Jul-2026 - Companion 0.11.0 overflow transport
 
 This paired addon + companion release keeps normal and terminal snapshots on
