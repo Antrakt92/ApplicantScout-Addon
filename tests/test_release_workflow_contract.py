@@ -154,6 +154,12 @@ def _workflow_source() -> str:
     )
 
 
+def _recovery_workflow_source() -> str:
+    return (
+        REPO_ROOT / ".github" / "workflows" / "recover-preupload-release.yml"
+    ).read_text(encoding="utf-8")
+
+
 def _read_repo_text(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
@@ -660,6 +666,154 @@ def test_release_rejects_reruns_before_checkout_and_serializes_tags():
         "Reject ambiguous marketplace rerun",
         "Checkout exact immutable release tag",
     )
+
+
+def test_preupload_recovery_is_manual_exact_run_only_and_serialized():
+    workflow = _recovery_workflow_source()
+    recovery = _job_block(workflow, "recover-github-release")
+    checkout = _step_block(recovery, "Checkout exact release tag")
+
+    assert re.search(r"(?m)^  workflow_dispatch:\s*$", workflow)
+    assert re.search(r"(?m)^      tag:\s*$", workflow)
+    assert re.search(r"(?m)^      source_run_id:\s*$", workflow)
+    assert re.search(r"(?m)^      confirm_preupload_timeout:\s*$", workflow)
+    assert "  push:" not in workflow
+    assert "  pull_request:" not in workflow
+    assert "group: applicantscout-addon-release" in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert "if: ${{ inputs.confirm_preupload_timeout }}" in recovery
+    assert "ref: ${{ inputs.tag }}" in checkout
+    assert "fetch-depth: 0" in checkout
+    assert "persist-credentials: false" in checkout
+    assert re.search(
+        r"(?m)^    permissions:\n      actions: read\n      contents: write\s*$",
+        recovery,
+    )
+
+
+def test_preupload_recovery_proves_source_failed_before_all_writers():
+    workflow = _recovery_workflow_source()
+    recovery = _job_block(workflow, "recover-github-release")
+    identity = _step_block(recovery, "Verify pre-upload timeout recovery identity")
+
+    assert "Package and release" in identity
+    assert "[string]$Run.path -cne '.github/workflows/release.yml'" in identity
+    assert "[string]$Run.event -cne 'push'" in identity
+    assert "[string]$Run.head_branch -cne $env:RELEASE_TAG" in identity
+    assert "[string]$Run.head_sha -cne $ReleaseCommit" in identity
+    assert "git merge-base --is-ancestor" in identity
+    assert "attempts/1/jobs?per_page=100" in identity
+    assert "Verify paired companion published release assets" in identity
+    assert "[string]$Package.conclusion -cne 'success'" in identity
+    for step_name in (
+        "Checkout addon",
+        "Verify release tag is reachable from origin/main",
+        "Check release version",
+        "Wait for paired companion tag",
+        "Checkout paired companion",
+        "Validate paired companion metadata",
+        "Set up Python",
+        "Install Python dependencies",
+        "Install Lua 5.1",
+        "Install pinned LuaLS",
+        "Check addon Lua diagnostics",
+        "Check paired companion and addon contracts",
+        "Development package smoke",
+    ):
+        assert step_name in identity
+    assert "[string]$RequiredStep.conclusion -cne 'success'" in identity
+    assert "@('release', 'marketplace-release', 'verify-curseforge')" in identity
+    assert "[string]$Writer.conclusion -cne 'skipped'" in identity
+    assert "Reject ambiguous release rerun" in identity
+    assert "applicantscout-addon-release-$ReleaseCommit" in identity
+    assert "[bool]$Artifacts[0].expired" in identity
+    assert "[long]$Artifacts[0].workflow_run.id" in identity
+    assert "[string]$Artifacts[0].workflow_run.head_sha" in identity
+    assert "Release $env:RELEASE_TAG already exists" in identity
+    assert "Could not prove that release" in identity
+
+
+def test_preupload_recovery_revalidates_every_gate_before_publication():
+    workflow = _recovery_workflow_source()
+    recovery = _job_block(workflow, "recover-github-release")
+    paired = _step_block(recovery, "Revalidate paired immutable companion release")
+    credentials = _step_block(recovery, "Require intended publication credentials")
+    policy = _step_block(recovery, "Verify immutable release policy")
+    download = _step_block(recovery, "Download verified source-run bundle")
+    publish = _step_block(recovery, "Publish verified immutable GitHub release")
+
+    assert "-RequirePublishedPairedCompanionAssets" in paired
+    assert "-PublishedReleaseWaitSeconds 0" in paired
+    assert "CF_API_KEY" in credentials
+    assert "WAGO_API_TOKEN" in credentials
+    assert "IMMUTABLE_RELEASES_READ_TOKEN" in policy
+    assert "immutable-releases" in policy
+    assert download.count("\n        env:\n") == 1
+    assert "gh run download $env:SOURCE_RUN_ID" in download
+    assert "--name $env:ARTIFACT_NAME" in download
+    assert "scripts/check_addon_archive.py" in publish
+    assert "scripts/create_release_metadata.py" in publish
+    assert "$OriginalMetadataHash -cne $RegeneratedMetadataHash" in publish
+    assert "gh release create" in publish
+    assert "--draft" in publish
+    assert "gh release edit" in publish
+    assert "$Published.immutable -is [bool]" in publish
+    assert publish.count("-RequirePublishedPairedCompanionAssets") == 2
+    _assert_order(
+        recovery,
+        "Verify pre-upload timeout recovery identity",
+        "Revalidate paired immutable companion release",
+        "Require intended publication credentials",
+        "Verify immutable release policy",
+        "Download verified source-run bundle",
+        "Publish verified immutable GitHub release",
+    )
+
+
+def test_preupload_recovery_publishes_marketplaces_only_after_github():
+    workflow = _recovery_workflow_source()
+    marketplace = _job_block(workflow, "marketplace-release")
+    verifier = _job_block(workflow, "verify-curseforge")
+    checkout = _step_block(marketplace, "Checkout exact immutable release tag")
+    revalidate = _step_block(
+        marketplace, "Revalidate immutable GitHub and companion releases"
+    )
+    credentials = _step_block(marketplace, "Require intended marketplace credentials")
+    upload = _step_block(marketplace, "Publish exact tag to marketplaces")
+    verify = _step_block(verifier, "Verify CurseForge public release propagation")
+
+    assert "needs: recover-github-release" in marketplace
+    assert re.search(r"(?m)^    permissions:\n      contents: read\s*$", marketplace)
+    assert "ref: ${{ inputs.tag }}" in checkout
+    assert "persist-credentials: false" in checkout
+    assert "-RequirePublishedPairedCompanionAssets" in revalidate
+    assert "$Release.immutable -isnot [bool]" in revalidate
+    assert "CF_API_KEY" in credentials
+    assert "WAGO_API_TOKEN" in credentials
+    assert (
+        "uses: BigWigsMods/packager@6d50adb6e8517eefef63f4afb16a6518166a6b28"
+        in upload
+    )
+    assert "GITHUB_OAUTH" not in marketplace
+    assert "needs: marketplace-release" in verifier
+    assert "contents: read" in verifier
+    assert "--tag \"$RELEASE_TAG\"" in verify
+    assert "--project-id 1541576" in verify
+    assert "--wait-seconds 900" in verify
+
+
+def test_preupload_recovery_pins_external_actions_to_commit_shas():
+    action_refs = _workflow_action_refs(_recovery_workflow_source())
+
+    assert Counter(action for action, _ in action_refs) == Counter(
+        {
+            "actions/checkout": 3,
+            "actions/setup-python": 1,
+            "BigWigsMods/packager": 1,
+        }
+    )
+    for action, ref in action_refs:
+        assert _SHA_REF_RE.fullmatch(ref), f"{action} must be pinned to a full commit SHA"
 
 
 def test_release_requires_immutable_policy_before_draft_publication():

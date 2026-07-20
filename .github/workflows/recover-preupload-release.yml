@@ -1,0 +1,457 @@
+name: Recover pre-upload paired release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Exact addon release tag whose first attempt timed out before publication'
+        required: true
+        type: string
+      source_run_id:
+        description: 'Failed Package and release run containing the verified exact-tag bundle'
+        required: true
+        type: string
+      confirm_preupload_timeout:
+        description: 'Confirm the source run failed only at the paired companion wait before writer jobs'
+        required: true
+        type: boolean
+
+concurrency:
+  group: applicantscout-addon-release
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag }}
+  SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+
+jobs:
+  recover-github-release:
+    if: ${{ inputs.confirm_preupload_timeout }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify pre-upload timeout recovery identity
+        id: recovery-identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw "Recovery tag must use canonical vX.Y.Z format."
+          }
+          if ($env:SOURCE_RUN_ID -notmatch '^[1-9][0-9]*$') {
+            throw "Source run ID must be a positive integer."
+          }
+
+          git fetch --force --no-tags origin "+refs/tags/$env:RELEASE_TAG`:refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not refresh release tag $env:RELEASE_TAG."
+          }
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not refresh origin/main."
+          }
+          $ReleaseCommit = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          $TagCommit = (git rev-parse "$env:RELEASE_TAG^{commit}").Trim().ToLowerInvariant()
+          if ($LASTEXITCODE -ne 0 -or
+              $ReleaseCommit -notmatch '^[0-9a-f]{40}$' -or
+              $TagCommit -cne $ReleaseCommit) {
+            throw "Checkout does not match exact release tag $env:RELEASE_TAG."
+          }
+          git merge-base --is-ancestor $ReleaseCommit refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release tag commit is not reachable from origin/main."
+          }
+
+          $Run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or
+              $null -eq $Run -or
+              [string]$Run.name -cne 'Package and release' -or
+              [string]$Run.path -cne '.github/workflows/release.yml' -or
+              [string]$Run.event -cne 'push' -or
+              [string]$Run.status -cne 'completed' -or
+              [string]$Run.conclusion -cne 'failure' -or
+              [string]$Run.head_branch -cne $env:RELEASE_TAG -or
+              [string]$Run.head_sha -cne $ReleaseCommit -or
+              [int]$Run.run_attempt -lt 1) {
+            throw "Source run does not match the failed exact-tag release identity."
+          }
+
+          function Get-SingleJob([object]$Jobs, [string]$Name) {
+            $Matches = @($Jobs.jobs | Where-Object { [string]$_.name -ceq $Name })
+            if ($Matches.Count -ne 1) {
+              throw "Expected exactly one source-run job named $Name."
+            }
+            return $Matches[0]
+          }
+
+          function Get-SingleStep([object]$Job, [string]$Name) {
+            $Matches = @($Job.steps | Where-Object { [string]$_.name -ceq $Name })
+            if ($Matches.Count -ne 1) {
+              throw "Expected exactly one source-run step named $Name."
+            }
+            return $Matches[0]
+          }
+
+          $AttemptOne = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID/attempts/1/jobs?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $null -eq $AttemptOne) {
+            throw "Could not inspect source run attempt 1."
+          }
+          $Preflight = Get-SingleJob $AttemptOne 'preflight'
+          $Package = Get-SingleJob $AttemptOne 'marketplace-package'
+          if ([string]$Preflight.conclusion -cne 'failure' -or
+              [string]$Package.conclusion -cne 'success') {
+            throw "Attempt 1 is not a failed preflight with a successful credentialless package."
+          }
+          $PairedWait = Get-SingleStep $Preflight 'Verify paired companion published release assets'
+          $UnexpectedFailures = @(
+            $Preflight.steps | Where-Object {
+              [string]$_.conclusion -ceq 'failure' -and
+              [string]$_.name -cne 'Verify paired companion published release assets'
+            }
+          )
+          if ([string]$PairedWait.conclusion -cne 'failure' -or $UnexpectedFailures.Count -ne 0) {
+            throw "Attempt 1 did not fail exclusively at the paired companion publication wait."
+          }
+          foreach ($StepName in @(
+            'Checkout addon',
+            'Verify release tag is reachable from origin/main',
+            'Check release version',
+            'Wait for paired companion tag',
+            'Checkout paired companion',
+            'Validate paired companion metadata',
+            'Set up Python',
+            'Install Python dependencies',
+            'Install Lua 5.1',
+            'Install pinned LuaLS',
+            'Check addon Lua diagnostics',
+            'Check paired companion and addon contracts',
+            'Development package smoke'
+          )) {
+            $RequiredStep = Get-SingleStep $Preflight $StepName
+            if ([string]$RequiredStep.conclusion -cne 'success') {
+              throw "Required attempt 1 preflight step did not succeed: $StepName"
+            }
+          }
+          foreach ($WriterName in @('release', 'marketplace-release', 'verify-curseforge')) {
+            $Writer = Get-SingleJob $AttemptOne $WriterName
+            if ([string]$Writer.conclusion -cne 'skipped') {
+              throw "Source writer job $WriterName was not skipped in attempt 1."
+            }
+          }
+
+          for ($Attempt = 2; $Attempt -le [int]$Run.run_attempt; $Attempt++) {
+            $Retry = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID/attempts/$Attempt/jobs?per_page=100" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or $null -eq $Retry) {
+              throw "Could not inspect source run attempt $Attempt."
+            }
+            $RetryPreflight = Get-SingleJob $Retry 'preflight'
+            $RetryGuard = Get-SingleStep $RetryPreflight 'Reject ambiguous release rerun'
+            if ([string]$RetryPreflight.conclusion -cne 'failure' -or
+                [string]$RetryGuard.conclusion -cne 'failure') {
+              throw "Source run retry $Attempt did not stop at the pre-upload rerun guard."
+            }
+            foreach ($WriterName in @('release', 'marketplace-release', 'verify-curseforge')) {
+              $Writer = Get-SingleJob $Retry $WriterName
+              if ([string]$Writer.conclusion -cne 'skipped') {
+                throw "Source writer job $WriterName was not skipped in retry $Attempt."
+              }
+            }
+          }
+
+          $ArtifactName = "applicantscout-addon-release-$ReleaseCommit"
+          $ArtifactResponse = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID/artifacts?per_page=100" | ConvertFrom-Json
+          $Artifacts = @($ArtifactResponse.artifacts | Where-Object { [string]$_.name -ceq $ArtifactName })
+          if ($LASTEXITCODE -ne 0 -or
+              $Artifacts.Count -ne 1 -or
+              [bool]$Artifacts[0].expired -or
+              [long]$Artifacts[0].workflow_run.id -ne [long]$env:SOURCE_RUN_ID -or
+              [string]$Artifacts[0].workflow_run.head_sha -cne $ReleaseCommit -or
+              [string]$Artifacts[0].workflow_run.head_branch -cne $env:RELEASE_TAG) {
+            throw "Verified exact-tag source artifact is missing, expired, or mismatched."
+          }
+
+          $ErrorFile = New-TemporaryFile
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,isDraft,isPrerelease 2> $ErrorFile.FullName | Out-Null
+          $ReleaseExit = $LASTEXITCODE
+          $ReleaseError = Get-Content -LiteralPath $ErrorFile.FullName -Raw
+          Remove-Item -LiteralPath $ErrorFile.FullName -Force
+          if ($ReleaseExit -eq 0) {
+            throw "Release $env:RELEASE_TAG already exists; recovery cannot resume after publication starts."
+          }
+          if (-not [string]::IsNullOrWhiteSpace($ReleaseError) -and
+              $ReleaseError -notmatch '(?i)not found|no release found') {
+            throw "Could not prove that release $env:RELEASE_TAG is absent: $ReleaseError"
+          }
+
+          $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "artifact_name=$ArtifactName`n", $Utf8NoBom)
+
+      - name: Revalidate paired immutable companion release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          .\scripts\check-release-version.ps1
+          -Tag $env:RELEASE_TAG
+          -RequirePublishedPairedCompanionAssets
+          -PublishedReleaseWaitSeconds 0
+
+      - name: Require intended publication credentials
+        shell: pwsh
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CF_API_KEY) -or
+              [string]::IsNullOrWhiteSpace($env:WAGO_API_TOKEN)) {
+            throw "CF_API_KEY and WAGO_API_TOKEN are required before recovery publication."
+          }
+
+      - name: Verify immutable release policy
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.IMMUTABLE_RELEASES_READ_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            throw "IMMUTABLE_RELEASES_READ_TOKEN is required to verify repository release policy."
+          }
+          $Policy = gh api "repos/$env:GITHUB_REPOSITORY/immutable-releases" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or
+              $null -eq $Policy -or
+              $Policy.enabled -isnot [bool] -or
+              -not $Policy.enabled) {
+            throw "Repository release immutability must be enabled before recovery publication."
+          }
+
+      - name: Download verified source-run bundle
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_NAME: ${{ steps.recovery-identity.outputs.artifact_name }}
+        run: |
+          $ReleaseDir = Join-Path $env:RUNNER_TEMP 'applicantscout-addon-release'
+          New-Item -ItemType Directory -Path $ReleaseDir | Out-Null
+          gh run download $env:SOURCE_RUN_ID `
+            --repo $env:GITHUB_REPOSITORY `
+            --name $env:ARTIFACT_NAME `
+            --dir $ReleaseDir
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not download the verified source-run bundle."
+          }
+
+      - name: Publish verified immutable GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ReleaseDir = Join-Path $env:RUNNER_TEMP 'applicantscout-addon-release'
+          python3 scripts/check_addon_archive.py --release-dir $ReleaseDir
+          if ($LASTEXITCODE -ne 0) {
+            throw "Downloaded recovery archive failed validation."
+          }
+          $Version = $env:RELEASE_TAG.Substring(1)
+          $ZipName = "ApplicantScout-v$Version.zip"
+          $ZipPath = Join-Path $ReleaseDir $ZipName
+          $MetadataPath = Join-Path $ReleaseDir 'release.json'
+          foreach ($Path in @($ZipPath, $MetadataPath)) {
+            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+              throw "Verified recovery bundle is missing: $Path"
+            }
+          }
+          $OriginalMetadataHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $MetadataPath).Hash
+          python3 scripts/create_release_metadata.py --release-dir $ReleaseDir --tag $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not regenerate exact-tag release metadata."
+          }
+          $RegeneratedMetadataHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $MetadataPath).Hash
+          if ($OriginalMetadataHash -cne $RegeneratedMetadataHash) {
+            throw "Source-run release metadata does not match the exact tag."
+          }
+
+          .\scripts\check-release-version.ps1 `
+            -Tag $env:RELEASE_TAG `
+            -RequirePublishedPairedCompanionAssets `
+            -PublishedReleaseWaitSeconds 0
+          if ($LASTEXITCODE -ne 0) {
+            throw "Exact release refs changed before recovery draft creation."
+          }
+          $LatestTag = (gh api "repos/$env:GITHUB_REPOSITORY/releases/latest" --jq .tag_name).Trim()
+          if ($LASTEXITCODE -ne 0 -or $LatestTag -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw "Could not resolve the latest stable addon release."
+          }
+          if ([version]$Version -le [version]$LatestTag.Substring(1)) {
+            throw "Release $env:RELEASE_TAG must be newer than latest stable $LatestTag."
+          }
+
+          gh release create $env:RELEASE_TAG `
+            $ZipPath `
+            $MetadataPath `
+            --repo $env:GITHUB_REPOSITORY `
+            --verify-tag `
+            --draft `
+            --title $env:RELEASE_TAG `
+            --notes-file CHANGELOG.md
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub draft creation failed for $env:RELEASE_TAG."
+          }
+
+          $Expected = @{
+            $ZipName = $ZipPath
+            'release.json' = $MetadataPath
+          }
+          $Draft = gh release view $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --json tagName,isDraft,isPrerelease,assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or
+              $Draft.tagName -cne $env:RELEASE_TAG -or
+              -not [bool]$Draft.isDraft -or
+              [bool]$Draft.isPrerelease -or
+              @($Draft.assets).Count -ne $Expected.Count) {
+            throw "Recovery draft does not match the exact release identity and asset count."
+          }
+          foreach ($Name in $Expected.Keys) {
+            $Assets = @($Draft.assets | Where-Object { $_.name -ceq $Name })
+            $Path = $Expected[$Name]
+            $Hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $Size = (Get-Item -LiteralPath $Path).Length
+            if ($Assets.Count -ne 1 -or
+                [string]$Assets[0].digest -cne "sha256:$Hash" -or
+                [long]$Assets[0].size -ne $Size) {
+              throw "Recovery draft asset digest or size mismatch: $Name"
+            }
+          }
+
+          .\scripts\check-release-version.ps1 `
+            -Tag $env:RELEASE_TAG `
+            -RequirePublishedPairedCompanionAssets `
+            -PublishedReleaseWaitSeconds 0
+          if ($LASTEXITCODE -ne 0) {
+            throw "Exact release refs changed before recovery publication."
+          }
+          gh release edit $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --draft=false `
+            --prerelease=false `
+            --latest
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub refused to publish $env:RELEASE_TAG."
+          }
+
+          $Deadline = (Get-Date).AddSeconds(60)
+          do {
+            $Published = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+            if ($LASTEXITCODE -eq 0 -and
+                $Published.tag_name -ceq $env:RELEASE_TAG -and
+                $Published.draft -is [bool] -and -not $Published.draft -and
+                $Published.prerelease -is [bool] -and -not $Published.prerelease -and
+                $Published.immutable -is [bool] -and $Published.immutable -and
+                @($Published.assets).Count -eq $Expected.Count) {
+              $Valid = $true
+              foreach ($Name in $Expected.Keys) {
+                $Assets = @($Published.assets | Where-Object { $_.name -ceq $Name })
+                $Path = $Expected[$Name]
+                $Hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+                $Size = (Get-Item -LiteralPath $Path).Length
+                if ($Assets.Count -ne 1 -or
+                    [string]$Assets[0].digest -cne "sha256:$Hash" -or
+                    [long]$Assets[0].size -ne $Size) {
+                  $Valid = $false
+                  break
+                }
+              }
+              if ($Valid) {
+                Write-Host "Published immutable recovery release matches the verified source-run bundle."
+                exit 0
+              }
+            }
+            Start-Sleep -Seconds 5
+          } while ((Get-Date) -lt $Deadline)
+          throw "Recovery release did not become immutable or match the verified bundle."
+
+  marketplace-release:
+    needs: recover-github-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact immutable release tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Revalidate immutable GitHub and companion releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          .\scripts\check-release-version.ps1 `
+            -Tag $env:RELEASE_TAG `
+            -RequirePublishedPairedCompanionAssets `
+            -PublishedReleaseWaitSeconds 0
+          if ($LASTEXITCODE -ne 0) {
+            throw "Exact paired release refs changed before marketplace recovery."
+          }
+          $Release = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or
+              $Release.tag_name -cne $env:RELEASE_TAG -or
+              $Release.draft -isnot [bool] -or $Release.draft -or
+              $Release.prerelease -isnot [bool] -or $Release.prerelease -or
+              $Release.immutable -isnot [bool] -or -not $Release.immutable) {
+            throw "Addon GitHub release is not the expected immutable stable release."
+          }
+
+      - name: Require intended marketplace credentials
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
+        run: |
+          if [[ -z "$CF_API_KEY" || -z "$WAGO_API_TOKEN" ]]; then
+            echo "::error::CF_API_KEY and WAGO_API_TOKEN are required for recovery publication."
+            exit 1
+          fi
+
+      - name: Publish exact tag to marketplaces
+        uses: BigWigsMods/packager@6d50adb6e8517eefef63f4afb16a6518166a6b28
+        with:
+          pandoc: false
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
+
+  verify-curseforge:
+    needs: marketplace-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.13'
+
+      - name: Verify CurseForge public release propagation
+        run: >-
+          python scripts/verify_curseforge_release.py
+          --tag "$RELEASE_TAG"
+          --project-id 1541576
+          --game-version 12.0.7
+          --game-version 12.1.0
+          --wait-seconds 900
