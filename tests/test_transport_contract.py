@@ -247,9 +247,7 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
     callback_idx = body.index("local function OnQRPaintComplete(paintOK)")
     lease_idx = body.index("local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()", callback_idx)
     screenshot_idx = body.index("local screenshotOK = pcall(Screenshot)")
-    paint_idx = body.index(
-        "if not PaintQR(matrix, runs, renderRunCount, jobGen, OnQRPaintComplete) then"
-    )
+    paint_idx = body.index("if not PaintQR(")
     build_idx = body.index(
         "BuildQRMatrix(\n        payload,\n        reliableHexOnly and not overflowInUse,"
     )
@@ -787,9 +785,7 @@ def test_roster_composition_change_waits_for_inspect_until_fallback_deadline():
         callback_idx,
     )
     commit_idx = screenshot_body.index("lastSnapshotHash = h", clear_idx)
-    paint_idx = screenshot_body.index(
-        "if not PaintQR(matrix, runs, renderRunCount, jobGen, OnQRPaintComplete) then"
-    )
+    paint_idx = screenshot_body.index("if not PaintQR(")
     assert callback_idx < clear_idx < commit_idx < paint_idx
 
 
@@ -1341,9 +1337,7 @@ def test_quiet_signature_is_committed_only_after_successful_qr_paint():
         callback_idx,
     )
     pre_paint_quiet_block = screenshot_body[quiet_idx:job_idx]
-    paint_idx = screenshot_body.index(
-        "if not PaintQR(matrix, runs, renderRunCount, jobGen, OnQRPaintComplete) then"
-    )
+    paint_idx = screenshot_body.index("if not PaintQR(")
 
     assert quiet_idx < job_idx < callback_idx < lease_idx
     assert lease_idx < completed_gen_idx < guard_idx < commit_idx < paint_idx
@@ -2872,9 +2866,7 @@ def test_successful_snapshot_commits_emitted_applicant_count_for_clear_priority(
         "payloadApplicantCount",
         commit_idx,
     )
-    paint_idx = screenshot_body.index(
-        "if not PaintQR(matrix, runs, renderRunCount, jobGen, OnQRPaintComplete) then"
-    )
+    paint_idx = screenshot_body.index("if not PaintQR(")
 
     assert emit_count_idx < payload_count_idx
     assert callback_idx < shot_idx < failure_idx < commit_idx < committed_value_idx
@@ -3114,8 +3106,11 @@ def test_qr_render_uses_script_safe_budget_before_texture_hard_cap():
     assert "local runCount = 0" in qr_body[async_builder_idx:build_call_idx]
     assert "runs[#runs + 1] = {" not in qr_body[async_builder_idx:build_call_idx]
     assert "if limit and runCount > limit then" in qr_body
-    assert "local function PaintQR(matrix, runs, runCount, jobGen, onComplete)" in qr_body
-    assert "onComplete(matrix, runs, renderRuns)" in qr_body
+    assert (
+        "local function PaintQR(matrix, runs, runCount, module_ui_size, jobGen, onComplete)"
+        in qr_body
+    )
+    assert "onComplete(matrix, runs, renderRuns, module_ui_size)" in qr_body
     assert "local baseIndex = (runIndex - 1) * entryCreationKeyState.QR_RUN_STRIDE" in qr_body
     for offset in range(1, 5):
         assert f"runs[baseIndex + {offset}]" in qr_body
@@ -3123,6 +3118,33 @@ def test_qr_render_uses_script_safe_budget_before_texture_hard_cap():
     assert "C_Timer.After(0, ContinuePaint)" in qr_body
     assert "local function ContinueCleanup()" in qr_body
     assert "C_Timer.After(0, ContinueCleanup)" in qr_body
+
+
+def test_qr_render_snaps_modules_to_physical_pixels_with_standard_quiet_zone():
+    source = _lua_source()
+    qr_body = _slice_between(
+        source,
+        "-- Acquire (or reuse from pool) a black-rectangle texture and position+size it.",
+        "-- State for trigger throttling + dedup",
+    )
+
+    assert "local QR_QUIET_ZONE = 4" in source
+    assert "entryCreationKeyState.GetQRModuleUISize = function()" in qr_body
+    assert "pixelUtil.ConvertPixelsToUIForRegion" in qr_body
+    assert "QR_MODULE_PX, qrFrame" in qr_body
+    assert "entryCreationKeyState.QR_PIXEL_UI_REFERENCE_HEIGHT = 768" in qr_body
+    assert (
+        "entryCreationKeyState.QR_PIXEL_UI_REFERENCE_HEIGHT / physicalHeight"
+        in qr_body
+    )
+    assert "QR_MODULE_PX * uiUnitFactor / effectiveScale" in qr_body
+    assert (
+        "local module_ui_size = entryCreationKeyState.GetQRModuleUISize()" in qr_body
+    )
+    assert "quiet_offset + (x_start - 1) * module_ui_size" in qr_body
+    assert "run_len * module_ui_size" in qr_body
+    assert "local frame_ui = total_modules * module_ui_size" in qr_body
+    assert "qrFrame:SetSize(frame_ui, frame_ui)" in qr_body
 
 
 def test_qr_capture_settle_window_is_locked_and_watchdog_recoverable():
@@ -3252,6 +3274,18 @@ def test_force_capture_paths_bypass_interaction_suppression(
 
     assert output.splitlines()[-1] == (
         f"ok qr-capture-lifecycle mode={mode} shots={shots} attempts={shots}"
+    )
+
+
+def test_world_transition_clears_stale_interaction_suppression(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "interaction-world-reset",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=interaction-world-reset shots=2 attempts=2"
     )
 
 

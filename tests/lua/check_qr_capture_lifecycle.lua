@@ -11,6 +11,7 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "info-panel-during-settle"
        or fixture_mode == "interaction-force"
        or fixture_mode == "interaction-terminal"
+       or fixture_mode == "interaction-world-reset"
        or fixture_mode == "overflow"
        or fixture_mode == "overflow-terminal",
     "unsupported fixture mode: " .. tostring(fixture_mode))
@@ -25,6 +26,7 @@ local interaction_during_settle = fixture_mode == "interaction-during-settle"
 local info_panel_during_settle = fixture_mode == "info-panel-during-settle"
 local interaction_force = fixture_mode == "interaction-force"
 local interaction_terminal = fixture_mode == "interaction-terminal"
+local interaction_world_reset = fixture_mode == "interaction-world-reset"
 local overflow_mode = fixture_mode == "overflow"
     or fixture_mode == "overflow-terminal"
 local overflow_terminal = fixture_mode == "overflow-terminal"
@@ -236,6 +238,15 @@ end
 if interaction_force then
     send_interaction_event("MERCHANT_SHOW")
     SlashCmdList.APSCOUT("shotnow")
+end
+
+if interaction_world_reset then
+    send_interaction_event("MERCHANT_SHOW")
+    assert(harness.QRTransportState().suppressedByInteraction,
+        "fixture did not establish stale interaction suppression")
+    event_frame.scripts.OnEvent(event_frame, "PLAYER_ENTERING_WORLD")
+    assert(not harness.QRTransportState().suppressedByInteraction,
+        "PLAYER_ENTERING_WORLD did not clear stale interaction suppression")
 end
 
 local function drain_due_timers()
@@ -500,6 +511,16 @@ elseif interaction_force then
            and not state.forceVisible
            and not state.qrFrameShown,
         "explicit force capture left the suppressed QR active")
+elseif interaction_world_reset then
+    local state = harness.QRTransportState()
+    assert(#screenshot_times == 2 and screenshot_attempts == 2,
+        "world-transition recovery did not resume bounded transport")
+    assert(not state.suppressedByInteraction
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown,
+        "world-transition interaction recovery did not settle")
 elseif interaction_terminal then
     local state = harness.QRTransportState()
     assert(interaction_terminal_started,

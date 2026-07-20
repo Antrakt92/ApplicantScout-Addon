@@ -39,6 +39,15 @@ LibStub = nil
 ---@type any
 PVEFrame = nil
 
+---@class PixelUtilAPI
+---@field ConvertPixelsToUIForRegion fun(desiredPixels: number, region: any): number
+---@type PixelUtilAPI?
+PixelUtil = nil
+
+---@return number physicalWidth
+---@return number physicalHeight
+function GetPhysicalScreenSize() end
+
 ---@param sidePanelName string
 ---@param selection? string
 function PVEFrame_ToggleFrame(sidePanelName, selection) end

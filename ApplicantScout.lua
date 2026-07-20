@@ -117,21 +117,20 @@ local scanDirty = false
 -- screenshot. This keeps the timing guard without leaving the QR over the UI
 -- for the whole LFG-hosting duration.
 --
--- 3 px/module is a balance between screen footprint and JPG-quantization
+-- 3 physical px/module is a balance between screen footprint and JPG-quantization
 -- robustness. At 4 px the frame for 20 applicants was ~500 px (covered minimap
 -- + buff bar). At 3 px the same payload fits in ~375 px. Reed-Solomon ECC at
 -- level M (15% recovery) handles JPG noise on 3×3 module blocks reliably; 2 px
 -- modules decoded unreliably in early prototypes (JPG DCT artifacts blurred
 -- 1-pixel-wide runs). screenshotQuality=8 (set in EnsureScreenshotCVars)
--- provides headroom for the smaller modules.
-local QR_MODULE_PX = 3                 -- screen pixels per QR module
+-- provides headroom for the smaller modules. PixelUtil conversion below is
+-- load-bearing: treating this as raw UI units makes physical module widths
+-- alternate under UI scaling, and dense valid QRs can become undecodable.
+local QR_MODULE_PX = 3                 -- physical screen pixels per QR module
 local QR_RENDER_SETTLE_S = 0.3         -- lets QR paint reach framebuffer before Screenshot()
--- Quiet zone is the white border the spec mandates around a QR (4 modules
--- per ISO/IEC 18004). pyzbar/zbar tolerates 2 modules reliably on clean
--- digital sources where finder patterns aren't degraded by print/camera noise
--- — saves 2 * QR_MODULE_PX * 2 = 12 px on each axis (visible win at typical
--- frame size). If decode rate ever drops, bump back to 4.
-local QR_QUIET_ZONE = 2                -- modules of white border around QR
+-- Keep the standard four-module quiet zone. Dense QR/JPG captures have proven
+-- that zbar's tolerance for a two-module border is not a delivery guarantee.
+local QR_QUIET_ZONE = 4                -- modules of white border around QR
 local QR_EC_LEVEL = 2                  -- error correction: 1=L 2=M 3=Q 4=H. M=15% recovery
 
 ---@type any
@@ -140,7 +139,7 @@ local qrBackground = nil               -- one white texture covering entire fram
 local qrTexturePool = {}               -- pool of black-module rectangle textures (reused)
 local qrTextureUsed = 0                -- count of textures CURRENTLY shown (rest hidden)
 local qrFrameCreated = false           -- one-shot init guard
-local qrCurrentSize = 0                -- current frame side length in screen pixels (0 = unknown)
+local qrCurrentSize = 0                -- current frame side length in UI units (0 = unknown)
 
 -- forward-decl locals so helpers and consumers can reference each other regardless
 -- of definition order; assignment via `name = function(...)` lands on the LOCAL slot.
@@ -1423,9 +1422,9 @@ end
 -- ───────────────────────────────────────────────────────────
 -- QR auto-fade on Blizzard interaction frames
 --
--- WHY: at Version 25 with 30 applicants the QR is ~600-900px wide on a 1440p
--- display — wide enough to obscure most Blizzard panels (vendor, gossip,
--- quest text, mail, bank, taxi, etc.). Hiding the QR while ANY tracked
+-- WHY: dense applicant snapshots can produce a QR wide enough to obscure
+-- Blizzard panels (vendor, gossip, quest text, mail, bank, taxi, etc.).
+-- Hiding the QR while ANY tracked
 -- interaction frame is open lets the user actually read those windows.
 -- Companion misses the screenshots during the fade window — acceptable
 -- because the user isn't actively monitoring applicants while they're at a
@@ -1501,6 +1500,18 @@ local INFO_PANEL_FRAMES = {
 
 local _interactionSlots = {}  -- kind → bool (only set when active; nil = inactive)
 local _trackedInfoPanels = {} -- frame name → true once available for polling
+
+-- A loading-screen/world transition cannot preserve an event-owned merchant,
+-- bank, trade, auction, taxi, or quest interaction. If Blizzard omits a paired
+-- *_CLOSED event during that transition, retaining the slot would suppress
+-- every later non-force transport until /reload. Polled info panels are not
+-- cleared; the recompute below still observes their actual IsShown state.
+entryCreationKeyState.ResetInteractionSlotsForWorldTransition = function()
+    for kind in pairs(_interactionSlots) do
+        _interactionSlots[kind] = nil
+    end
+    _RecomputeInteractionSuppression()
+end
 
 -- Single visibility decision. Three axes:
 --   qrForceVisibleForShot       — auto: changed snapshot is being captured
@@ -4553,8 +4564,38 @@ entryCreationKeyState.QR_TEXTURE_PAINT_CHUNK = 450     -- max texture ops per fr
 entryCreationKeyState.QR_RUN_SCAN_ROWS_PER_FRAME = 12 -- bound matrix analysis work per frame
 entryCreationKeyState.QR_RUN_STRIDE = 4               -- flat x, y, width, height values per run
 entryCreationKeyState.QR_FAILURE_NOTICE_COOLDOWN_S = 30 -- keep persistent failures out of chat spam
+entryCreationKeyState.QR_PIXEL_UI_REFERENCE_HEIGHT = 768 -- WoW's physical-pixel conversion baseline
 local QR_TEXTURE_HARD_CAP = 10000                      -- safety against runaway texture creation
 entryCreationKeyState.QR_LARGE_PAYLOAD_BYTES = 512 -- prefer hex/L before raw byte mode for applicant bursts
+entryCreationKeyState.GetQRModuleUISize = function()
+    local pixelUtil = SafeTable(_G.PixelUtil)
+    local convert = pixelUtil and pixelUtil.ConvertPixelsToUIForRegion
+    if type(convert) == "function" and qrFrame then
+        local ok, converted = pcall(convert, QR_MODULE_PX, qrFrame)
+        converted = ok and SafeNumber(converted, nil) or nil
+        if converted and converted > 0 then return converted end
+    end
+    -- Mirror PixelUtil's conversion when the helper is absent or rejects the
+    -- region. Raw UI units would reintroduce fractional physical module widths.
+    local getPhysicalScreenSize = _G.GetPhysicalScreenSize
+    local getEffectiveScale = qrFrame and qrFrame.GetEffectiveScale
+    if type(getPhysicalScreenSize) == "function"
+       and type(getEffectiveScale) == "function" then
+        local screenOK, _, physicalHeight = pcall(getPhysicalScreenSize)
+        local scaleOK, effectiveScale = pcall(getEffectiveScale, qrFrame)
+        physicalHeight = screenOK and SafeNumber(physicalHeight, nil) or nil
+        effectiveScale = scaleOK and SafeNumber(effectiveScale, nil) or nil
+        if physicalHeight and physicalHeight > 0
+           and effectiveScale and effectiveScale > 0 then
+            local uiUnitFactor =
+                entryCreationKeyState.QR_PIXEL_UI_REFERENCE_HEIGHT / physicalHeight
+            return QR_MODULE_PX * uiUnitFactor / effectiveScale
+        end
+    end
+    -- Last-resort compatibility for clients without either conversion API.
+    return QR_MODULE_PX
+end
+
 local function _AcquireQRTexture(x, y, w, h)
     if qrTextureUsed >= entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then
         return nil
@@ -4581,7 +4622,14 @@ local function _AcquireQRTexture(x, y, w, h)
     return t
 end
 
-local function _BuildQRBlackRunsAsync(matrix, quiet_offset, limit, jobGen, onComplete)
+local function _BuildQRBlackRunsAsync(
+    matrix,
+    quiet_offset,
+    module_ui_size,
+    limit,
+    jobGen,
+    onComplete
+)
     local runs = {}
     local runCount = 0
     local nextRow = 1
@@ -4593,10 +4641,10 @@ local function _BuildQRBlackRunsAsync(matrix, quiet_offset, limit, jobGen, onCom
             return false
         end
         local baseIndex = #runs
-        runs[baseIndex + 1] = quiet_offset + (x_start - 1) * QR_MODULE_PX
-        runs[baseIndex + 2] = quiet_offset + (y - 1) * QR_MODULE_PX
-        runs[baseIndex + 3] = run_len * QR_MODULE_PX
-        runs[baseIndex + 4] = QR_MODULE_PX
+        runs[baseIndex + 1] = quiet_offset + (x_start - 1) * module_ui_size
+        runs[baseIndex + 2] = quiet_offset + (y - 1) * module_ui_size
+        runs[baseIndex + 3] = run_len * module_ui_size
+        runs[baseIndex + 4] = module_ui_size
         return true
     end
 
@@ -4639,20 +4687,25 @@ end
 
 if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.BuildQRBlackRunsAsync = _BuildQRBlackRunsAsync
+    _G.ApplicantScoutFixtureHarness.GetQRModuleUISize =
+        entryCreationKeyState.GetQRModuleUISize
     _G.ApplicantScoutFixtureHarness.SetQRPaintJobGeneration = function(value)
         entryCreationKeyState.qrPaintJobGen = value
+    end
+    _G.ApplicantScoutFixtureHarness.SetQRFrameForTests = function(value)
+        qrFrame = value
     end
 end
 
 -- Paint pre-built row runs into the frame. Matrix analysis and encode-mode
 -- fallback complete asynchronously before this function starts.
-local function PaintQR(matrix, runs, runCount, jobGen, onComplete)
+local function PaintQR(matrix, runs, runCount, module_ui_size, jobGen, onComplete)
     local rows = #matrix
     local total_modules = rows + 2 * QR_QUIET_ZONE   -- assume square QR
-    local frame_px = total_modules * QR_MODULE_PX
+    local frame_ui = total_modules * module_ui_size
 
-    qrFrame:SetSize(frame_px, frame_px)
-    qrCurrentSize = frame_px
+    qrFrame:SetSize(frame_ui, frame_ui)
+    qrCurrentSize = frame_ui
     _ApplyQRFramePosition()
 
     qrTextureUsed = 0
@@ -4874,9 +4927,11 @@ local function BuildQRMatrix(
                 return
             end
 
+            local module_ui_size = entryCreationKeyState.GetQRModuleUISize()
             _BuildQRBlackRunsAsync(
                 matrix,
-                QR_QUIET_ZONE * QR_MODULE_PX,
+                QR_QUIET_ZONE * module_ui_size,
+                module_ui_size,
                 entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET,
                 jobGen,
                 function(runs, renderRuns)
@@ -4895,7 +4950,7 @@ local function BuildQRMatrix(
                             "[APS-debug] QR fallback %s (%d %s) -> %s (%d bytes payload, %d textures)",
                             first_label, first_size, first_unit, label, #payload, renderRuns))
                     end
-                    onComplete(matrix, runs, renderRuns)
+                    onComplete(matrix, runs, renderRuns, module_ui_size)
                 end
             )
         end
@@ -5457,7 +5512,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                         overflowState.chunkCount,
                         overflowState.pass
                     ) or ""
-                print(string.format("|cff999999[APS-debug]|r CAP qr_size=%dpx hash=%x t=%.2f%s",
+                print(string.format("|cff999999[APS-debug]|r CAP qr_size=%.2fui hash=%x t=%.2f%s",
                       qrCurrentSize, h, GetTime(), overflowProgress))
             end
             entryCreationKeyState.ClearQRTransportJob(jobGen)
@@ -5480,7 +5535,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     end
 
     local OnQRBuildComplete
-    OnQRBuildComplete = function(matrix, runs, renderRunCount)
+    OnQRBuildComplete = function(matrix, runs, renderRunCount, module_ui_size)
         if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
         if not matrix and not overflowInUse and not terminalClear then
             local startedState, startError =
@@ -5526,7 +5581,14 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             end
             return
         end
-        if not PaintQR(matrix, runs, renderRunCount, jobGen, OnQRPaintComplete) then
+        if not PaintQR(
+            matrix,
+            runs,
+            renderRunCount,
+            module_ui_size,
+            jobGen,
+            OnQRPaintComplete
+        ) then
             entryCreationKeyState.ClearQRTransportJob(jobGen)
             pendingShotDirty = false
             if overflowInUse and overflowState then
@@ -5577,6 +5639,7 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
             overflowSupersededCount =
                 entryCreationKeyState.qrOverflowSupersededCount or 0,
             sessionActive = isSessionActive == true,
+            suppressedByInteraction = _qrSuppressedByInteraction == true,
         }
     end
     _G.ApplicantScoutFixtureHarness.SettingsAttachState = function()
@@ -5833,6 +5896,7 @@ local EVENT_HANDLERS = {
         _TryHookInfoPanels()      -- initial track; ADDON_LOADED/ticker catches LoD frames later
     end,
     PLAYER_ENTERING_WORLD            = function()
+        entryCreationKeyState.ResetInteractionSlotsForWorldTransition()
         CreateQRFrame()
         entryCreationKeyState.SyncAutoHiInitialGroupState()
         entryCreationKeyState.RequestLeaderKeystone(true)
@@ -6526,7 +6590,11 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
         print("  QR frame visible: " .. tostring(qrFrame:IsShown()) ..
               " (always-visible mode: " .. tostring(qrAlwaysVisible) ..
               ", move mode: " .. tostring(qrMoveMode) .. ")")
-        print("  QR frame size: " .. qrCurrentSize .. "×" .. qrCurrentSize .. " px")
+        print(string.format(
+            "  QR frame size: %.2f×%.2f UI units (modules are physical-pixel snapped)",
+            qrCurrentSize,
+            qrCurrentSize
+        ))
         print("  QR frame position: " .. _CurrentQRPositionText())
         print("  QR mouse enabled: " .. tostring(qrMoveMode and true or false))
     end
