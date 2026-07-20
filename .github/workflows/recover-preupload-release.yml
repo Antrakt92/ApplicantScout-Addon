@@ -195,6 +195,9 @@ jobs:
 
           $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
           [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "artifact_name=$ArtifactName`n", $Utf8NoBom)
+          # The expected missing-release lookup leaves LASTEXITCODE at 1.
+          # Reach explicit success only after every recovery guard above passed.
+          exit 0
 
       - name: Revalidate paired immutable companion release
         shell: pwsh

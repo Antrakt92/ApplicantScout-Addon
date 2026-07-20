@@ -731,6 +731,7 @@ def test_preupload_recovery_proves_source_failed_before_all_writers():
     assert "[string]$Artifacts[0].workflow_run.head_sha" in identity
     assert "Release $env:RELEASE_TAG already exists" in identity
     assert "Could not prove that release" in identity
+    assert identity.rstrip().endswith("exit 0")
 
 
 def test_preupload_recovery_revalidates_every_gate_before_publication():
