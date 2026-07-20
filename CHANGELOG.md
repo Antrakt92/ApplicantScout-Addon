@@ -2,20 +2,43 @@
 
 ## Unreleased
 
-### Fixed
+## 0.7.0 - 20-Jul-2026 - Companion 0.11.0 overflow transport
+
+This paired addon + companion release keeps normal and terminal snapshots on
+APS1 v9 while adding bounded APS1 v10 fragments for unusually large applicant
+or raid snapshots.
+
+### Added
 
 - Applicant backlogs that exceed both the QR capacity and texture-render budget
-  now use a bounded, repeated fragment sequence for one complete snapshot
-  instead of being recorded as delivered while the companion remains stale.
+  now use a bounded, repeated fragment sequence for one complete snapshot; the
+  companion applies it only after every fragment has arrived and validated.
+
+### Fixed
+
 - Complete snapshot serialization now fails closed at the APS1 length boundary
   instead of wrapping the wire length, and overflow screenshots are paced so
   consecutive parts cannot reuse one second-scale screenshot generation.
+- QR captures are deferred while Group Finder interactions can obscure the
+  frame, preserving the newest pending snapshot for the next safe capture.
+- Auto Hi now waits for a complete Party baseline and rejects stale identity
+  samples, so newly joined players are not greeted from incomplete roster data.
+- ApplicantScout settings now wait for Blizzard's Group Finder visibility gate
+  and open with its frame as the parent, avoiding detached or duplicate-looking
+  settings state during delayed UI loading.
+
+### Improved
+
+- GitHub releases now publish an immutable `release.json` that binds the exact
+  packaged addon ZIP by name, size, and SHA-256.
+- Marketplace publication validates the exact paired companion tag, commit,
+  immutable manifest, and assets before CurseForge or Wago upload can proceed.
 
 ### Notes
 
-- Normal and terminal snapshots remain compact APS1 v9. Oversized snapshots use
-  APS1 v10 fragment envelopes and require a companion version that supports
-  complete pre-apply reassembly.
+- This addon release is paired with ApplicantScout Companion `0.11.0`.
+- Keep both pieces updated together; older companions cannot reassemble APS1
+  v10 overflow fragments.
 
 ## 0.6.1 - 18-Jul-2026 - Companion 0.10.1 transport and usability update
 
