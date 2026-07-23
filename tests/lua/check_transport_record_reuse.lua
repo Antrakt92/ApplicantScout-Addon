@@ -28,7 +28,7 @@ harness.SetApplicantTransportAdapters(
     function(apiID, memberIndex)
         local id = tokenIDs[apiID]
         assert(id, "opaque API token identity was not preserved")
-        if memberIndex ~= 1 or id == 17 then return false end
+        if memberIndex ~= 1 then return false end
         return true,
             string.format("Applicant%02d-Realm", id),
             "MAGE",
@@ -52,24 +52,20 @@ local previousPosition = 0
 for id = 1, 40 do
     local name = string.format("Applicant%02d-Realm", id)
     local position = payload:find(name, 1, true)
-    if id == 17 then
-        assert(position == nil, "missing applicant member row was emitted")
-    else
-        assert(position, "valid applicant member row was omitted")
-        assert(position > previousPosition, "applicant rows were not sorted by clean ID")
-        previousPosition = position
-    end
+    assert(position, "valid applicant member row was omitted")
+    assert(position > previousPosition, "applicant rows were not sorted by clean ID")
+    previousPosition = position
 end
 
-assert(#payload == 1696, "transport record reuse changed APS1 payload length")
+assert(#payload == 1737, "transport record reuse changed APS1 payload length")
 local payloadHash = harness.HashSnapshot(payload)
 assert(
-    payloadHash == 3053853762,
+    payloadHash == 654822407,
     string.format("transport record reuse changed APS1 payload bytes: %u", payloadHash)
 )
 
 print(string.format(
-    "ok transport-record-reuse rows=39 bytes=%d hash=%u",
+    "ok transport-record-reuse rows=40 bytes=%d hash=%u",
     #payload,
     payloadHash
 ))

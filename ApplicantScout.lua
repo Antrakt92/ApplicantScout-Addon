@@ -219,10 +219,10 @@ local entryCreationKeyState = {
     lfgEntryCreationWorkPending = false,
     lfgEntryCreationKeyCapturePending = false,
     lfgDefaultPlaystylePending = false,
-    lfgDefaultPlaystyleResetTouched = false,
     lfgDefaultPlaystyleUserTouched = false,
     entryCreationKeyLevelCacheDecision = "none",
     lastPayloadApplicantCount = 0,
+    lastPayloadApplicantsUnavailable = false,
     lastPayloadRosterCount = 0,
     lastPayloadRosterIncomplete = false,
     lastPayloadRosterUnavailable = false,
@@ -231,6 +231,13 @@ local entryCreationKeyState = {
     ROSTER_CHANGE_PREFLIGHT_DEADLINE_S = 2.0,
     ROSTER_INSPECT_RETRY_COOLDOWN_S = 15.0,
     ROSTER_INSPECT_MAX_TIMEOUTS_PER_SESSION = 2,
+    -- Retry the expensive roster/RaiderIO builder only on a bounded backoff.
+    -- The 0.5s transport poll must keep listing/applicant state fresh without
+    -- rebuilding a roster surface that is already known to be incomplete.
+    ROSTER_LOAD_RETRY_DELAYS_S = { 0.5, 2.0, 5.0, 15.0 },
+    rosterLoadRetryAttempt = 0,
+    rosterLoadRetryReady = true,
+    rosterLoadRetryExhausted = false,
     rosterChangePreflightDeadline = nil,
     rosterChangePreflightToken = 0,
     pendingTtl = 10,
@@ -238,7 +245,7 @@ local entryCreationKeyState = {
     lastDeliverySnapshotHash = nil,
     lastDeliverySnapshotSendCount = 0,
     -- Overflow snapshots are transmitted as bounded APS1 v10 fragment
-    -- envelopes containing one frozen, complete v9 payload. Keep this state on
+    -- envelopes containing one frozen, complete logical payload. Keep this state on
     -- the existing table: the file is close to Lua 5.1's 200-local limit.
     QR_OVERFLOW_WIRE_VERSION = 0x0A,
     QR_OVERFLOW_FRAGMENT_BYTES = 640,
@@ -319,6 +326,9 @@ local entryCreationKeyState = {
     AUTO_HI_NEW_PARTY_MEMBER_DELAY_S = 10,
     AUTO_HI_RETRY_DELAY_S = 1.0,
     AUTO_HI_MAX_RETRIES = 5,
+    -- Preserve the existing 160-character ASCII UX as a UTF-8 byte budget,
+    -- safely below WoW's 255-byte single-message protocol ceiling.
+    AUTO_HI_MAX_BYTES = 160,
     AUTO_HI_PARTY_SAMPLE_RETRY_DELAY_S = 0.5,
     AUTO_HI_PARTY_SAMPLE_MAX_RETRIES = 5,
     autoHiLastSendStatus = "never",
@@ -344,7 +354,6 @@ local entryCreationKeyState = {
     rosterInspectIlvlByGUID = {},
     rosterInspectKnownGUIDs = {},
 }
-local ENTRY_CREATION_KEY_CACHE_TTL = 3600
 
 entryCreationKeyState.ClearScreenshotFailureState = function()
     entryCreationKeyState.screenshotFailureHash = nil
@@ -515,11 +524,60 @@ local function _GetConfiguredMPlusPlaystyleEnum()
     return value, token
 end
 
+-- Return a prefix no longer than maxBytes that never ends inside a UTF-8
+-- sequence. Lua 5.1 has byte strings and no native utf8 library.
+entryCreationKeyState.TruncateUTF8Bytes = function(str, maxBytes)
+    if #str <= maxBytes then return str end
+
+    local start = maxBytes
+    while start > 0 do
+        local b = string.byte(str, start)
+        if not (b and b >= 128 and b <= 191) then
+            break
+        end
+        start = start - 1
+    end
+
+    if start <= 0 then return "" end
+
+    local b = string.byte(str, start)
+    local len
+    if b <= 127 then
+        len = 1
+    elseif b >= 194 and b <= 223 then
+        len = 2
+    elseif b >= 224 and b <= 239 then
+        len = 3
+    elseif b >= 240 and b <= 244 then
+        len = 4
+    else
+        return str:sub(1, start - 1)
+    end
+
+    local endsAt = start + len - 1
+    if endsAt > maxBytes then
+        return str:sub(1, start - 1)
+    end
+
+    for i = start + 1, endsAt do
+        local cb = string.byte(str, i)
+        if not (cb and cb >= 128 and cb <= 191) then
+            return str:sub(1, start - 1)
+        end
+    end
+
+    return str:sub(1, maxBytes)
+end
+
 entryCreationKeyState.NormalizeAutoHiMessage = function(value)
     if type(value) ~= "string" then return "" end
     local text = value:gsub("[%c]", " ")
     text = text:gsub("^%s+", ""):gsub("%s+$", "")
-    return text
+    text = entryCreationKeyState.TruncateUTF8Bytes(
+        text,
+        entryCreationKeyState.AUTO_HI_MAX_BYTES
+    )
+    return text:gsub("%s+$", "")
 end
 
 entryCreationKeyState.NormalizeSavedBoolean = function(value)
@@ -724,11 +782,11 @@ entryCreationKeyState.IsGroupedForAutoHi = function()
 end
 
 entryCreationKeyState.AutoHiChatChannel = function()
-    local inInstance, instanceType = false, nil
-    if IsInInstance then
-        inInstance, instanceType = IsInInstance()
-    end
-    if inInstance and (instanceType == "party" or instanceType == "raid") then
+    local homeCategory = _G.LE_PARTY_CATEGORY_HOME or 1
+    local instanceCategory = _G.LE_PARTY_CATEGORY_INSTANCE or 2
+    local inHomeGroup = IsInGroup and IsInGroup(homeCategory) or false
+    local inInstanceGroup = IsInGroup and IsInGroup(instanceCategory) or false
+    if inInstanceGroup and not inHomeGroup then
         return "INSTANCE_CHAT"
     end
     if IsInRaid and IsInRaid() then return "RAID" end
@@ -1274,9 +1332,8 @@ end
 -- One containing frame, sized to whatever QR version we just generated
 -- (adaptive). White background covers the entire frame; row-RLE pool of
 -- black-rectangle textures draws the QR data.
-local QR_POSITION_LIMIT = 100000
-
 local function _IsFiniteQRPositionNumber(v)
+    local QR_POSITION_LIMIT = 100000
     return type(v) == "number" and v == v
            and v > -QR_POSITION_LIMIT and v < QR_POSITION_LIMIT
 end
@@ -1637,7 +1694,6 @@ end
 -- fields while its panels Show()/sort; addon code on that stack can make
 -- Blizzard's own comparisons fault as tainted. Position restore is polled from
 -- ApplicantScout's ticker after Blizzard layout has finished instead.
-local PVE_POSITION_LIMIT = 100000
 local PVE_VALID_POINTS = {
     CENTER = true,
     TOP = true,
@@ -1651,6 +1707,7 @@ local PVE_VALID_POINTS = {
 }
 
 local function _IsFinitePVEPositionNumber(v)
+    local PVE_POSITION_LIMIT = 100000
     return type(v) == "number" and v == v
            and v > -PVE_POSITION_LIMIT and v < PVE_POSITION_LIMIT
 end
@@ -2040,54 +2097,11 @@ local function _ClampUInt8(n)
     return n
 end
 
--- Return a prefix no longer than maxBytes that never ends inside a UTF-8
--- sequence. Lua 5.1 has byte strings and no native utf8 library.
-local function _TruncateUTF8Bytes(str, maxBytes)
-    if #str <= maxBytes then return str end
-
-    local start = maxBytes
-    while start > 0 do
-        local b = string.byte(str, start)
-        if not (b and b >= 128 and b <= 191) then
-            break
-        end
-        start = start - 1
-    end
-
-    if start <= 0 then return "" end
-
-    local b = string.byte(str, start)
-    local len
-    if b <= 127 then
-        len = 1
-    elseif b >= 194 and b <= 223 then
-        len = 2
-    elseif b >= 224 and b <= 239 then
-        len = 3
-    elseif b >= 240 and b <= 244 then
-        len = 4
-    else
-        return str:sub(1, start - 1)
-    end
-
-    local endsAt = start + len - 1
-    if endsAt > maxBytes then
-        return str:sub(1, start - 1)
-    end
-
-    for i = start + 1, endsAt do
-        local cb = string.byte(str, i)
-        if not (cb and cb >= 128 and cb <= 191) then
-            return str:sub(1, start - 1)
-        end
-    end
-
-    return str:sub(1, maxBytes)
-end
-
 -- Append one already-SafeStr-cleaned value. CLAMPS to 255 bytes (safety).
 local function _PackCleanLenStr(out, str)
-    if #str > 255 then str = _TruncateUTF8Bytes(str, 255) end
+    if #str > 255 then
+        str = entryCreationKeyState.TruncateUTF8Bytes(str, 255)
+    end
     table.insert(out, string.char(#str))
     table.insert(out, str)
 end
@@ -2143,6 +2157,7 @@ entryCreationKeyState.EntryListingCacheContext = function(entry)
 end
 
 local function _EntryCreationCacheFresh(cache)
+    local ENTRY_CREATION_KEY_CACHE_TTL = 3600
     cache = SafeTable(cache)
     if not cache then return false end
     if GetTime and (GetTime() - SafeNumber(cache.at, 0)) > ENTRY_CREATION_KEY_CACHE_TTL then
@@ -2806,13 +2821,20 @@ local function _FindRosterUnitByGUID(guid)
     return found
 end
 
+entryCreationKeyState.ReleaseOwnedRosterInspect = function()
+    if not rosterInspectPendingGUID then return false end
+    rosterInspectPendingGUID = nil
+    if ClearInspectPlayer then pcall(ClearInspectPlayer) end
+    return true
+end
+
 entryCreationKeyState.ClearRosterInspectDataForGUID = function(guid)
     guid = SafeStr(guid, "")
     if guid == "" then return end
     rosterInspectSpecByGUID[guid] = nil
     entryCreationKeyState.rosterInspectIlvlByGUID[guid] = nil
     if rosterInspectPendingGUID == guid then
-        rosterInspectPendingGUID = nil
+        entryCreationKeyState.ReleaseOwnedRosterInspect()
     end
     if entryCreationKeyState.ClearRosterInspectFailureForGUID then
         entryCreationKeyState.ClearRosterInspectFailureForGUID(guid)
@@ -2823,7 +2845,7 @@ entryCreationKeyState.ResetRosterInspectDataCache = function()
     rosterInspectSpecByGUID = {}
     entryCreationKeyState.rosterInspectIlvlByGUID = {}
     entryCreationKeyState.rosterInspectKnownGUIDs = {}
-    rosterInspectPendingGUID = nil
+    entryCreationKeyState.ReleaseOwnedRosterInspect()
 end
 
 entryCreationKeyState.ReconcileRosterInspectMembership = function()
@@ -3034,13 +3056,20 @@ entryCreationKeyState.ClearRosterInspectBatchState = function()
     entryCreationKeyState.rosterInspectBatchRetrySessionGen = nil
     entryCreationKeyState.rosterInspectBatchRetryToken =
         (entryCreationKeyState.rosterInspectBatchRetryToken or 0) + 1
-    rosterInspectPendingGUID = nil
+    entryCreationKeyState.ReleaseOwnedRosterInspect()
 end
 entryCreationKeyState.ClearRosterLoadRetryState = function()
     entryCreationKeyState.rosterLoadRetryDeadline = nil
     entryCreationKeyState.rosterLoadRetrySessionGen = nil
+    entryCreationKeyState.rosterLoadRetryAttempt = 0
+    entryCreationKeyState.rosterLoadRetryReady = true
+    entryCreationKeyState.rosterLoadRetryExhausted = false
     entryCreationKeyState.rosterLoadRetryToken =
         (entryCreationKeyState.rosterLoadRetryToken or 0) + 1
+end
+entryCreationKeyState.ShouldAttemptRosterLoad = function()
+    return entryCreationKeyState.rosterLoadRetryReady == true
+        and not entryCreationKeyState.rosterLoadRetryExhausted
 end
 entryCreationKeyState.ClearRosterCompositionChanged = function()
     entryCreationKeyState.rosterChangedSinceLastPayload = false
@@ -3049,6 +3078,9 @@ entryCreationKeyState.ClearRosterCompositionChanged = function()
         (entryCreationKeyState.rosterChangePreflightToken or 0) + 1
 end
 entryCreationKeyState.MarkRosterCompositionChanged = function()
+    -- A real roster event is new evidence. Cancel any stale timer/exhaustion so
+    -- the next clean transport tick gets one fresh bounded attempt immediately.
+    entryCreationKeyState.ClearRosterLoadRetryState()
     entryCreationKeyState.rosterChangedSinceLastPayload = true
     entryCreationKeyState.transportDirtyGeneration =
         (entryCreationKeyState.transportDirtyGeneration or 0) + 1
@@ -3133,6 +3165,10 @@ entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()
           .. ", payload="
           .. tostring(entryCreationKeyState.lastPayloadQuietFullPartySignature ~= nil))
     print("  roster load retry: " .. loadRetryText
+          .. ", attempt: "
+          .. tostring(entryCreationKeyState.rosterLoadRetryAttempt or 0)
+          .. ", exhausted: "
+          .. tostring(entryCreationKeyState.rosterLoadRetryExhausted == true)
           .. ", incomplete payload: "
           .. tostring(entryCreationKeyState.lastPayloadRosterIncomplete))
 end
@@ -3170,18 +3206,34 @@ entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)
     end)
     return true
 end
-entryCreationKeyState.ScheduleRosterLoadRetry = function(delay)
-    if not (C_Timer and C_Timer.After) then return false end
+entryCreationKeyState.ScheduleRosterLoadRetry = function()
     local now = GetTime and GetTime() or 0
-    delay = SafeNumber(delay, 0)
-    if delay < 0 then delay = 0 end
-    local due = now + delay
     local existingDeadline = entryCreationKeyState.rosterLoadRetryDeadline
     if existingDeadline
-       and entryCreationKeyState.rosterLoadRetrySessionGen == sessionGen
-       and existingDeadline <= due then
+       and entryCreationKeyState.rosterLoadRetrySessionGen == sessionGen then
         return true
     end
+    if entryCreationKeyState.rosterLoadRetryExhausted then return true end
+
+    local attempt = math.floor(SafeNumber(
+        entryCreationKeyState.rosterLoadRetryAttempt,
+        0
+    )) + 1
+    local delay = SafeNumber(
+        entryCreationKeyState.ROSTER_LOAD_RETRY_DELAYS_S[attempt],
+        0
+    )
+    if delay <= 0 or not (C_Timer and C_Timer.After) then
+        entryCreationKeyState.rosterLoadRetryDeadline = nil
+        entryCreationKeyState.rosterLoadRetrySessionGen = nil
+        entryCreationKeyState.rosterLoadRetryReady = false
+        entryCreationKeyState.rosterLoadRetryExhausted = true
+        return true
+    end
+
+    local due = now + delay
+    entryCreationKeyState.rosterLoadRetryAttempt = attempt
+    entryCreationKeyState.rosterLoadRetryReady = false
     entryCreationKeyState.rosterLoadRetryToken =
         (entryCreationKeyState.rosterLoadRetryToken or 0) + 1
     local retryToken = entryCreationKeyState.rosterLoadRetryToken
@@ -3195,6 +3247,7 @@ entryCreationKeyState.ScheduleRosterLoadRetry = function(delay)
         if retrySessionGen ~= sessionGen then return end
         entryCreationKeyState.rosterLoadRetryDeadline = nil
         entryCreationKeyState.rosterLoadRetrySessionGen = nil
+        entryCreationKeyState.rosterLoadRetryReady = true
         if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
         if not isSessionActive then return end
         pendingShotDirty = true
@@ -3210,7 +3263,7 @@ entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()
     if rosterInspectPendingGUID then
         if not _FindRosterUnitByGUID(rosterInspectPendingGUID) then
             local missingGUID = rosterInspectPendingGUID
-            rosterInspectPendingGUID = nil
+            entryCreationKeyState.ReleaseOwnedRosterInspect()
             entryCreationKeyState.rosterInspectBatchSkippedGUIDs =
                 entryCreationKeyState.rosterInspectBatchSkippedGUIDs or {}
             entryCreationKeyState.rosterInspectBatchSkippedGUIDs[missingGUID] = true
@@ -3222,7 +3275,7 @@ entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()
             return entryCreationKeyState.ScheduleRosterInspectBatchRetry(timeoutLeft)
         end
         local timedOutGUID = rosterInspectPendingGUID
-        rosterInspectPendingGUID = nil
+        entryCreationKeyState.ReleaseOwnedRosterInspect()
         entryCreationKeyState.rosterInspectBatchSkippedGUIDs =
             entryCreationKeyState.rosterInspectBatchSkippedGUIDs or {}
         entryCreationKeyState.rosterInspectBatchSkippedGUIDs[timedOutGUID] = true
@@ -3243,8 +3296,30 @@ entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()
            or entryCreationKeyState.RosterInspectRetryBlocked(guid, now) then
             return false
         end
-        requested, requestReason = _MaybeRequestRosterInspect(unit, guid)
-        return requested or requestReason == "combat"
+        local didRequest, reason = _MaybeRequestRosterInspect(unit, guid)
+        if didRequest then
+            requested = true
+            requestReason = reason
+            return true
+        end
+        if reason == "combat" then
+            requestReason = reason
+            return true
+        end
+        if reason == "throttle" then
+            requestReason = requestReason or reason
+        elseif reason == "uninspectable"
+            or reason == "notify"
+            or reason == "api" then
+            -- These failures never create INSPECT_READY or a timeout-owned
+            -- pending GUID. Charge the same per-session budget here so a
+            -- permanently unavailable unit cannot be retried every poll.
+            entryCreationKeyState.rosterInspectBatchSkippedGUIDs =
+                entryCreationKeyState.rosterInspectBatchSkippedGUIDs or {}
+            entryCreationKeyState.rosterInspectBatchSkippedGUIDs[guid] = true
+            entryCreationKeyState.MarkRosterInspectAttemptFailed(guid, now)
+        end
+        return false
     end)
     if requestReason == "throttle"
        and throttleLeft > 0
@@ -3296,26 +3371,29 @@ entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot = function()
 end
 
 local function _OnRosterInspectReady(guid)
+    local ownedGUID = SafeStr(rosterInspectPendingGUID, "")
+    if ownedGUID == "" then return false end
     guid = SafeStr(guid, "")
-    if guid == "" then
-        guid = SafeStr(rosterInspectPendingGUID, "")
+    if guid == "" then guid = ownedGUID end
+    if guid ~= ownedGUID then return false end
+
+    if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then
+        entryCreationKeyState.ClearRosterInspectBatchState()
+        return false
     end
-    if guid == "" then return end
 
     local unit = _FindRosterUnitByGUID(guid)
     if not unit then
-        if rosterInspectPendingGUID == guid then
-            rosterInspectPendingGUID = nil
-        end
+        entryCreationKeyState.ReleaseOwnedRosterInspect()
         if entryCreationKeyState.rosterInspectBatchDirtyPending then
             if entryCreationKeyState.FlushOrContinueRosterInspectBatch() then
-                return
+                return false
             end
             MarkDirty("inspect")
         end
-        return
+        return false
     end
-    if not GetInspectSpecialization then return end
+    if not GetInspectSpecialization then return false end
     local wasPendingInspect = rosterInspectPendingGUID == guid
     local ok, specID = pcall(GetInspectSpecialization, unit)
     specID = ok and _ClampUInt16(SafeNumber(specID, 0)) or 0
@@ -3335,20 +3413,18 @@ local function _OnRosterInspectReady(guid)
         entryCreationKeyState.MarkRosterInspectAttemptFailed(guid, GetTime())
     end
     if resolved then
-        if rosterInspectPendingGUID == guid then
-            rosterInspectPendingGUID = nil
-        end
-        if ClearInspectPlayer then pcall(ClearInspectPlayer) end
+        entryCreationKeyState.ReleaseOwnedRosterInspect()
         -- WHY: a freshly assembled group can resolve one inspected spec per
         -- callback. Batch follow-up inspect requests so the user sees one final
         -- QR refresh instead of a visible flash for every party member.
         entryCreationKeyState.rosterInspectBatchDirtyPending = true
         entryCreationKeyState.rosterInspectBatchSkippedGUIDs = nil
         if entryCreationKeyState.FlushOrContinueRosterInspectBatch() then
-            return
+            return true
         end
         MarkDirty("inspect")
     end
+    return resolved
 end
 
 local function _UnitSpecIDForRoster(unit, guid, isSelf)
@@ -3456,6 +3532,12 @@ entryCreationKeyState.GetLibKeystone = function()
     return entryCreationKeyState.GetLibKeystoneShim()
 end
 
+entryCreationKeyState.IsLibKeystoneShimResponderOwner = function()
+    local provider = entryCreationKeyState.leaderKeystoneLib
+        or entryCreationKeyState.GetLibKeystone()
+    return provider ~= nil and provider == entryCreationKeyState.libKeystoneShim
+end
+
 entryCreationKeyState.RegisterLibKeystonePrefix = function()
     if entryCreationKeyState.libKeystonePrefixRegistered then return true end
     if not (C_ChatInfo and type(C_ChatInfo.RegisterAddonMessagePrefix) == "function") then
@@ -3546,6 +3628,9 @@ entryCreationKeyState.ScheduleLibKeystoneResponseRetry = function(channel, reaso
     if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then
         return false
     end
+    if not entryCreationKeyState.IsLibKeystoneShimResponderOwner() then
+        return false
+    end
     attempt = math.floor(SafeNumber(attempt, 1))
     if attempt >= entryCreationKeyState.LIB_KEYSTONE_RESPONSE_MAX_RETRIES then
         entryCreationKeyState.libKeystoneLastSendStatus =
@@ -3580,6 +3665,7 @@ entryCreationKeyState.ScheduleLibKeystoneResponseRetry = function(channel, reaso
         if retryGroupGen ~= entryCreationKeyState.groupTransportGen then return end
         if not (IsInGroup and IsInGroup()) then return end
         if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return end
+        if not entryCreationKeyState.IsLibKeystoneShimResponderOwner() then return end
         local ok, retryReason = entryCreationKeyState.SendLibKeystoneShimInfo(channel)
         if not ok then
             entryCreationKeyState.ScheduleLibKeystoneResponseRetry(
@@ -3676,6 +3762,7 @@ entryCreationKeyState.LibKeystoneShimHandleAddonMessage = function(prefix, msg, 
     if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return end
     if IsSecretValue(msg) or type(msg) ~= "string" then return end
     if msg == "R" then
+        if not entryCreationKeyState.IsLibKeystoneShimResponderOwner() then return end
         local ok, reason = entryCreationKeyState.SendLibKeystoneShimInfo(channel)
         if not ok then
             entryCreationKeyState.ScheduleLibKeystoneResponseRetry(channel, reason)
@@ -4021,12 +4108,15 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     entryCreationKeyState.lastPayloadTotalBytes = 0
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadApplicantCount = 0
+    entryCreationKeyState.lastPayloadApplicantsUnavailable = false
     entryCreationKeyState.lastPayloadRosterCount = 0
     entryCreationKeyState.lastPayloadRosterIncomplete = false
     entryCreationKeyState.lastPayloadRosterUnavailable = false
-    if terminalClear then lfgUnavailable = false end
+    if terminalClear then
+        lfgUnavailable = false
+    end
+    local applicantsUnavailable = not terminalClear and applicantIDs == nil
     rosterUnavailable = (not terminalClear) and rosterUnavailable == true
-    entryCreationKeyState.lastPayloadRosterUnavailable = rosterUnavailable == true
     local headerFlags = 0
     if terminalClear then
         headerFlags = headerFlags + 0x01
@@ -4034,16 +4124,15 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     if lfgUnavailable then
         headerFlags = headerFlags + 0x02
     end
-    if rosterUnavailable then
-        headerFlags = headerFlags + 0x04
-    end
 
     -- Header (length patched after we know body size)
     table.insert(out, "APS1")
-    table.insert(out, string.char(0x09))    -- v9: partial flags include roster omission
+    local wireVersionChunkIndex = #out + 1
+    table.insert(out, "\0")                 -- v9 normally; v11 only for applicant partials
     local lengthChunkIndex = #out + 1
     table.insert(out, "\0\0")                -- length placeholder (uint16 BE)
-    table.insert(out, string.char(headerFlags))
+    local headerFlagsChunkIndex = #out + 1
+    table.insert(out, "\0")                  -- flags patched after completeness checks
     table.insert(out, "\0")                  -- reserved
 
     -- Listing block
@@ -4188,20 +4277,32 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     -- Applicants — filter out DEAD_STATUSES + sort by ID for hash stability
     local validAppIDs, validAppAPITokens = {}, {}
     local validAppMemberCounts, validAppOrder = {}, {}
+    local applicantsIncomplete = applicantsUnavailable
+    local expectedApplicantMemberCount = 0
     local cleanApplicantIDs = SafeTable(applicantIDs) or {}
     for _, rawID in ipairs(cleanApplicantIDs) do
         local id, info, apiID = entryCreationKeyState.GetApplicantInfoForTransport(rawID)
         if id and info then
             local status = _GetApplicantApplicationStatus(info)
-            local memberCount = math.floor(SafeNumber(info.numMembers, 0))
-            if memberCount > 5 then memberCount = 5 end
-            if memberCount > 0 and not APP_DEAD_STATUSES[status] then
-                local appIndex = #validAppIDs + 1
-                validAppIDs[appIndex] = id
-                validAppAPITokens[appIndex] = apiID or id
-                validAppMemberCounts[appIndex] = memberCount
-                validAppOrder[appIndex] = appIndex
+            if not APP_DEAD_STATUSES[status] then
+                local rawMemberCount = math.floor(SafeNumber(info.numMembers, 0))
+                if rawMemberCount < 1 or rawMemberCount > 5 then
+                    applicantsIncomplete = true
+                end
+                local memberCount = rawMemberCount
+                if memberCount > 5 then memberCount = 5 end
+                if memberCount > 0 then
+                    local appIndex = #validAppIDs + 1
+                    validAppIDs[appIndex] = id
+                    validAppAPITokens[appIndex] = apiID or id
+                    validAppMemberCounts[appIndex] = memberCount
+                    validAppOrder[appIndex] = appIndex
+                    expectedApplicantMemberCount =
+                        expectedApplicantMemberCount + memberCount
+                end
             end
+        else
+            applicantsIncomplete = true
         end
     end
     table.sort(validAppOrder, function(a, b)
@@ -4213,10 +4314,10 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     -- emitted blocks, not from numMembers sum, so:
     --   (a) no count/emit race possible (header count cannot disagree with
     --       what was actually appended);
-    --   (b) resilient to GetApplicantMemberInfo returning nil for transient
+    --   (b) detects GetApplicantMemberInfo returning nil for transient
     --       member-load lag (rare; members 2+ may lag by ≤1 frame on first
-    --       list-update). We just skip the block; next snapshot ≤0.5s later
-    --       picks them up.
+    --       list-update). One missing member makes the whole applicant domain
+    --       non-authoritative until a later complete snapshot replaces it.
     -- Per-block byte layout (v5):
     --   uint32 applicant_id, u8 member_idx (1-based), u8 class_id,
     --   u16 spec_id, u16 ilvl, u16 score, u16 main_score,
@@ -4270,6 +4371,13 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     -- one chunk instead of copying every field chunk into the outer payload on
     -- each transport poll.
     local memberPayload = table.concat(memberOut)
+    if emittedCount < expectedApplicantMemberCount then
+        applicantsIncomplete = true
+    end
+    if applicantsIncomplete then
+        memberPayload = ""
+        emittedCount = 0
+    end
     table.insert(out, _Uint16BE(emittedCount))
     table.insert(out, memberPayload)
     entryCreationKeyState.lastPayloadApplicantCount = emittedCount
@@ -4286,9 +4394,32 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
                 listingKeyLevelForRio
             )
     end
-    entryCreationKeyState.lastPayloadRosterCount = rosterCount
     entryCreationKeyState.lastPayloadRosterIncomplete = rosterIncomplete
-    if cleanEntry and #validAppOrder == 0
+    if rosterIncomplete then
+        rosterPayload = ""
+        rosterCount = 0
+        rosterQuietSignature = nil
+        rosterQuietHasUnknownSpec = false
+        rosterQuietInRaid = false
+    end
+    entryCreationKeyState.lastPayloadRosterCount = rosterCount
+    rosterUnavailable = rosterUnavailable or rosterIncomplete
+    entryCreationKeyState.lastPayloadApplicantsUnavailable = applicantsIncomplete
+    entryCreationKeyState.lastPayloadRosterUnavailable = rosterUnavailable
+    if rosterUnavailable then
+        headerFlags = headerFlags + 0x04
+    end
+    if applicantsIncomplete then
+        headerFlags = headerFlags + 0x08
+    end
+    -- Preserve v9 bytes for ordinary and roster-only frames so an older paired
+    -- companion keeps working during rollout. v11 is used only when the new
+    -- applicant-authority bit is required; older readers then fail closed on
+    -- precisely the generation they cannot apply safely.
+    out[wireVersionChunkIndex] = string.char(applicantsIncomplete and 0x0B or 0x09)
+    out[headerFlagsChunkIndex] = string.char(headerFlags)
+    if cleanEntry and not applicantsIncomplete and not rosterUnavailable
+       and #validAppOrder == 0
        and rosterCount == 5
        and rosterQuietSignature
        and not rosterQuietInRaid
@@ -4516,6 +4647,28 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.EndSession = EndSession
     _G.ApplicantScoutFixtureHarness.EnsureRosterInspectBatchBeforeSnapshot =
         entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot
+    _G.ApplicantScoutFixtureHarness.ScheduleRosterLoadRetry =
+        entryCreationKeyState.ScheduleRosterLoadRetry
+    _G.ApplicantScoutFixtureHarness.ShouldAttemptRosterLoad =
+        entryCreationKeyState.ShouldAttemptRosterLoad
+    _G.ApplicantScoutFixtureHarness.ClearRosterLoadRetryState =
+        entryCreationKeyState.ClearRosterLoadRetryState
+    _G.ApplicantScoutFixtureHarness.RosterLoadRetryState = function()
+        return {
+            attempt = entryCreationKeyState.rosterLoadRetryAttempt or 0,
+            deadline = entryCreationKeyState.rosterLoadRetryDeadline,
+            ready = entryCreationKeyState.rosterLoadRetryReady == true,
+            exhausted = entryCreationKeyState.rosterLoadRetryExhausted == true,
+        }
+    end
+    _G.ApplicantScoutFixtureHarness.RosterInspectFailureState = function(guid)
+        guid = SafeStr(guid, "")
+        return {
+            failures = entryCreationKeyState.rosterInspectFailuresByGUID[guid] or 0,
+            retryAfter = entryCreationKeyState.rosterInspectRetryAfterByGUID[guid],
+            exhausted = entryCreationKeyState.rosterInspectExhaustedGUIDs[guid] == true,
+        }
+    end
     _G.ApplicantScoutFixtureHarness.OnRosterInspectReady = _OnRosterInspectReady
     _G.ApplicantScoutFixtureHarness.LastPayloadRosterCount = function()
         return entryCreationKeyState.lastPayloadRosterCount
@@ -4547,6 +4700,13 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
         entryCreationKeyState.ScheduleAutoHiForNewPartyMembers
     _G.ApplicantScoutFixtureHarness.SyncAutoHiInitialGroupState =
         entryCreationKeyState.SyncAutoHiInitialGroupState
+    _G.ApplicantScoutFixtureHarness.NormalizeAutoHiMessage =
+        entryCreationKeyState.NormalizeAutoHiMessage
+    _G.ApplicantScoutFixtureHarness.AutoHiChatChannel =
+        entryCreationKeyState.AutoHiChatChannel
+    _G.ApplicantScoutFixtureHarness.AutoHiMaxBytes = function()
+        return entryCreationKeyState.AUTO_HI_MAX_BYTES
+    end
 end
 
 -- Resolve QR encoder reference (set by libs/qrencode.lua via addon namespace).
@@ -4565,7 +4725,6 @@ entryCreationKeyState.QR_RUN_SCAN_ROWS_PER_FRAME = 12 -- bound matrix analysis w
 entryCreationKeyState.QR_RUN_STRIDE = 4               -- flat x, y, width, height values per run
 entryCreationKeyState.QR_FAILURE_NOTICE_COOLDOWN_S = 30 -- keep persistent failures out of chat spam
 entryCreationKeyState.QR_PIXEL_UI_REFERENCE_HEIGHT = 768 -- WoW's physical-pixel conversion baseline
-local QR_TEXTURE_HARD_CAP = 10000                      -- safety against runaway texture creation
 entryCreationKeyState.QR_LARGE_PAYLOAD_BYTES = 512 -- prefer hex/L before raw byte mode for applicant bursts
 entryCreationKeyState.GetQRModuleUISize = function()
     local pixelUtil = SafeTable(_G.PixelUtil)
@@ -4597,6 +4756,7 @@ entryCreationKeyState.GetQRModuleUISize = function()
 end
 
 local function _AcquireQRTexture(x, y, w, h)
+    local QR_TEXTURE_HARD_CAP = 10000 -- safety against runaway texture creation
     if qrTextureUsed >= entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then
         return nil
     end
@@ -5163,23 +5323,52 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         end
     end
     local applicantIDs = {}
-    if entry then
-        applicantIDs = SafeTable(C_LFGList.GetApplicants()) or {}
+    if entry and lfgReadsAllowed then
+        local applicantsOK, rawApplicantIDs = pcall(C_LFGList.GetApplicants)
+        local cleanApplicantIDs = applicantsOK and SafeTable(rawApplicantIDs) or nil
+        if cleanApplicantIDs then
+            applicantIDs = cleanApplicantIDs
+        else
+            applicantIDs = nil
+        end
     end
     local lfgUnavailable = isSessionActive
        and not terminalClear
        and not lfgReadsAllowed
+    local rosterLoadDeferredByOverflow = not force
+        and not terminalClear
+        and entryCreationKeyState.qrOverflowState ~= nil
+        and entryCreationKeyState.qrOverflowState.rosterIncomplete == true
+    local rosterLoadDeferred = not force
+        and not terminalClear
+        and (rosterLoadDeferredByOverflow
+             or not entryCreationKeyState.ShouldAttemptRosterLoad())
+    local rosterInspectPending = false
+    if not terminalClear and not rosterLoadDeferred and applicantIDs ~= nil then
+        -- Always give unresolved party data timeout/failure-budget ownership.
+        -- Applicants only control whether the screenshot waits for that batch;
+        -- they must not bypass the inspect lifecycle itself.
+        rosterInspectPending =
+            entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()
+    end
     if not force
+       and applicantIDs ~= nil
        and #applicantIDs == 0
        and entryCreationKeyState.lastEmittedApplicantCount == 0
        and entryCreationKeyState.ShouldDeferRosterChangeForPreflight()
-       and entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()
+       and rosterInspectPending
        and not entryCreationKeyState.rosterInspectBatchCombatDeferred then
         pendingShotDirty = true
         return
     end
 
-    local payload, h = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)
+    local payload, h = BuildPayload(
+        entry,
+        applicantIDs,
+        terminalClear,
+        lfgUnavailable,
+        rosterLoadDeferred
+    )
     local latestPayload, latestHash = payload, h
     local latestDirtyGeneration =
         entryCreationKeyState.transportDirtyGeneration or 0
@@ -5188,7 +5377,8 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     h = latestHash
     local payloadDirtyGeneration = latestDirtyGeneration
     local payloadApplicantCount = entryCreationKeyState.lastPayloadApplicantCount
-    local payloadRosterIncomplete = entryCreationKeyState.lastPayloadRosterIncomplete
+    local payloadRosterIncomplete = rosterLoadDeferred
+        or entryCreationKeyState.lastPayloadRosterIncomplete
     local quietSignature = entryCreationKeyState.lastPayloadQuietFullPartySignature
     local overflowState = entryCreationKeyState.qrOverflowState
     local overflowInUse = false
@@ -5267,8 +5457,9 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         and ((entryCreationKeyState.lastDeliverySnapshotSendCount or 0)
              < entryCreationKeyState.NONTERMINAL_SNAPSHOT_MIN_SENDS)
     if not force and h == lastSnapshotHash and not resendSameNonterminalSnapshot then
-        if entryCreationKeyState.lastPayloadRosterIncomplete then
-            if entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S) then
+        if payloadRosterIncomplete then
+            if rosterLoadDeferredByOverflow
+               or entryCreationKeyState.ScheduleRosterLoadRetry() then
                 pendingShotDirty = false
             else
                 pendingShotDirty = true
@@ -5478,9 +5669,11 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                     entryCreationKeyState.lastDeliverySnapshotSendCount = 0
                 end
                 pendingShotDirty = false
-                if not force and payloadRosterIncomplete then
+                if payloadRosterIncomplete then
                     local retryScheduled =
-                        entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S)
+                        force
+                        or rosterLoadDeferredByOverflow
+                        or entryCreationKeyState.ScheduleRosterLoadRetry()
                     pendingShotDirty = dirtySincePayload or not retryScheduled
                 elseif dirtySincePayload then
                     pendingShotDirty = true
@@ -5529,8 +5722,10 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         end)
 
         if ApplicantScoutDB and ApplicantScoutDB.debug then
-            print(string.format("|cff999999[APS-debug]|r SHOT bytes=%d apps=%d hash=%x",
-                  #payload, #applicantIDs, h))
+            local applicantCount = applicantIDs and tostring(#applicantIDs)
+                or "unavailable"
+            print(string.format("|cff999999[APS-debug]|r SHOT bytes=%d apps=%s hash=%x",
+                  #payload, applicantCount, h))
         end
     end
 
@@ -5668,16 +5863,13 @@ end
 -- callbacks must only set primitive pending flags; C_LFGList reads, frame
 -- HookScript calls, and form mutations are drained from ApplicantScout's ticker.
 
-entryCreationKeyState.QueueLFGEntryCreationDeferredWork = function(keyCapture, defaultPlaystyle, resetTouched)
+entryCreationKeyState.QueueLFGEntryCreationDeferredWork = function(keyCapture, defaultPlaystyle)
     entryCreationKeyState.lfgEntryCreationWorkPending = true
     if keyCapture then
         entryCreationKeyState.lfgEntryCreationKeyCapturePending = true
     end
     if defaultPlaystyle then
         entryCreationKeyState.lfgDefaultPlaystylePending = true
-    end
-    if resetTouched then
-        entryCreationKeyState.lfgDefaultPlaystyleResetTouched = true
     end
 end
 
@@ -5690,16 +5882,10 @@ entryCreationKeyState.ProcessLFGEntryCreationDeferredWork = function()
 
     local keyCapturePending = entryCreationKeyState.lfgEntryCreationKeyCapturePending
     local defaultPlaystylePending = entryCreationKeyState.lfgDefaultPlaystylePending
-    local resetTouched = entryCreationKeyState.lfgDefaultPlaystyleResetTouched
 
     entryCreationKeyState.lfgEntryCreationWorkPending = false
     entryCreationKeyState.lfgEntryCreationKeyCapturePending = false
     entryCreationKeyState.lfgDefaultPlaystylePending = false
-    entryCreationKeyState.lfgDefaultPlaystyleResetTouched = false
-
-    if resetTouched then
-        entryCreationKeyState.lfgDefaultPlaystyleUserTouched = false
-    end
     if keyCapturePending then
         _HookEntryCreationKeyCapture(panel)
     end
@@ -5771,13 +5957,15 @@ if type(_addonNS) == "table"
    and type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
     _addonNS.ApplicantScoutFixtureHarness.MaybeAutoSelectDefaultPlaystyle =
         _MaybeAutoSelectDefaultPlaystyle
+    _addonNS.ApplicantScoutFixtureHarness.ProcessLFGEntryCreationDeferredWork =
+        entryCreationKeyState.ProcessLFGEntryCreationDeferredWork
 end
 
 _SetupLFGEntryCreationKeyCapture = function()
     if lfgEntryCreationKeyCaptureState.hooksSetup then
         local frame = _G.LFGListFrame
         if frame and frame.EntryCreation then
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false, false)
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false)
         end
         return true
     end
@@ -5798,13 +5986,13 @@ _SetupLFGEntryCreationKeyCapture = function()
 
     local ok, err = pcall(function()
         hook("LFGListEntryCreation_Select", function()
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false, false)
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false)
         end)
         hook("LFGListEntryCreation_Show", function()
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false, false)
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false)
         end)
         hook("LFGListEntryCreation_SetEditMode", function()
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false, false)
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false)
         end)
     end)
 
@@ -5820,7 +6008,7 @@ _SetupLFGEntryCreationKeyCapture = function()
     lfgEntryCreationKeyCaptureState.hooksSetup = true
     local frame = _G.LFGListFrame
     if frame and frame.EntryCreation then
-        entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false, false)
+        entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false)
     end
     return true
 end
@@ -5829,7 +6017,7 @@ _SetupLFGDefaultPlaystyle = function()
     if lfgDefaultPlaystyleHooksSetup then
         local frame = _G.LFGListFrame
         if frame and frame.EntryCreation then
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true, false)
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true)
         end
         return true
     end
@@ -5852,13 +6040,17 @@ _SetupLFGDefaultPlaystyle = function()
 
     local ok, err = pcall(function()
         hook("LFGListEntryCreation_Select", function()
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true, false)
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true)
         end)
         hook("LFGListEntryCreation_Show", function()
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true, true)
+            -- The post-hook runs after every synchronous Blizzard Show/select
+            -- initialization touch. User input cannot interleave until Show
+            -- returns, so later manual choices remain authoritative.
+            entryCreationKeyState.lfgDefaultPlaystyleUserTouched = false
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true)
         end)
         hook("LFGListEntryCreation_SetEditMode", function()
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true, false)
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true)
         end)
         hook("LFGListEntryCreation_OnPlayStyleSelectedInternal", function()
             if not lfgDefaultPlaystyleApplying then
@@ -5879,7 +6071,7 @@ _SetupLFGDefaultPlaystyle = function()
     lfgDefaultPlaystyleHooksSetup = true
     local frame = _G.LFGListFrame
     if frame and frame.EntryCreation then
-        entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true, false)
+        entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true)
     end
     return true
 end
@@ -5897,6 +6089,7 @@ local EVENT_HANDLERS = {
     end,
     PLAYER_ENTERING_WORLD            = function()
         entryCreationKeyState.ResetInteractionSlotsForWorldTransition()
+        entryCreationKeyState.ClearRosterLoadRetryState()
         CreateQRFrame()
         entryCreationKeyState.SyncAutoHiInitialGroupState()
         entryCreationKeyState.RequestLeaderKeystone(true)
@@ -5951,10 +6144,12 @@ local EVENT_HANDLERS = {
     end,
     PLAYER_SPECIALIZATION_CHANGED      = function(_, unit)
         _InvalidateRosterSpecCacheForUnit(unit)
+        entryCreationKeyState.ClearRosterLoadRetryState()
         MarkDirty("spec")
     end,
     PLAYER_REGEN_ENABLED              = function()
         if entryCreationKeyState.rosterInspectBatchCombatDeferred then
+            entryCreationKeyState.ClearRosterLoadRetryState()
             entryCreationKeyState.rosterInspectBatchCombatDeferred = false
             if not entryCreationKeyState.FlushOrContinueRosterInspectBatch() then
                 MarkDirty("inspect")
@@ -5965,7 +6160,9 @@ local EVENT_HANDLERS = {
         end
     end,
     INSPECT_READY                    = function(_, guid)
-        _OnRosterInspectReady(guid)
+        if _OnRosterInspectReady(guid) then
+            entryCreationKeyState.ClearRosterLoadRetryState()
+        end
     end,
 }
 
@@ -6064,11 +6261,10 @@ end)
 -- NOT call SetToplevel(true) — it re-raises on every click and would hide
 -- UIDropDownMenu / ColorPickerFrame children of any future widgets.
 --
--- Tooltip pattern. SetScript override (not HookScript) is fine for simple
--- widgets like CheckButton whose default OnEnter is empty. For widgets with
--- native hover behavior (Buttons), caller switches to HookScript explicitly.
+-- Tooltip hooks preserve native hover state on Blizzard templates such as the
+-- playstyle dropdown while remaining harmless for simple checkboxes/edit boxes.
 _SetWidgetTooltip = function(widget, title, body)
-    widget:SetScript("OnEnter", function(self)
+    widget:HookScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(title)
         if body then
@@ -6076,7 +6272,7 @@ _SetWidgetTooltip = function(widget, title, body)
         end
         GameTooltip:Show()
     end)
-    widget:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    widget:HookScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
 local function _RunDisabledCleanup()
@@ -6179,7 +6375,7 @@ _SetAutoMPlusPlaystyle = function(token, quiet)
         _SetupLFGDefaultPlaystyle()
         local frame = _G.LFGListFrame
         if frame and frame.EntryCreation then
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true, false)
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true)
         end
     end
     if not quiet then
@@ -6208,16 +6404,6 @@ entryCreationKeyState.SetAutoHiMessage = function(text, quiet)
         end
     end
 end
-
--- Layout constants for the Blizzard-tooltip-style panel chrome.
-local _SETTINGS_FRAME_WIDTH = 420
-local _SETTINGS_FRAME_HEIGHT = 104
-local _SETTINGS_ANCHOR_X = 0
-local _SETTINGS_ANCHOR_Y = 6
-local _SETTINGS_TOP_PAD = 10        -- clearance under the rope-border top edge
-local _SETTINGS_LEFT_PAD = 14
-local _SETTINGS_RIGHT_COL_X = 238
-local _SETTINGS_DROPDOWN_WIDTH = 170
 
 entryCreationKeyState.ToggleQRMoveMode = function()
     qrMoveMode = not qrMoveMode
@@ -6256,6 +6442,18 @@ end
 -- Defensive ADDON_LOADED watcher fallback for the unlikely case PVEFrame is
 -- loaded on demand (12.x retail compiles it in, but custom clients may differ).
 _AttachSettingsPanel = function()
+    -- Function-scoped because no callback or other subsystem consumes these
+    -- values. Keeping layout-only names out of the chunk restores Lua 5.1
+    -- top-level local headroom without changing the settings widget contract.
+    local _SETTINGS_FRAME_WIDTH = 420
+    local _SETTINGS_FRAME_HEIGHT = 104
+    local _SETTINGS_ANCHOR_X = 0
+    local _SETTINGS_ANCHOR_Y = 6
+    local _SETTINGS_TOP_PAD = 10        -- clearance under the rope-border top edge
+    local _SETTINGS_LEFT_PAD = 14
+    local _SETTINGS_RIGHT_COL_X = 238
+    local _SETTINGS_DROPDOWN_WIDTH = 170
+
     local watcher = entryCreationKeyState.settingsFrameAttachWatcher
     if settingsFrameAttached then
         if watcher then
@@ -6448,7 +6646,7 @@ _AttachSettingsPanel = function()
     autoHiEditBox:SetPoint("LEFT", autoHiLabel, "RIGHT", 8, 0)
     autoHiEditBox:SetSize(190, 22)
     autoHiEditBox:SetAutoFocus(false)
-    autoHiEditBox:SetMaxLetters(160)
+    autoHiEditBox:SetMaxBytes(entryCreationKeyState.AUTO_HI_MAX_BYTES)
     autoHiEditBox:SetScript("OnTextChanged", function(self, userInput)
         if entryCreationKeyState.autoHiEditBoxSyncing or not userInput then return end
         ApplicantScoutDB.autoHiMessage =

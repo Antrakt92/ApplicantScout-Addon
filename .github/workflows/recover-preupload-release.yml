@@ -18,6 +18,7 @@ on:
 
 concurrency:
   group: applicantscout-addon-release
+  queue: max
   cancel-in-progress: false
 
 env:
@@ -296,6 +297,16 @@ jobs:
             throw "Release $env:RELEASE_TAG must be newer than latest stable $LatestTag."
           }
 
+          $ReleaseNotesPath = Join-Path $env:RUNNER_TEMP "applicantscout-addon-release-notes.md"
+          python3 scripts/create_release_notes.py `
+            --changelog CHANGELOG.md `
+            --output $ReleaseNotesPath `
+            --tag $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not generate exact-version release notes."
+          }
+          $ExpectedReleaseBody = [IO.File]::ReadAllText($ReleaseNotesPath).Replace("`r`n", "`n").TrimEnd("`r", "`n")
+
           gh release create $env:RELEASE_TAG `
             $ZipPath `
             $MetadataPath `
@@ -303,7 +314,7 @@ jobs:
             --verify-tag `
             --draft `
             --title $env:RELEASE_TAG `
-            --notes-file CHANGELOG.md
+            --notes-file $ReleaseNotesPath
           if ($LASTEXITCODE -ne 0) {
             throw "GitHub draft creation failed for $env:RELEASE_TAG."
           }
@@ -314,9 +325,12 @@ jobs:
           }
           $Draft = gh release view $env:RELEASE_TAG `
             --repo $env:GITHUB_REPOSITORY `
-            --json tagName,isDraft,isPrerelease,assets | ConvertFrom-Json
+            --json tagName,name,body,isDraft,isPrerelease,assets | ConvertFrom-Json
+          $DraftBody = ([string]$Draft.body).Replace("`r`n", "`n").TrimEnd("`r", "`n")
           if ($LASTEXITCODE -ne 0 -or
               $Draft.tagName -cne $env:RELEASE_TAG -or
+              [string]$Draft.name -cne $env:RELEASE_TAG -or
+              $DraftBody -cne $ExpectedReleaseBody -or
               -not [bool]$Draft.isDraft -or
               [bool]$Draft.isPrerelease -or
               @($Draft.assets).Count -ne $Expected.Count) {
@@ -343,6 +357,8 @@ jobs:
           }
           gh release edit $env:RELEASE_TAG `
             --repo $env:GITHUB_REPOSITORY `
+            --title $env:RELEASE_TAG `
+            --notes-file $ReleaseNotesPath `
             --draft=false `
             --prerelease=false `
             --latest
@@ -353,8 +369,11 @@ jobs:
           $Deadline = (Get-Date).AddSeconds(60)
           do {
             $Published = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+            $PublishedBody = ([string]$Published.body).Replace("`r`n", "`n").TrimEnd("`r", "`n")
             if ($LASTEXITCODE -eq 0 -and
                 $Published.tag_name -ceq $env:RELEASE_TAG -and
+                [string]$Published.name -ceq $env:RELEASE_TAG -and
+                $PublishedBody -ceq $ExpectedReleaseBody -and
                 $Published.draft -is [bool] -and -not $Published.draft -and
                 $Published.prerelease -is [bool] -and -not $Published.prerelease -and
                 $Published.immutable -is [bool] -and $Published.immutable -and
@@ -455,6 +474,5 @@ jobs:
           python scripts/verify_curseforge_release.py
           --tag "$RELEASE_TAG"
           --project-id 1541576
-          --game-version 12.0.7
-          --game-version 12.1.0
+          --toc ApplicantScout.toc
           --wait-seconds 900

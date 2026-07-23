@@ -19,6 +19,7 @@ NotifyInspect = function(unit)
     assert(unit == "party1", "fixture should inspect only the unresolved party member")
     inspect_requests = inspect_requests + 1
 end
+ApplicantScoutDB = { enabled = true, debug = false }
 
 local harness = env.load_addon()
 harness.StartSession()
@@ -67,7 +68,8 @@ local payload = harness.BuildPayload(
     false
 )
 assert(type(payload) == "string" and #payload > 0, "partial roster payload must serialize")
-assert(harness.LastPayloadRosterCount() == 2, "partial roster must retain both group rows")
+assert(harness.LastPayloadRosterCount() == 0, "partial roster rows must be withheld")
+assert(harness.LastPayloadRosterIncomplete(), "partial roster must lose authority")
 assert(inspect_requests == 2, "payload construction must respect exhaustion state")
 
 harness.EndSession()

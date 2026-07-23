@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+## 0.8.0 - 23-Jul-2026 - Companion 0.12.0 partial-state reliability
+
+This paired addon + companion release distinguishes incomplete applicant reads
+from authoritative removals, keeps Party inspection and key-provider work
+bounded, and hardens the exact-tag publication contract.
+
+### Fixed
+
+- Incomplete applicant or group-roster reads now preserve the companion's last
+  complete state instead of publishing missing members as removals.
+- Permanently unavailable party inspect data now uses bounded backoff and parks
+  until new roster or inspect evidence arrives, avoiding continuous roster and
+  RaiderIO rebuilds while applicant polling continues.
+- Late or unowned inspect callbacks are ignored after disable, roster changes,
+  or ownership release instead of reviving stale Party work.
+- LibKeystone responses are accepted only from the provider selected for the
+  current request, preventing a shim callback from replacing authoritative key
+  context.
+- Auto Hi selects instance chat for instance groups and home-party chat
+  otherwise, and enforces one UTF-8 byte limit in both settings and transport.
+- Playstyle tooltips preserve Blizzard's existing hover handlers instead of
+  replacing native dropdown behavior.
+
+### Improved
+
+- Roster-load retries are separately bounded and rearmed only by new roster or
+  inspect evidence, while applicant polling and owned inspect budgets continue.
+- Release and recovery workflows serialize through the same non-cancelling
+  queue, publish only the exact versioned changelog section, and derive required
+  CurseForge game versions from the tagged TOC metadata.
+- Lua 5.1 top-level local pressure is reduced by scoping settings and single-use
+  constants to their owning functions.
+
+### Notes
+
+- Ordinary snapshots remain APS1 v9. Applicant-partial authority uses logical
+  v11, while v10 remains the bounded overflow fragment envelope.
+- This addon release is paired with ApplicantScout Companion `0.12.0`.
+
 ## 0.7.1 - 20-Jul-2026 - Companion 0.11.1 QR capture recovery
 
 This paired addon + companion patch restores automatic applicant and Party

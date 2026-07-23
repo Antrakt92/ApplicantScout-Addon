@@ -78,7 +78,7 @@ local placeholderPayload = assert(harness.BuildPayload)(
 assert(not placeholderPayload:find("Unknown-Realm", 1, true))
 assert(not placeholderPayload:find("Unknown Object-Realm", 1, true))
 assert(not placeholderPayload:find("UNKNOWNOBJECT-Realm", 1, true))
-assert(placeholderPayload:find("Visible-Realm", 1, true))
+assert(not placeholderPayload:find("Visible-Realm", 1, true))
 
 print(string.format(
     "ok placeholder-label-reuse first=%d repeated=%d bytes=%d hash=%u",

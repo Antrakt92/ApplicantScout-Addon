@@ -12,6 +12,7 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "interaction-force"
        or fixture_mode == "interaction-terminal"
        or fixture_mode == "interaction-world-reset"
+       or fixture_mode == "partial-debug"
        or fixture_mode == "overflow"
        or fixture_mode == "overflow-terminal",
     "unsupported fixture mode: " .. tostring(fixture_mode))
@@ -27,6 +28,7 @@ local info_panel_during_settle = fixture_mode == "info-panel-during-settle"
 local interaction_force = fixture_mode == "interaction-force"
 local interaction_terminal = fixture_mode == "interaction-terminal"
 local interaction_world_reset = fixture_mode == "interaction-world-reset"
+local partial_debug = fixture_mode == "partial-debug"
 local overflow_mode = fixture_mode == "overflow"
     or fixture_mode == "overflow-terminal"
 local overflow_terminal = fixture_mode == "overflow-terminal"
@@ -55,7 +57,10 @@ C_LFGList.GetActiveEntryInfo = function()
         comment = "five applicants and two party members",
     }
 end
-C_LFGList.GetApplicants = function() return applicant_ids end
+C_LFGList.GetApplicants = function()
+    if partial_debug then error("injected unavailable applicant surface") end
+    return applicant_ids
+end
 C_LFGList.GetApplicantInfo = function(id)
     return {
         applicantID = id,
@@ -208,7 +213,7 @@ end
 
 ApplicantScoutDB = {
     enabled = true,
-    debug = false,
+    debug = partial_debug,
     qrAlwaysVisible = false,
     qrMoveMode = false,
 }

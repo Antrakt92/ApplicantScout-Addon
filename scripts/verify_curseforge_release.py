@@ -5,11 +5,17 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable, Mapping, Sequence
 import json
+from pathlib import Path
 import re
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+if __package__:
+    from .create_release_metadata import ReleaseMetadataError, parse_toc_interfaces
+else:
+    from create_release_metadata import ReleaseMetadataError, parse_toc_interfaces
 
 
 PUBLIC_FILES_URL = "https://www.curseforge.com/api/v1/mods/{project_id}/files"
@@ -37,6 +43,37 @@ def expected_file_name(tag: str) -> str:
             f"release tag must be strict vX.Y.Z or X.Y.Z, got {tag!r}"
         )
     return f"ApplicantScout-v{match.group(1)}.zip"
+
+
+def curseforge_game_version_from_interface(interface: int) -> str:
+    digits = str(interface)
+    if len(digits) != 6 or not digits.isascii() or not digits.isdigit():
+        raise MarketplaceVerificationError(
+            f"mainline TOC Interface must be a six-digit integer, got {interface!r}"
+        )
+    return ".".join(
+        str(int(component))
+        for component in (digits[:2], digits[2:4], digits[4:6])
+    )
+
+
+def required_game_versions_from_toc(toc_path: Path) -> frozenset[str]:
+    try:
+        toc = toc_path.read_text(encoding="utf-8")
+        interfaces = parse_toc_interfaces(toc)
+        versions = frozenset(
+            curseforge_game_version_from_interface(interface)
+            for interface in interfaces
+        )
+    except (OSError, UnicodeError, ReleaseMetadataError) as exc:
+        raise MarketplaceVerificationError(
+            f"could not derive required game versions from {toc_path}: {exc}"
+        ) from exc
+    if len(versions) != len(interfaces):
+        raise MarketplaceVerificationError(
+            "TOC Interface values collapse to duplicate CurseForge game versions"
+        )
+    return versions
 
 
 def parse_public_files(payload: object) -> list[Mapping[str, Any]]:
@@ -182,10 +219,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--project-id", type=int, required=True)
     parser.add_argument(
-        "--game-version",
-        action="append",
-        default=[],
-        help="Required CurseForge game version; repeat for multiple versions.",
+        "--toc",
+        type=Path,
+        default=Path("ApplicantScout.toc"),
+        help="Exact-tag TOC that defines required CurseForge game versions.",
     )
     parser.add_argument("--wait-seconds", type=float, default=900.0)
     parser.add_argument("--poll-seconds", type=float, default=15.0)
@@ -204,7 +241,7 @@ def main() -> int:
     message = wait_for_public_release(
         project_id=args.project_id,
         expected_name=expected_file_name(args.tag),
-        required_game_versions=frozenset(args.game_version),
+        required_game_versions=required_game_versions_from_toc(args.toc),
         wait_seconds=args.wait_seconds,
         poll_seconds=args.poll_seconds,
         request_timeout=args.request_timeout,

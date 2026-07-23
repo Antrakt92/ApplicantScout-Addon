@@ -16,6 +16,9 @@ LUA_FIXTURE_GENERATOR = REPO_ROOT / "tests" / "lua" / "generate_aps1_v8_fixture.
 LUA_LIBKEYSTONE_DISABLED_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_libkeystone_disabled_transport.lua"
 )
+LUA_LIBKEYSTONE_PROVIDER_OWNERSHIP_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_libkeystone_provider_ownership.lua"
+)
 LUA_QR_RUN_CHUNKING_CHECK = REPO_ROOT / "tests" / "lua" / "check_qr_run_chunking.lua"
 LUA_QR_CAPTURE_LIFECYCLE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_qr_capture_lifecycle.lua"
@@ -34,6 +37,9 @@ LUA_SETTINGS_ATTACH_WATCHER_CHECK = (
 )
 LUA_ROSTER_INSPECT_EXHAUSTION_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_inspect_exhaustion.lua"
+)
+LUA_ROSTER_LOAD_RETRY_BACKOFF_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_roster_load_retry_backoff.lua"
 )
 LUA_ROSTER_INSPECT_REJOIN_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_inspect_rejoin.lua"
@@ -69,6 +75,9 @@ LUA_PLACEHOLDER_LABEL_REUSE_CHECK = (
 LUA_TRANSPORT_RECORD_REUSE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_transport_record_reuse.lua"
 )
+LUA_PARTIAL_SURFACE_AUTHORITY_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_partial_surface_authority.lua"
+)
 LUA_RAIDERIO_FALLBACK_REUSE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_raiderio_fallback_reuse.lua"
 )
@@ -80,6 +89,18 @@ LUA_NUMERIC_BOUNDARIES_CHECK = (
 )
 LUA_AUTO_HI_PARTY_SAMPLING_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_auto_hi_party_sampling.lua"
+)
+LUA_AUTO_HI_MESSAGE_BYTES_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_auto_hi_message_bytes.lua"
+)
+LUA_AUTO_HI_CHAT_CHANNEL_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_auto_hi_chat_channel.lua"
+)
+LUA_DISABLE_ROSTER_INSPECT_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_disable_roster_inspect.lua"
+)
+LUA_DEFAULT_PLAYSTYLE_DEFERRED_TOUCH_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_default_playstyle_deferred_touch.lua"
 )
 LUA_GOLDEN_CASES = (
     (None, "aps1_v8_lua_golden.hex"),
@@ -240,9 +261,7 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
         "-- LFG entry creation",
     )
 
-    payload_idx = body.index(
-        "local payload, h = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
-    )
+    payload_idx = body.index("local payload, h = BuildPayload(")
     job_idx = body.index("local jobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1")
     callback_idx = body.index("local function OnQRPaintComplete(paintOK)")
     lease_idx = body.index("local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()", callback_idx)
@@ -279,9 +298,7 @@ def test_interaction_suppression_defers_non_force_payloads_before_dedup():
     )
 
     suppression_idx = screenshot_body.index("not force and _qrSuppressedByInteraction")
-    payload_idx = screenshot_body.index(
-        "local payload, h = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
-    )
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload(")
     suppression_block = screenshot_body[
         suppression_idx : screenshot_body.index("\n    end", suppression_idx)
     ]
@@ -396,7 +413,7 @@ def test_qr_paint_completion_preserves_dirty_snapshot_during_paint():
     state_body = _slice_between(
         source,
         "local entryCreationKeyState = {",
-        "local ENTRY_CREATION_KEY_CACHE_TTL",
+        "entryCreationKeyState.ClearScreenshotFailureState = function()",
     )
     screenshot_body = _slice_between(
         source,
@@ -424,7 +441,7 @@ def test_dirty_event_during_qr_settle_lease_preserves_pending_and_roster_preflig
     state_body = _slice_between(
         source,
         "local entryCreationKeyState = {",
-        "local ENTRY_CREATION_KEY_CACHE_TTL",
+        "entryCreationKeyState.ClearScreenshotFailureState = function()",
     )
     mark_dirty_body = _slice_between(
         source,
@@ -446,9 +463,7 @@ def test_dirty_event_during_qr_settle_lease_preserves_pending_and_roster_preflig
     assert "entryCreationKeyState.transportDirtyGeneration =" in mark_dirty_body
     assert "entryCreationKeyState.transportDirtyGeneration =" in roster_change_body
 
-    payload_idx = screenshot_body.index(
-        "local payload, h = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
-    )
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload(")
     payload_gen_idx = screenshot_body.index(
         "local payloadDirtyGeneration =",
         payload_idx,
@@ -708,13 +723,13 @@ def test_non_force_screenshot_waits_for_roster_inspect_batch_before_payload():
     applicant_idx = screenshot_body.index("local applicantIDs = {}")
     empty_guard_idx = screenshot_body.index("#applicantIDs == 0", applicant_idx)
     force_guard_idx = screenshot_body.rindex("not force", 0, batch_idx)
-    pending_idx = screenshot_body.index("pendingShotDirty = true", batch_idx)
+    pending_idx = screenshot_body.index("pendingShotDirty = true", empty_guard_idx)
     entry_idx = screenshot_body.index("local entry = nil")
     payload_idx = screenshot_body.index("local payload, h = BuildPayload")
 
-    assert entry_idx < applicant_idx < empty_guard_idx < batch_idx
+    assert entry_idx < applicant_idx < batch_idx < empty_guard_idx
     assert force_guard_idx < batch_idx
-    assert batch_idx < pending_idx < payload_idx
+    assert empty_guard_idx < pending_idx < payload_idx
 
 
 def test_roster_composition_change_waits_for_inspect_until_fallback_deadline():
@@ -722,7 +737,7 @@ def test_roster_composition_change_waits_for_inspect_until_fallback_deadline():
     state_body = _slice_between(
         source,
         "local entryCreationKeyState = {",
-        "local ENTRY_CREATION_KEY_CACHE_TTL",
+        "entryCreationKeyState.ClearScreenshotFailureState = function()",
     )
     start_body = _slice_between(
         source,
@@ -767,17 +782,16 @@ def test_roster_composition_change_waits_for_inspect_until_fallback_deadline():
     roster_dirty_idx = events_body.index('MarkDirty("roster")', roster_idx)
     assert roster_changed_idx < roster_dirty_idx
 
-    empty_guard_idx = screenshot_body.index("#applicantIDs == 0")
+    preflight_idx = screenshot_body.index(
+        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()"
+    )
+    empty_guard_idx = screenshot_body.index("#applicantIDs == 0", preflight_idx)
     deadline_guard_idx = screenshot_body.index(
         "entryCreationKeyState.ShouldDeferRosterChangeForPreflight()",
         empty_guard_idx,
     )
-    preflight_idx = screenshot_body.index(
-        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()",
-        deadline_guard_idx,
-    )
-    payload_idx = screenshot_body.index("local payload, h = BuildPayload", preflight_idx)
-    assert empty_guard_idx < deadline_guard_idx < preflight_idx < payload_idx
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload", deadline_guard_idx)
+    assert preflight_idx < empty_guard_idx < deadline_guard_idx < payload_idx
 
     callback_idx = screenshot_body.index("local function OnQRPaintComplete(paintOK)")
     clear_idx = screenshot_body.index(
@@ -837,7 +851,7 @@ def test_nonterminal_snapshots_get_short_redundant_resend_without_periodic_heart
     state_body = _slice_between(
         source,
         "local entryCreationKeyState = {",
-        "local ENTRY_CREATION_KEY_CACHE_TTL = 3600",
+        "entryCreationKeyState.ClearScreenshotFailureState = function()",
     )
     start_body = _slice_between(
         source,
@@ -1023,7 +1037,7 @@ def test_payload_still_includes_raiderio_completion_summary():
         "local function HashSnapshot(payload)",
     )
 
-    assert "string.char(0x09)" in payload_body
+    assert "applicantsIncomplete and 0x0B or 0x09" in payload_body
     assert "_GetRaiderIOMPlusSummaryForCleanName(" in source
     assert "rioSummary.hasProfile" in payload_body
     assert "rioSummary.bestDungeonKey" in payload_body
@@ -1037,7 +1051,7 @@ def test_payload_v6_appends_current_group_roster_after_applicants():
         "local function HashSnapshot(payload)",
     )
 
-    assert "string.char(0x09)" in payload_body
+    assert "applicantsIncomplete and 0x0B or 0x09" in payload_body
     assert "BuildRosterPayloadRows(" in payload_body
     applicants_idx = payload_body.index("table.insert(out, memberPayload)")
     roster_idx = payload_body.index("table.insert(out, _Uint16BE(rosterCount))")
@@ -1150,6 +1164,44 @@ def test_libkeystone_response_failure_records_or_retries():
     assert "entryCreationKeyState.ScheduleLibKeystoneResponseRetry(channel, reason)" in response_body
 
 
+def test_libkeystone_shim_response_is_owned_only_by_selected_shim_provider():
+    source = _lua_source()
+    leader_body = _slice_between(
+        source,
+        "entryCreationKeyState.GetLibKeystone = function()",
+        "local function _RaidSubgroupForRoster(index)",
+    )
+    response_idx = leader_body.index('if msg == "R" then')
+    ownership_idx = leader_body.index(
+        "if not entryCreationKeyState.IsLibKeystoneShimResponderOwner() then return end",
+        response_idx,
+    )
+    send_idx = leader_body.index(
+        "entryCreationKeyState.SendLibKeystoneShimInfo(channel)",
+        ownership_idx,
+    )
+    parse_idx = leader_body.index('msg:match("^(%d+),(%d+),(%d+)$")', send_idx)
+
+    assert ownership_idx < send_idx < parse_idx
+    assert "local provider = entryCreationKeyState.leaderKeystoneLib" in leader_body
+    assert "provider == entryCreationKeyState.libKeystoneShim" in leader_body
+    retry_body = _slice_between(
+        leader_body,
+        "entryCreationKeyState.ScheduleLibKeystoneResponseRetry = function(",
+        "entryCreationKeyState.CancelLibKeystoneResponseRetry = function()",
+    )
+    assert retry_body.count("IsLibKeystoneShimResponderOwner()") == 2
+
+
+def test_libkeystone_provider_ownership_in_lua51(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_LIBKEYSTONE_PROVIDER_OWNERSHIP_CHECK,
+    ).strip()
+
+    assert output == "ok libkeystone-provider-ownership"
+
+
 def test_leader_keystone_request_uses_checked_send_and_throttle_updates_only_after_known_attempt():
     source = _lua_source()
     request_body = _slice_between(
@@ -1178,7 +1230,7 @@ def test_libkeystone_retries_are_group_generation_scoped_and_cancelled_on_group_
     state_body = _slice_between(
         source,
         "local entryCreationKeyState = {",
-        "local ENTRY_CREATION_KEY_CACHE_TTL = 3600",
+        "entryCreationKeyState.ClearScreenshotFailureState = function()",
     )
     leader_body = _slice_between(
         source,
@@ -1261,7 +1313,8 @@ def test_full_party_quiet_signature_requires_empty_resolved_non_raid_roster():
 
     assert "entryCreationKeyState.lastPayloadQuietFullPartySignature = nil" in payload_body
     assert "rosterQuietSignature, rosterQuietHasUnknownSpec, rosterQuietInRaid" in payload_body
-    assert "cleanEntry and #validAppOrder == 0" in payload_body
+    assert "cleanEntry and not applicantsIncomplete and not rosterUnavailable" in payload_body
+    assert "and #validAppOrder == 0" in payload_body
     assert "rosterCount == 5" in payload_body
     assert "not rosterQuietInRaid" in payload_body
     assert "not rosterQuietHasUnknownSpec" in payload_body
@@ -1583,6 +1636,81 @@ def test_disable_cleanup_restores_cvars_after_terminal_clear_retry_capture_windo
     assert "restoreSessionGen" in cleanup_body
 
 
+def test_playstyle_dropdown_tooltip_preserves_native_hover_scripts():
+    source = _lua_source()
+    tooltip_body = _slice_between(
+        source,
+        "_SetWidgetTooltip = function(widget, title, body)",
+        "local function _RunDisabledCleanup()",
+    )
+    settings_body = _slice_between(
+        source,
+        "_AttachSettingsPanel = function()",
+        "entryCreationKeyState.ToggleSettingsPanel = function()",
+    )
+
+    assert 'widget:HookScript("OnEnter"' in tooltip_body
+    assert 'widget:HookScript("OnLeave"' in tooltip_body
+    assert 'widget:SetScript("OnEnter"' not in tooltip_body
+    assert "_SetWidgetTooltip(\n            autoMPlusPlaystyleDropdown," in settings_body
+
+
+def test_settings_layout_constants_are_function_scoped_for_lua51_local_headroom():
+    source = _lua_source()
+    attach_anchor = "_AttachSettingsPanel = function()"
+    prefix, settings_body = source.split(attach_anchor, 1)
+    settings_body = settings_body.split(
+        "entryCreationKeyState.ToggleSettingsPanel = function()",
+        1,
+    )[0]
+    names = (
+        "_SETTINGS_FRAME_WIDTH",
+        "_SETTINGS_FRAME_HEIGHT",
+        "_SETTINGS_ANCHOR_X",
+        "_SETTINGS_ANCHOR_Y",
+        "_SETTINGS_TOP_PAD",
+        "_SETTINGS_LEFT_PAD",
+        "_SETTINGS_RIGHT_COL_X",
+        "_SETTINGS_DROPDOWN_WIDTH",
+    )
+
+    for name in names:
+        assert f"local {name}" not in prefix
+        assert f"local {name} =" in settings_body
+
+
+def test_single_use_constants_do_not_consume_top_level_lua51_local_slots():
+    source = _lua_source()
+    cases = (
+        (
+            "QR_POSITION_LIMIT",
+            "local function _IsFiniteQRPositionNumber(v)",
+            "local function _NormalizeQRPosition(pos)",
+        ),
+        (
+            "PVE_POSITION_LIMIT",
+            "local function _IsFinitePVEPositionNumber(v)",
+            "local function _NormalizePVEFramePosition(pos)",
+        ),
+        (
+            "ENTRY_CREATION_KEY_CACHE_TTL",
+            "local function _EntryCreationCacheFresh(cache)",
+            "local function _EntryCreationCacheMatchesListing(cache, listingContext)",
+        ),
+        (
+            "QR_TEXTURE_HARD_CAP",
+            "local function _AcquireQRTexture(x, y, w, h)",
+            "local function _BuildQRBlackRunsAsync(",
+        ),
+    )
+
+    for name, start, end in cases:
+        prefix, remainder = source.split(start, 1)
+        body = remainder.split(end, 1)[0]
+        assert f"local {name}" not in prefix
+        assert f"local {name} =" in body
+
+
 def test_screenshot_cvars_are_leased_only_around_capture():
     source = _lua_source()
     events_body = _slice_between(
@@ -1677,10 +1805,8 @@ def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
         "local function HashSnapshot(payload)",
     )
 
-    assert (
-        "local payload, h = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
-        in screenshot_body
-    )
+    payload_call_idx = screenshot_body.index("local payload, h = BuildPayload(")
+    assert "rosterLoadDeferred" in screenshot_body[payload_call_idx : payload_call_idx + 240]
     assert 'local rosterPayload, rosterCount = "", 0' in payload_body
     assert "local rosterIncomplete = false" in payload_body
     assert "if not terminalClear and not rosterUnavailable then" in payload_body
@@ -1701,13 +1827,13 @@ def test_payload_v9_header_flags_distinguish_terminal_and_lfg_unavailable():
         "local function HashSnapshot(payload)",
     )
 
-    assert "string.char(0x09)" in payload_body
+    assert "applicantsIncomplete and 0x0B or 0x09" in payload_body
     assert "local headerFlags = 0" in payload_body
     assert "if terminalClear then" in payload_body
     assert "0x01" in payload_body
     assert "if lfgUnavailable then" in payload_body
     assert "0x02" in payload_body
-    assert "table.insert(out, string.char(headerFlags))" in payload_body
+    assert "out[headerFlagsChunkIndex] = string.char(headerFlags)" in payload_body
     assert 'table.insert(out, "\\0")' in payload_body
 
 
@@ -1719,12 +1845,12 @@ def test_payload_v9_can_omit_roster_with_explicit_flag():
         "local function HashSnapshot(payload)",
     )
 
-    assert "string.char(0x09)" in payload_body
+    assert "applicantsIncomplete and 0x0B or 0x09" in payload_body
     assert "rosterUnavailable" in payload_body
     assert "if rosterUnavailable then" in payload_body
     assert "headerFlags = headerFlags + 0x04" in payload_body
     assert "if not terminalClear and not rosterUnavailable then" in payload_body
-    assert "entryCreationKeyState.lastPayloadRosterUnavailable = rosterUnavailable == true" in payload_body
+    assert "entryCreationKeyState.lastPayloadRosterUnavailable = rosterUnavailable" in payload_body
 
 
 def test_qr_build_failure_fragments_complete_payload_without_roster_omission():
@@ -1811,7 +1937,7 @@ def test_lockdown_active_roster_snapshot_marks_lfg_unavailable_not_terminal():
     assert unavailable_idx < payload_idx
     assert "not terminalClear" in screenshot_body[unavailable_idx:payload_idx]
     assert "not lfgReadsAllowed" in screenshot_body[unavailable_idx:payload_idx]
-    assert "BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)" in screenshot_body
+    assert "rosterLoadDeferred" in screenshot_body[payload_idx : payload_idx + 240]
 
 
 def test_solo_active_listing_poll_runs_during_lockdown_without_lfg_reads():
@@ -1910,7 +2036,7 @@ def test_party_roster_with_unknown_spec_stays_incomplete_until_clear_data():
     ]
 
 
-def test_incomplete_roster_payload_retries_even_when_hash_is_unchanged():
+def test_incomplete_roster_payload_uses_bounded_retry_when_hash_is_unchanged():
     source = _lua_source()
     screenshot_body = _slice_between(
         source,
@@ -1921,12 +2047,9 @@ def test_incomplete_roster_payload_retries_even_when_hash_is_unchanged():
     same_hash_idx = screenshot_body.index(
         "if not force and h == lastSnapshotHash and not resendSameNonterminalSnapshot then"
     )
-    incomplete_idx = screenshot_body.index(
-        "entryCreationKeyState.lastPayloadRosterIncomplete",
-        same_hash_idx,
-    )
+    incomplete_idx = screenshot_body.index("if payloadRosterIncomplete then", same_hash_idx)
     retry_idx = screenshot_body.index(
-        "entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S)",
+        "entryCreationKeyState.ScheduleRosterLoadRetry()",
         incomplete_idx,
     )
     clear_pending_idx = screenshot_body.index("pendingShotDirty = false", retry_idx)
@@ -1965,7 +2088,7 @@ def test_incomplete_roster_payload_schedules_retry_after_successful_qr_paint():
     )
     retry_result_idx = screenshot_body.index("local retryScheduled =", incomplete_idx)
     retry_idx = screenshot_body.index(
-        "entryCreationKeyState.ScheduleRosterLoadRetry(SHOT_THROTTLE_S)",
+        "entryCreationKeyState.ScheduleRosterLoadRetry()",
         retry_result_idx,
     )
     pending_from_retry_idx = screenshot_body.index(
@@ -1981,7 +2104,7 @@ def test_roster_load_retry_callback_requires_current_token_and_session():
     source = _lua_source()
     retry_body = _slice_between(
         source,
-        "entryCreationKeyState.ScheduleRosterLoadRetry = function(delay)",
+        "entryCreationKeyState.ScheduleRosterLoadRetry = function()",
         "entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()",
     )
 
@@ -2002,6 +2125,66 @@ def test_roster_load_retry_callback_requires_current_token_and_session():
 
     assert token_idx < callback_idx < token_guard_idx < session_guard_idx
     assert session_guard_idx < enabled_guard_idx < active_guard_idx < pending_idx < dirty_idx
+
+
+def test_roster_retry_defers_only_roster_builder_and_keeps_inspect_budget_owned():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
+        "-- LFG entry creation",
+    )
+    inspect_body = _slice_between(
+        source,
+        "entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()",
+        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot = function()",
+    )
+
+    deferred_idx = screenshot_body.index("local rosterLoadDeferred = not force")
+    inspect_idx = screenshot_body.index(
+        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()",
+        deferred_idx,
+    )
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload(", inspect_idx)
+    assert "rosterLoadDeferred" in screenshot_body[payload_idx : payload_idx + 240]
+    assert "local payloadRosterIncomplete = rosterLoadDeferred" in screenshot_body
+    assert "local rosterLoadDeferredByOverflow = not force" in screenshot_body
+    assert "entryCreationKeyState.qrOverflowState.rosterIncomplete == true" in screenshot_body
+    assert "or rosterLoadDeferredByOverflow" in screenshot_body
+    assert deferred_idx < inspect_idx < payload_idx
+    assert "applicantIDs ~= nil" in screenshot_body[deferred_idx:payload_idx]
+    assert 'reason == "uninspectable"' in inspect_body
+    assert 'or reason == "notify"' in inspect_body
+    assert 'or reason == "api"' in inspect_body
+    assert "MarkRosterInspectAttemptFailed(guid, now)" in inspect_body
+
+
+def test_roster_load_retry_is_bounded_and_rearmed_only_by_runtime_evidence():
+    source = _lua_source()
+    state_body = _slice_between(
+        source,
+        "local entryCreationKeyState = {",
+        "entryCreationKeyState.ClearScreenshotFailureState = function()",
+    )
+    retry_body = _slice_between(
+        source,
+        "entryCreationKeyState.ClearRosterLoadRetryState = function()",
+        "entryCreationKeyState.ClearRosterCompositionChanged = function()",
+    )
+    events_body = _slice_between(
+        source,
+        "local EVENT_HANDLERS = {",
+        "-- Bind every interaction event",
+    )
+
+    assert "ROSTER_LOAD_RETRY_DELAYS_S = { 0.5, 2.0, 5.0, 15.0 }" in state_body
+    assert "rosterLoadRetryAttempt = 0" in state_body
+    assert "rosterLoadRetryExhausted = false" in state_body
+    assert "ROSTER_LOAD_RETRY_DELAYS_S[attempt]" in source
+    assert "entryCreationKeyState.rosterLoadRetryExhausted = true" in source
+    assert "entryCreationKeyState.ClearRosterLoadRetryState()" in events_body
+    assert "if _OnRosterInspectReady(guid) then" in events_body
+    assert "entryCreationKeyState.rosterLoadRetryAttempt = 0" in retry_body
 
 
 def test_roster_payload_rows_include_key_summary_and_group_metadata():
@@ -2147,6 +2330,16 @@ def test_auto_hi_defaults_to_empty_and_normalizes_saved_message():
     assert "entryCreationKeyState.NormalizeAutoHiMessage(" in init_body
 
 
+def test_auto_hi_message_enforces_one_utf8_byte_ceiling(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_AUTO_HI_MESSAGE_BYTES_CHECK).strip()
+    assert output == "auto-hi-message-bytes-ok"
+
+
+def test_auto_hi_uses_home_or_instance_group_chat_channel(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_AUTO_HI_CHAT_CHANNEL_CHECK).strip()
+    assert output == "auto-hi-chat-channel-ok"
+
+
 def test_auto_hi_settings_panel_persists_user_message_from_edit_box():
     source = _lua_source()
     settings_body = _slice_between(
@@ -2163,6 +2356,10 @@ def test_auto_hi_settings_panel_persists_user_message_from_edit_box():
     assert 'autoHiLabel:SetText("Auto Hi")' in settings_body
     assert 'autoHiEditBox:SetPoint("LEFT", autoHiLabel, "RIGHT", 8, 0)' in settings_body
     assert 'autoHiEditBox:SetSize(190, 22)' in settings_body
+    assert "autoHiEditBox:SetMaxBytes(entryCreationKeyState.AUTO_HI_MAX_BYTES)" in (
+        settings_body
+    )
+    assert "autoHiEditBox:SetMaxLetters" not in settings_body
     assert 'autoHiEditBox:SetScript("OnEnterPressed"' in settings_body
     assert 'autoHiEditBox:SetScript("OnEditFocusLost"' in settings_body
     assert "entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)" in settings_body
@@ -2484,7 +2681,7 @@ def test_inspect_ready_batches_followup_roster_inspects_before_dirty():
     assert "return false" in request_body
     assert "entryCreationKeyState.FlushOrContinueRosterInspectBatch" in batch_body
     assert "ROSTER_INSPECT_TIMEOUT_S - (now - rosterInspectLastRequestTime)" in batch_body
-    assert "rosterInspectPendingGUID = nil" in batch_body
+    assert "entryCreationKeyState.ReleaseOwnedRosterInspect()" in batch_body
     assert "entryCreationKeyState.rosterInspectBatchDirtyPending = true" in inspect_body
     continue_idx = inspect_body.index(
         "entryCreationKeyState.FlushOrContinueRosterInspectBatch()"
@@ -2673,7 +2870,7 @@ def test_start_end_session_invalidate_roster_inspect_retry_token():
     assert "entryCreationKeyState.ClearRosterInspectBatchState()" in end_body
     assert "rosterInspectBatchRetryToken" in clear_body
     assert "rosterInspectBatchRetryDeadline = nil" in clear_body
-    assert "rosterInspectPendingGUID = nil" in clear_body
+    assert "entryCreationKeyState.ReleaseOwnedRosterInspect()" in clear_body
 
 
 def test_combat_block_keeps_batch_pending_until_player_regen_enabled():
@@ -2757,9 +2954,7 @@ def test_initial_unknown_roster_spec_preflight_defers_only_when_inspect_starts()
     )
 
     ensure_idx = screenshot_body.index("entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()")
-    payload_idx = screenshot_body.index(
-        "local payload, h = BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable)"
-    )
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload(")
 
     assert "_ForEachRosterUnit(function(unit)" in ensure_body
     assert "entryCreationKeyState.RosterUnitHasResolvedInspectData(unit, guid)" in ensure_body
@@ -2793,15 +2988,18 @@ def test_initial_roster_spec_preflight_does_not_hold_applicant_snapshots():
     )
 
     applicant_idx = screenshot_body.index("local applicantIDs = {}")
-    applicant_fetch_idx = screenshot_body.index("C_LFGList.GetApplicants()", applicant_idx)
-    empty_guard_idx = screenshot_body.index("#applicantIDs == 0", applicant_fetch_idx)
+    applicant_fetch_idx = screenshot_body.index(
+        "pcall(C_LFGList.GetApplicants)",
+        applicant_idx,
+    )
     preflight_idx = screenshot_body.index(
         "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()",
-        empty_guard_idx,
+        applicant_fetch_idx,
     )
+    empty_guard_idx = screenshot_body.index("#applicantIDs == 0", preflight_idx)
     payload_idx = screenshot_body.index("local payload, h = BuildPayload", preflight_idx)
 
-    assert applicant_idx < applicant_fetch_idx < empty_guard_idx < preflight_idx < payload_idx
+    assert applicant_idx < applicant_fetch_idx < preflight_idx < empty_guard_idx < payload_idx
 
 
 def test_empty_applicant_clear_after_emitted_applicants_bypasses_roster_preflight():
@@ -2813,24 +3011,30 @@ def test_empty_applicant_clear_after_emitted_applicants_bypasses_roster_prefligh
     )
 
     applicant_idx = screenshot_body.index("local applicantIDs = {}")
-    applicant_fetch_idx = screenshot_body.index("C_LFGList.GetApplicants()", applicant_idx)
-    empty_guard_idx = screenshot_body.index("#applicantIDs == 0", applicant_fetch_idx)
+    applicant_fetch_idx = screenshot_body.index(
+        "pcall(C_LFGList.GetApplicants)",
+        applicant_idx,
+    )
+    preflight_idx = screenshot_body.index(
+        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()",
+        applicant_fetch_idx,
+    )
+    empty_guard_idx = screenshot_body.index("#applicantIDs == 0", preflight_idx)
     prior_applicant_guard_idx = screenshot_body.index(
         "lastEmittedApplicantCount == 0",
         empty_guard_idx,
     )
-    preflight_idx = screenshot_body.index(
-        "entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()",
+    payload_idx = screenshot_body.index(
+        "local payload, h = BuildPayload",
         prior_applicant_guard_idx,
     )
-    payload_idx = screenshot_body.index("local payload, h = BuildPayload", preflight_idx)
 
     assert (
         applicant_idx
         < applicant_fetch_idx
+        < preflight_idx
         < empty_guard_idx
         < prior_applicant_guard_idx
-        < preflight_idx
         < payload_idx
     )
 
@@ -2891,8 +3095,9 @@ def test_roster_batch_clears_pending_guid_when_unit_leaves():
     timeout_idx = batch_body.index("local timeoutLeft = ROSTER_INSPECT_TIMEOUT_S", missing_idx)
 
     assert missing_idx < skip_idx < timeout_idx
-    assert "if rosterInspectPendingGUID == guid then" in inspect_body
-    assert "rosterInspectPendingGUID = nil" in inspect_body
+    assert 'local ownedGUID = SafeStr(rosterInspectPendingGUID, "")' in inspect_body
+    assert "if guid ~= ownedGUID then return false end" in inspect_body
+    assert "entryCreationKeyState.ReleaseOwnedRosterInspect()" in inspect_body
 
 
 def test_reset_invalidates_roster_inspect_batch_retry_without_clearing_known_specs():
@@ -3201,6 +3406,18 @@ def test_qr_capture_lifecycle_survives_poll_during_settle_window(pytestconfig):
     assert output.startswith("ok qr-capture-lifecycle mode=applicants shots=")
 
 
+def test_partial_applicant_surface_debug_logging_does_not_abort_capture(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "partial-debug",
+    ).strip()
+
+    assert output.splitlines()[-1].startswith(
+        "ok qr-capture-lifecycle mode=partial-debug shots="
+    )
+
+
 def test_qr_overflow_captures_complete_200_row_snapshot_twice(pytestconfig):
     output = _run_lua_script(
         pytestconfig,
@@ -3385,6 +3602,20 @@ def test_roster_inspect_timeout_is_bounded_per_guid_and_session(pytestconfig):
     assert output == "ok roster-inspect-exhaustion requests=4"
 
 
+def test_disabled_addon_ignores_late_or_unowned_inspect_ready(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_DISABLE_ROSTER_INSPECT_CHECK).strip()
+    assert output.endswith("disable-roster-inspect-ok")
+
+
+def test_roster_load_retry_backoff_parks_and_recovers_in_lua51(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_ROSTER_LOAD_RETRY_BACKOFF_CHECK,
+    ).strip()
+
+    assert output.startswith("ok roster-load-retry-backoff reads=")
+
+
 def test_large_qr_run_analysis_is_chunked_in_lua51(pytestconfig):
     assert _run_lua_script(pytestconfig, LUA_QR_RUN_CHUNKING_CHECK).strip() == (
         "ok qr-run-chunking"
@@ -3454,7 +3685,16 @@ def test_transport_reuses_flat_applicant_and_member_records(pytestconfig):
         LUA_TRANSPORT_RECORD_REUSE_CHECK,
     ).strip()
 
-    assert output.startswith("ok transport-record-reuse rows=39")
+    assert output.startswith("ok transport-record-reuse rows=40")
+
+
+def test_partial_surface_authority_is_encoded_without_mixed_rows(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_PARTIAL_SURFACE_AUTHORITY_CHECK,
+    ).strip()
+
+    assert output == "ok partial-surface-authority"
 
 
 def test_raiderio_fallback_reuses_zero_summary_without_blocking_recovery(
@@ -3580,7 +3820,7 @@ def test_roster_spec_cache_invalidation_clears_pending_inspect_for_changed_guid(
 
     assert "rosterInspectSpecByGUID[guid] = nil" in helper_body
     assert "if rosterInspectPendingGUID == guid then" in helper_body
-    assert "rosterInspectPendingGUID = nil" in helper_body
+    assert "entryCreationKeyState.ReleaseOwnedRosterInspect()" in helper_body
     assert "rosterInspectSpecByGUID = {}" in helper_body
     assert "entryCreationKeyState.ClearRosterInspectDataForGUID(guid)" in helper_body
 
@@ -3743,18 +3983,14 @@ def test_lua_producer_omits_fallback_placeholder_roster_identity(pytestconfig):
 
     assert b"Unknown-Realm" not in payload
     assert b"Host-Realm" in payload
-    assert b"Healer-Realm" in payload
+    assert b"Healer-Realm" not in payload
     parse_payload = _companion_payload_parser(pytestconfig)
     snapshot, error = parse_payload(payload)
 
     assert error is None
     assert snapshot is not None
-    assert [member.name for member in snapshot.roster] == [
-        "Host-Realm",
-        "Healer-Realm",
-        "Feral-Realm",
-        "Ret-Realm",
-    ]
+    assert snapshot.roster_unavailable
+    assert snapshot.roster == []
 
 
 @pytest.mark.requires_companion
@@ -3774,24 +4010,25 @@ def test_lua_producer_emits_raid19_and_applicant_in_same_snapshot(pytestconfig):
 
 
 @pytest.mark.requires_companion
-def test_lua_producer_omits_placeholder_applicant_member_but_keeps_valid_group_member(pytestconfig):
+def test_lua_producer_withholds_group_when_one_applicant_member_is_placeholder(pytestconfig):
     generated = "".join(
         _run_lua_fixture(pytestconfig, "placeholder-applicant").split()
     )
     payload = bytes.fromhex(generated)
 
     assert b"Unknown-Realm" not in payload
-    assert b"Mageone-Realm" in payload
+    assert b"Mageone-Realm" not in payload
     parse_payload = _companion_payload_parser(pytestconfig)
     snapshot, error = parse_payload(payload)
 
     assert error is None
     assert snapshot is not None
-    assert [applicant.name for applicant in snapshot.applicants] == ["Mageone-Realm"]
+    assert snapshot.applicants_unavailable
+    assert snapshot.applicants == []
 
 
 @pytest.mark.requires_companion
-def test_invalidated_applicant_token_does_not_drop_later_valid_members(pytestconfig):
+def test_invalidated_applicant_token_withholds_the_incomplete_domain(pytestconfig):
     generated = "".join(
         _run_lua_fixture(pytestconfig, "invalidated-applicant").split()
     )
@@ -3801,10 +4038,8 @@ def test_invalidated_applicant_token_does_not_drop_later_valid_members(pytestcon
 
     assert error is None
     assert snapshot is not None
-    assert [(member.applicant_id, member.name) for member in snapshot.applicants] == [
-        (42, "Tankone-Realm"),
-        (42, "Mageone-Realm"),
-    ]
+    assert snapshot.applicants_unavailable
+    assert snapshot.applicants == []
 
 
 @pytest.mark.requires_companion
@@ -3846,15 +4081,11 @@ def test_lua_producer_survives_secret_tagged_unit_reads(pytestconfig):
 
     assert b"Host-Realm" in payload
     assert b"Friend-Realm" not in payload
-    assert b"Healer-Realm" in payload
+    assert b"Healer-Realm" not in payload
     assert error is None
     assert snapshot is not None
-    assert [member.name for member in snapshot.roster] == [
-        "Host-Realm",
-        "Healer-Realm",
-        "Feral-Realm",
-        "Ret-Realm",
-    ]
+    assert snapshot.roster_unavailable
+    assert snapshot.roster == []
 
 
 @pytest.mark.requires_companion
@@ -4102,8 +4333,29 @@ def test_lfg_default_playstyle_user_touch_state_is_not_panel_keyed_from_hook_sta
     )
 
     assert "lfgDefaultPlaystyleTouchedPanels" not in source
+    show_hook = _slice_between(
+        playstyle_body,
+        'hook("LFGListEntryCreation_Show", function()',
+        'hook("LFGListEntryCreation_SetEditMode", function()',
+    )
+    assert "entryCreationKeyState.lfgDefaultPlaystyleUserTouched = false" in show_hook
+    assert show_hook.index("lfgDefaultPlaystyleUserTouched = false") < show_hook.index(
+        "QueueLFGEntryCreationDeferredWork"
+    )
     assert "entryCreationKeyState.lfgDefaultPlaystyleUserTouched = true" in playstyle_body
     assert "entryCreationKeyState.lfgDefaultPlaystyleUserTouched" in auto_select_body
+    assert "lfgDefaultPlaystyleResetTouched" not in source
+    assert "lfgDefaultPlaystyleResetTouchGeneration" not in source
+
+
+def test_lfg_default_playstyle_deferred_reset_preserves_later_manual_touch(
+    pytestconfig,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_DEFAULT_PLAYSTYLE_DEFERRED_TOUCH_CHECK,
+    ).strip()
+    assert output == "default-playstyle-deferred-touch-ok"
 
 
 def test_status_reports_key_capture_hooks_and_cache_decision_separately():

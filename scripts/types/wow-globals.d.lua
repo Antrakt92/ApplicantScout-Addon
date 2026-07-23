@@ -34,6 +34,10 @@ LFGListEntryCreation_Show = nil
 LFGListEntryCreation_UpdateValidState = nil
 ---@type any
 LFGListFrame = nil
+---@type number
+LE_PARTY_CATEGORY_HOME = 1
+---@type number
+LE_PARTY_CATEGORY_INSTANCE = 2
 ---@type any
 LibStub = nil
 ---@type any

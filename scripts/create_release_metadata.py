@@ -30,6 +30,26 @@ def _display_title(raw_title: str) -> str:
     return title.strip()
 
 
+def parse_toc_interfaces(toc: str) -> tuple[int, ...]:
+    interface_text = _toc_field(toc, "Interface")
+    interface_parts = [part.strip() for part in interface_text.split(",")]
+    if not interface_parts or any(
+        len(part) != 6
+        or part.startswith("0")
+        or not part.isascii()
+        or not part.isdigit()
+        for part in interface_parts
+    ):
+        raise ReleaseMetadataError(
+            "TOC Interface must contain comma-separated six-digit ASCII "
+            "mainline integers"
+        )
+    interfaces = tuple(int(part) for part in interface_parts)
+    if len(interfaces) != len(set(interfaces)):
+        raise ReleaseMetadataError("TOC Interface contains duplicate values")
+    return interfaces
+
+
 def build_release_metadata(root: Path, release_dir: Path, tag: str) -> dict[str, object]:
     if not _SEMVER_TAG.fullmatch(tag):
         raise ReleaseMetadataError("release tag must use exact vMAJOR.MINOR.PATCH format")
@@ -46,13 +66,7 @@ def build_release_metadata(root: Path, release_dir: Path, tag: str) -> dict[str,
     if not archive_path.is_file():
         raise ReleaseMetadataError(f"exact-tag archive is missing: {archive_path}")
 
-    interface_text = _toc_field(toc, "Interface")
-    interface_parts = [part.strip() for part in interface_text.split(",")]
-    if not interface_parts or any(not part.isascii() or not part.isdigit() for part in interface_parts):
-        raise ReleaseMetadataError("TOC Interface must contain comma-separated ASCII integers")
-    interfaces = [int(part) for part in interface_parts]
-    if len(interfaces) != len(set(interfaces)):
-        raise ReleaseMetadataError("TOC Interface contains duplicate values")
+    interfaces = parse_toc_interfaces(toc)
 
     return {
         "releases": [

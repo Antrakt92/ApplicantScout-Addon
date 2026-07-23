@@ -125,10 +125,14 @@ Trust notes for the companion:
 
 Before sharing support material publicly, redact `/apscout status` output,
 `/apscout taintcheck` output, companion logs, QR screenshots, manual decode
-output, `config.env`, `token.json`, and `character-cache.json`. These can
-include WCL Client ID/Secret, OAuth access token, character names, realm names,
-listing titles/comments, screenshots folder paths, keystone/listing metadata,
-and WCL/RaiderIO evidence.
+output, `config.env`, `token.json`, `character-cache.json`,
+`last-live-snapshot.json`, and `screenshot-manual-index-v2-*.json`. Treat the
+entire `%LOCALAPPDATA%\applicant-scout\config\` and
+`%LOCALAPPDATA%\applicant-scout\cache\` directories as private; do not attach
+either directory wholesale. These files can include WCL Client ID/Secret,
+OAuth access token, character names, realm names, applicant/roster snapshots,
+listing titles/comments, screenshots folder paths, absolute screenshot file
+paths, keystone/listing metadata, and WCL/RaiderIO evidence.
 
 QR screenshots may remain if the companion is absent, interrupted, pointed at
 the wrong folder, or the Screenshots folder is synced/shared before cleanup.
@@ -161,9 +165,10 @@ through the slash commands below.
 - Latest ApplicantScout addon release.
 - Latest ApplicantScout Companion release.
 - Wire payload: compact v9 (`APS1`) snapshots with optional RaiderIO, raid/M+
-  roster, leader-keystone context, and partial snapshot handling. Backlogs that
-  exceed one reliable QR use bounded v10 fragment envelopes and are applied by
-  the companion only after the complete v9 snapshot is reconstructed.
+  roster, leader-keystone context, and partial snapshot handling. A v11 frame
+  is used only when an incomplete applicant read must preserve prior companion
+  state. Backlogs that exceed one reliable QR use bounded v10 fragment
+  envelopes and are applied only after the complete inner snapshot is rebuilt.
 - Classic-era clients are not supported.
 
 ## Troubleshooting

@@ -160,6 +160,18 @@ def _recovery_workflow_source() -> str:
     ).read_text(encoding="utf-8")
 
 
+def _workflow_concurrency_contract(workflow: str) -> tuple[str, str, str]:
+    match = re.search(
+        r"(?m)^concurrency:\n"
+        r"  group: (?P<group>[^\r\n]+)\n"
+        r"  queue: (?P<queue>[^\r\n]+)\n"
+        r"  cancel-in-progress: (?P<cancel>[^\r\n]+)\s*$",
+        workflow,
+    )
+    assert match is not None, "Missing exact workflow concurrency contract"
+    return match.group("group"), match.group("queue"), match.group("cancel")
+
+
 def _read_repo_text(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
@@ -668,6 +680,44 @@ def test_release_rejects_reruns_before_checkout_and_serializes_tags():
     )
 
 
+def test_release_and_recovery_share_max_non_cancelling_concurrency_queue():
+    expected = ("applicantscout-addon-release", "max", "false")
+
+    assert _workflow_concurrency_contract(_workflow_source()) == expected
+    assert _workflow_concurrency_contract(_recovery_workflow_source()) == expected
+
+
+def test_release_and_recovery_publish_only_generated_exact_version_notes():
+    cases = (
+        (_workflow_source(), "release", "$env:GITHUB_REF_NAME"),
+        (_recovery_workflow_source(), "recover-github-release", "$env:RELEASE_TAG"),
+    )
+
+    for workflow, job_name, tag_expression in cases:
+        publish = _step_block(
+            _job_block(workflow, job_name),
+            "Publish verified immutable GitHub release",
+        )
+        assert "$ReleaseNotesPath = Join-Path $env:RUNNER_TEMP" in publish
+        assert "python3 scripts/create_release_notes.py" in publish
+        assert "--changelog CHANGELOG.md" in publish
+        assert "--output $ReleaseNotesPath" in publish
+        assert f"--tag {tag_expression}" in publish
+        assert "--notes-file $ReleaseNotesPath" in publish
+        assert "--notes-file CHANGELOG.md" not in publish
+        assert "--json tagName,name,body,isDraft,isPrerelease,assets" in publish
+        assert f"[string]$Draft.name -cne {tag_expression}" in publish
+        assert "$DraftBody -cne $ExpectedReleaseBody" in publish
+        assert f"[string]$Published.name -ceq {tag_expression}" in publish
+        assert "$PublishedBody -ceq $ExpectedReleaseBody" in publish
+        publication = publish[publish.index("gh release edit") :]
+        assert f"--title {tag_expression}" in publication
+        assert "--notes-file $ReleaseNotesPath" in publication
+        assert publish.index("scripts/create_release_notes.py") < publish.index(
+            "gh release create"
+        )
+
+
 def test_preupload_recovery_is_manual_exact_run_only_and_serialized():
     workflow = _recovery_workflow_source()
     recovery = _job_block(workflow, "recover-github-release")
@@ -800,6 +850,8 @@ def test_preupload_recovery_publishes_marketplaces_only_after_github():
     assert "contents: read" in verifier
     assert "--tag \"$RELEASE_TAG\"" in verify
     assert "--project-id 1541576" in verify
+    assert "--toc ApplicantScout.toc" in verify
+    assert "--game-version" not in verify
     assert "--wait-seconds 900" in verify
 
 
@@ -900,7 +952,10 @@ def test_curseforge_verifier_is_separate_read_only_post_release_job():
     assert "BigWigsMods/packager@" in marketplace_release
     assert "BigWigsMods/packager@" not in verifier
     assert "scripts/verify_curseforge_release.py" in verify_step
+    assert "--tag \"$GITHUB_REF_NAME\"" in verify_step
     assert "--project-id 1541576" in verify_step
+    assert "--toc ApplicantScout.toc" in verify_step
+    assert "--game-version" not in verify_step
     assert "--wait-seconds 900" in verify_step
 
 
@@ -1786,6 +1841,8 @@ def test_readme_documents_current_wire_version_and_transient_qr_visibility():
     readme = _read_repo_text("README.md")
 
     assert "Wire payload: compact v9" in readme
+    assert "A v11 frame" in readme
+    assert "v10 fragment" in readme
     assert "Wire payload: compact v5" not in readme
     assert "stays visible during an\nactive capture session" not in readme
     assert "screenshot capture window" in readme
@@ -1841,6 +1898,11 @@ def test_readme_documents_support_output_redaction():
         "config.env",
         "token.json",
         "character-cache.json",
+        "last-live-snapshot.json",
+        "screenshot-manual-index-v2-*.json",
+        "%LOCALAPPDATA%\\applicant-scout\\config\\",
+        "%LOCALAPPDATA%\\applicant-scout\\cache\\",
+        "do not attach either directory wholesale",
     ):
         _assert_copy_contains(readme, sensitive_surface)
 
@@ -1849,8 +1911,10 @@ def test_readme_documents_support_output_redaction():
         "OAuth access token",
         "character names",
         "realm names",
+        "applicant/roster snapshots",
         "listing titles/comments",
         "screenshots folder paths",
+        "absolute screenshot file paths",
     ):
         _assert_copy_contains(readme, private_detail)
 
