@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.8.0 - 23-Jul-2026 - Companion 0.12.0 partial-state reliability
+## 0.8.1 - 23-Jul-2026 - Companion 0.12.1 partial-state reliability
 
 This paired addon + companion release distinguishes incomplete applicant reads
 from authoritative removals, keeps Party inspection and key-provider work
@@ -29,6 +29,8 @@ bounded, and hardens the exact-tag publication contract.
 
 - Roster-load retries are separately bounded and rearmed only by new roster or
   inspect evidence, while applicant polling and owned inspect budgets continue.
+- Companion `0.12.1` cancels active screenshot-path helpers before Qt child
+  teardown, preventing late validation callbacks during Settings destruction.
 - Release and recovery workflows serialize through the same non-cancelling
   queue, publish only the exact versioned changelog section, and derive required
   CurseForge game versions from the tagged TOC metadata.
@@ -39,7 +41,7 @@ bounded, and hardens the exact-tag publication contract.
 
 - Ordinary snapshots remain APS1 v9. Applicant-partial authority uses logical
   v11, while v10 remains the bounded overflow fragment envelope.
-- This addon release is paired with ApplicantScout Companion `0.12.0`.
+- This addon release is paired with ApplicantScout Companion `0.12.1`.
 
 ## 0.7.1 - 20-Jul-2026 - Companion 0.11.1 QR capture recovery
 
