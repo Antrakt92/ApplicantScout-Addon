@@ -1,6 +1,7 @@
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 local mode = arg and arg[1] or ""
-assert(mode == "idle" or mode == "active", "unsupported recovery mode")
+assert(mode == "idle" or mode == "active" or mode == "logout",
+    "unsupported recovery mode")
 
 local cvars = {
     screenshotFormat = "jpg",
@@ -20,13 +21,72 @@ end
 print = function() end
 
 ApplicantScoutDB = {
-    enabled = mode == "active",
+    enabled = mode == "active" or mode == "logout",
     debug = false,
-    priorScreenshotQuality = mode == "active" and 3.5 or "not-a-quality",
-    priorScreenshotFormat = mode == "active" and {} or "bmp",
+    priorScreenshotQuality = mode == "logout" and nil
+        or (mode == "active" and 3.5 or "not-a-quality"),
+    priorScreenshotFormat = mode == "logout" and nil
+        or (mode == "active" and {} or "bmp"),
 }
 
 local harness = env.load_addon()
+if mode == "logout" then
+    local function run_logout_case(userChanged)
+        cvars.screenshotQuality = "3"
+        cvars.screenshotFormat = "png"
+        writes = {}
+        timers = {}
+        ApplicantScoutDB.priorScreenshotQuality = nil
+        ApplicantScoutDB.priorScreenshotFormat = nil
+
+        local leaseGeneration = harness.AcquireScreenshotCVarLease()
+        harness.ReleaseScreenshotCVarLease(leaseGeneration, 0.05)
+        assert(cvars.screenshotQuality == "8"
+               and cvars.screenshotFormat == "jpg",
+            "capture did not acquire the screenshot CVar lease")
+        assert(ApplicantScoutDB.priorScreenshotQuality == 3
+               and ApplicantScoutDB.priorScreenshotFormat == "png",
+            "capture did not persist the prior screenshot CVars")
+        assert(#timers == 1, "capture did not queue one delayed release")
+
+        if userChanged then
+            cvars.screenshotQuality = "9"
+            cvars.screenshotFormat = "tga"
+        end
+        local writesBeforeLogout = #writes
+        harness.FireEvent("PLAYER_LOGOUT")
+
+        if userChanged then
+            assert(#writes == writesBeforeLogout,
+                "logout overwrote user-changed screenshot CVars")
+            assert(cvars.screenshotQuality == "9"
+                   and cvars.screenshotFormat == "tga",
+                "logout did not preserve user-changed screenshot CVars")
+        else
+            assert(#writes == writesBeforeLogout + 2,
+                "logout did not synchronously restore both owned CVars")
+            assert(cvars.screenshotQuality == "3"
+                   and cvars.screenshotFormat == "png",
+                "logout did not restore the pre-capture screenshot CVars")
+        end
+        assert(ApplicantScoutDB.priorScreenshotQuality == nil
+               and ApplicantScoutDB.priorScreenshotFormat == nil,
+            "logout did not clear the persisted screenshot CVar stash")
+
+        local writesAfterLogout = #writes
+        while #timers > 0 do
+            table.remove(timers, 1)()
+        end
+        assert(#writes == writesAfterLogout,
+            "stale delayed release wrote CVars after logout invalidation")
+    end
+
+    run_logout_case(false)
+    run_logout_case(true)
+    io.write("ok screenshot-cvar-recovery mode=" .. mode .. "\n")
+    return
+end
+
 if mode == "active" then
     harness.StartSession()
 end

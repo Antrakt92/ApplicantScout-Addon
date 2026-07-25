@@ -3591,8 +3591,8 @@ def test_persistent_terminal_clear_failures_stop_after_two_serial_dispatches(
     )
 
 
-@pytest.mark.parametrize("mode", ["idle", "active"])
-def test_screenshot_cvar_recovery_rejects_malformed_stashes_in_lua51(
+@pytest.mark.parametrize("mode", ["idle", "active", "logout"])
+def test_screenshot_cvar_recovery_and_logout_lease_cleanup_in_lua51(
     pytestconfig, mode
 ):
     output = _run_lua_script(

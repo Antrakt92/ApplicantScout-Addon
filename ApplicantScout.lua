@@ -4689,6 +4689,10 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.ClampUInt16 = _ClampUInt16
     _G.ApplicantScoutFixtureHarness.ClampUInt8 = _ClampUInt8
     _G.ApplicantScoutFixtureHarness.BuildPayload = BuildPayload
+    _G.ApplicantScoutFixtureHarness.AcquireScreenshotCVarLease =
+        AcquireScreenshotCVarLease
+    _G.ApplicantScoutFixtureHarness.ReleaseScreenshotCVarLease =
+        ReleaseScreenshotCVarLease
     _G.ApplicantScoutFixtureHarness.SetApplicantTransportAdapters = function(
         infoAdapter,
         memberAdapter
@@ -6193,6 +6197,9 @@ local EVENT_HANDLERS = {
     -- this catches positions changed via slash macros / scripted moves /
     -- third-party UI that bypasses our drag handlers.
     PLAYER_LOGOUT                    = function()
+        entryCreationKeyState.screenshotCVarLeaseGeneration =
+            (entryCreationKeyState.screenshotCVarLeaseGeneration or 0) + 1
+        RestoreScreenshotCVars(true)
         if PVEFrame and PVEFrame:IsUserPlaced() and ApplicantScoutDB then
             _SavePVEFramePositionFromFrame(PVEFrame)
         end
