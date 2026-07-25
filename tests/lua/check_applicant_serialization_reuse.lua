@@ -30,7 +30,7 @@ end
 local payload = assert(harness.BuildPayload)({
     activityIDs = { 401 },
     questID = 0,
-    name = "Applicants 40",
+    name = "+40 Applicant",
     comment = "stable",
 }, applicantIDs, false)
 table.insert = originalInsert
@@ -41,7 +41,7 @@ assert(insertCount == 760, string.format(
 ))
 assert(#payload == 1737, "applicant block reuse changed the APS1 payload length")
 assert(
-    harness.HashSnapshot(payload) == 654822407,
+    harness.HashSnapshot(payload) == 1931730799,
     "applicant block reuse changed the APS1 payload bytes"
 )
 

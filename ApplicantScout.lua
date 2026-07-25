@@ -2126,12 +2126,14 @@ local function _ExtractKeystoneLevelFromShortKeyText(value)
     local s = SafeStr(value, "")
     if s == "" then return 0 end
     s = s:gsub("^%s+", ""):gsub("%s+$", "")
-    -- Blizzard can render titles like "+10", "+10 Competitive", or with a
-    -- plus-like glyph that is not ASCII. Digit-filter only short title/UI
-    -- fields; comments still require an explicit ASCII "+N" match.
+    -- Localized UI text can use width or symbol variants of the plus sign.
+    -- Accept those only as a leading key marker; stripping arbitrary text down
+    -- to digits turns titles such as "weekly in 15 minutes" into false keys.
     if #s > 40 then return 0 end
-    local digits = s:gsub("%D+", "")
-    if #digits < 1 or #digits > 2 then return 0 end
+    local digits = s:match("^＋%s*(%d%d?)%f[%D]")
+        or s:match("^﹢%s*(%d%d?)%f[%D]")
+        or s:match("^➕%s*(%d%d?)%f[%D]")
+    if not digits then return 0 end
     return _NormalizeKeystoneLevel(digits)
 end
 

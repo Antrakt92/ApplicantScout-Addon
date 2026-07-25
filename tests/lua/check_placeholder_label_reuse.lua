@@ -32,7 +32,7 @@ end
 local entry = {
     activityIDs = { 401 },
     questID = 0,
-    name = "Applicants 40",
+    name = "+40 Applicant",
     comment = "stable",
 }
 local payload = assert(harness.BuildPayload)(entry, applicantIDs, false)
@@ -55,7 +55,7 @@ assert(repeatedBuildGsubs <= 3952, string.format(
 assert(payload == repeatedPayload, "session reset changed stable payload bytes")
 assert(#payload == 3817, "placeholder label reuse changed APS1 payload length")
 assert(
-    harness.HashSnapshot(payload) == 1141367375,
+    harness.HashSnapshot(payload) == 2397122637,
     "placeholder label reuse changed APS1 payload bytes"
 )
 

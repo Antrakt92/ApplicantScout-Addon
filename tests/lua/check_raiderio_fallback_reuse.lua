@@ -30,7 +30,7 @@ local harness = env.load_addon({})
 local entry = {
     activityIDs = { 401 },
     questID = 0,
-    name = "Applicants 40",
+    name = "+40 Applicant",
     comment = "stable",
 }
 local applicantIDs = {}
@@ -41,7 +41,7 @@ local secondPayload = assert(harness.BuildPayload(entry, applicantIDs, false))
 assert(firstPayload == secondPayload, "zero-summary reuse changed stable payload bytes")
 assert(#firstPayload == 1657, "zero-summary reuse changed payload length")
 assert(
-    harness.HashSnapshot(firstPayload) == 739349138,
+    harness.HashSnapshot(firstPayload) == 1044733645,
     "zero-summary reuse changed payload hash"
 )
 assert(nilCalls == 80, string.format(

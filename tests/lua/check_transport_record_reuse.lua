@@ -44,7 +44,7 @@ for id = 40, 1, -1 do applicantIDs[#applicantIDs + 1] = id end
 local payload = assert(harness.BuildPayload)({
     activityIDs = { 401 },
     questID = 0,
-    name = "Applicants 40",
+    name = "+40 Applicant",
     comment = "stable",
 }, applicantIDs, false)
 
@@ -60,7 +60,7 @@ end
 assert(#payload == 1737, "transport record reuse changed APS1 payload length")
 local payloadHash = harness.HashSnapshot(payload)
 assert(
-    payloadHash == 654822407,
+    payloadHash == 1931730799,
     string.format("transport record reuse changed APS1 payload bytes: %u", payloadHash)
 )
 

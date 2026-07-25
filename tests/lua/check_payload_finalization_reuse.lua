@@ -35,7 +35,7 @@ end
 local payload, builtHash = harness.BuildPayload({
     activityIDs = { 401 },
     questID = 0,
-    name = "Applicants 40",
+    name = "+40 Applicant",
     comment = "stable",
 }, applicantIDs, false)
 string.byte = originalByte
@@ -54,7 +54,7 @@ assert(
     )
 )
 assert(#payload == 3817, "payload finalization changed APS1 length")
-assert(builtHash == 1141367375, "payload finalization changed APS1 hash")
+assert(builtHash == 2397122637, "payload finalization changed APS1 hash")
 assert(
     builtHash == harness.HashSnapshot(payload),
     "fused payload hash disagrees with independent oracle"

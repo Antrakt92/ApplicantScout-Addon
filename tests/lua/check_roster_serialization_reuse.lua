@@ -40,12 +40,12 @@ assert(insertCount == 800, string.format(
 local wirePayload = assert(harness.BuildPayload)({
     activityIDs = { 401 },
     questID = 0,
-    name = "Raid 40 transport benchmark",
+    name = "Raid+40 transport benchmark",
     comment = "stable roster",
 }, {}, false)
 assert(#wirePayload == 2198, "roster reuse changed the APS1 payload length")
 assert(
-    harness.HashSnapshot(wirePayload) == 185550839,
+    harness.HashSnapshot(wirePayload) == 3451745577,
     "roster reuse changed the APS1 payload bytes"
 )
 

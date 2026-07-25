@@ -28,7 +28,7 @@ end
 local payload = assert(harness.BuildPayload)({
     activityIDs = { 401 },
     questID = 0,
-    name = "Applicants 40",
+    name = "+40 Applicant",
     comment = "stable",
 }, applicantIDs, false)
 string.gsub = originalGsub
@@ -39,7 +39,7 @@ assert(gsubCount <= 4000, string.format(
 ))
 assert(#payload == 3817, "sanitization reuse changed the APS1 payload length")
 assert(
-    harness.HashSnapshot(payload) == 1141367375,
+    harness.HashSnapshot(payload) == 2397122637,
     "sanitization reuse changed the APS1 payload bytes"
 )
 
@@ -60,7 +60,7 @@ end
 local escapedPayload = assert(harness.BuildPayload)({
     activityIDs = { 401 },
     questID = 0,
-    name = "|cffff0000Applicants 40|r",
+    name = "|cffff0000+40 Applicant|r",
     comment = "stable|nline",
 }, applicantIDs, false)
 
@@ -73,7 +73,7 @@ assert(
     "raw roster name was not sanitized at the API boundary"
 )
 assert(
-    escapedPayload:find("Applicants 40", 1, true),
+    escapedPayload:find("+40 Applicant", 1, true),
     "raw listing name was not sanitized at the API boundary"
 )
 assert(

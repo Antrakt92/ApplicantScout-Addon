@@ -102,6 +102,9 @@ LUA_DISABLE_ROSTER_INSPECT_CHECK = (
 LUA_DEFAULT_PLAYSTYLE_DEFERRED_TOUCH_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_default_playstyle_deferred_touch.lua"
 )
+LUA_LISTING_KEY_LEVEL_TITLES_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_listing_key_level_titles.lua"
+)
 LUA_GOLDEN_CASES = (
     (None, "aps1_v8_lua_golden.hex"),
     ("leader-key", "aps1_v8_lua_leader_key_golden.hex"),
@@ -4398,12 +4401,22 @@ def test_listing_key_level_accepts_short_visible_key_titles_only():
 
     assert "_ExtractKeystoneLevelFromText(value)" in helper_body
     assert "#s > 40" in helper_body
-    assert 'local digits = s:gsub("%D+", "")' in helper_body
-    assert "#digits < 1 or #digits > 2" in helper_body
+    assert 's:gsub("%D+", "")' not in helper_body
+    assert 's:match("^＋%s*(%d%d?)%f[%D]")' in helper_body
+    assert 's:match("^﹢%s*(%d%d?)%f[%D]")' in helper_body
+    assert 's:match("^➕%s*(%d%d?)%f[%D]")' in helper_body
     assert "_NormalizeKeystoneLevel(digits)" in helper_body
     assert "_ExtractKeystoneLevelFromShortKeyText(listingName)" in listing_body
     assert "_ExtractKeystoneLevelFromText(listingComment)" in listing_body
     assert "_ExtractKeystoneLevelFromShortKeyText(text)" in visible_body
+
+
+def test_listing_key_level_short_title_shapes_execute_in_lua(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_LISTING_KEY_LEVEL_TITLES_CHECK,
+    ).strip()
+    assert output == "listing-key-title-shapes-ok"
 
 
 def test_listing_key_level_can_read_clean_application_viewer_text():
