@@ -1,5 +1,6 @@
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 local fixture_mode = arg and arg[1] or "applicants"
+local restart_phase = fixture_mode == "restart-race" and arg and arg[2] or nil
 assert(fixture_mode == "applicants"
        or fixture_mode == "roster-only"
        or fixture_mode == "screenshot-failure"
@@ -14,8 +15,17 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "interaction-world-reset"
        or fixture_mode == "partial-debug"
        or fixture_mode == "overflow"
-       or fixture_mode == "overflow-terminal",
+       or fixture_mode == "overflow-terminal"
+       or fixture_mode == "restart-race",
     "unsupported fixture mode: " .. tostring(fixture_mode))
+if fixture_mode == "restart-race" then
+    assert(restart_phase == "build"
+           or restart_phase == "row-scan"
+           or restart_phase == "paint"
+           or restart_phase == "settle"
+           or restart_phase == "overflow-settle",
+        "unsupported restart phase: " .. tostring(restart_phase))
+end
 local roster_only = fixture_mode == "roster-only"
 local transient_screenshot_failure = fixture_mode == "screenshot-failure"
 local persistent_screenshot_failure = fixture_mode == "screenshot-always-fail"
@@ -31,7 +41,10 @@ local interaction_world_reset = fixture_mode == "interaction-world-reset"
 local partial_debug = fixture_mode == "partial-debug"
 local overflow_mode = fixture_mode == "overflow"
     or fixture_mode == "overflow-terminal"
+    or restart_phase == "overflow-settle"
 local overflow_terminal = fixture_mode == "overflow-terminal"
+local restart_race = fixture_mode == "restart-race"
+local wide_applicants = overflow_mode
 
 -- Default mode reproduces the live report: two people and five applicants.
 -- Roster-only mode keeps a full party and removes every applicant.
@@ -65,11 +78,11 @@ C_LFGList.GetApplicantInfo = function(id)
     return {
         applicantID = id,
         applicationStatus = "applied",
-        numMembers = overflow_mode and 5 or 1,
+        numMembers = wide_applicants and 5 or 1,
     }
 end
 C_LFGList.GetApplicantMemberInfo = function(id, member_index)
-    if member_index < 1 or member_index > (overflow_mode and 5 or 1) then return nil end
+    if member_index < 1 or member_index > (wide_applicants and 5 or 1) then return nil end
     local suffix = tostring(id)
     return "Applicant" .. suffix .. "Member" .. tostring(member_index) .. "-Ravencrest", "PALADIN", nil, nil,
         700 + id / 100, nil, nil, nil, nil, "DAMAGER", nil, 2500 + id,
@@ -79,6 +92,7 @@ end
 local now = 1000
 local frame_step = 0.033
 local timers = {}
+local timer_sequence = 0
 local tickers = {}
 local frames = {}
 local screenshot_times = {}
@@ -93,6 +107,10 @@ local interaction_closed = false
 local interaction_opened_at = nil
 local interaction_shots_before = nil
 local interaction_terminal_started = false
+local qr_encode_calls = 0
+local qr_encode_successes = 0
+local qr_mutation_count = 0
+local qr_frame_set_size_count = 0
 
 GetTime = function() return now end
 local cvars = {
@@ -121,16 +139,21 @@ Screenshot = function()
     screenshot_times[#screenshot_times + 1] = now
 end
 
-local function texture_stub()
-    return {
-        SetColorTexture = function() end,
-        SetPoint = function() end,
-        ClearAllPoints = function() end,
-        SetSize = function() end,
-        SetAllPoints = function() end,
-        Show = function(self) self.shown = true end,
-        Hide = function(self) self.shown = false end,
-    }
+local function texture_stub(owner_name)
+    local texture = { shown = false }
+    local function mutate()
+        if owner_name == "ApplicantScoutQRFrame" then
+            qr_mutation_count = qr_mutation_count + 1
+        end
+    end
+    function texture:SetColorTexture() mutate() end
+    function texture:SetPoint() mutate() end
+    function texture:ClearAllPoints() mutate() end
+    function texture:SetSize() mutate() end
+    function texture:SetAllPoints() mutate() end
+    function texture:Show() self.shown = true; mutate() end
+    function texture:Hide() self.shown = false; mutate() end
+    return texture
 end
 
 local function frame_stub(name)
@@ -147,13 +170,27 @@ local function frame_stub(name)
     function frame:UnregisterAllEvents() self.events = {} end
     function frame:SetScript(kind, callback) self.scripts[kind] = callback end
     function frame:HookScript(kind, callback) self.scripts[kind] = callback end
-    function frame:SetSize(width, height) self.width, self.height = width, height end
+    function frame:SetSize(width, height)
+        self.width, self.height = width, height
+        if self.name == "ApplicantScoutQRFrame" then
+            qr_mutation_count = qr_mutation_count + 1
+            qr_frame_set_size_count = qr_frame_set_size_count + 1
+        end
+    end
     function frame:GetWidth() return self.width end
     function frame:GetHeight() return self.height end
     function frame:GetLeft() return 0 end
     function frame:GetTop() return self.height end
-    function frame:SetPoint() end
-    function frame:ClearAllPoints() end
+    function frame:SetPoint()
+        if self.name == "ApplicantScoutQRFrame" then
+            qr_mutation_count = qr_mutation_count + 1
+        end
+    end
+    function frame:ClearAllPoints()
+        if self.name == "ApplicantScoutQRFrame" then
+            qr_mutation_count = qr_mutation_count + 1
+        end
+    end
     function frame:SetFrameStrata() end
     function frame:SetAlpha() end
     function frame:SetBackdrop() end
@@ -171,9 +208,19 @@ local function frame_stub(name)
     function frame:IsMouseOver() return false end
     function frame:IsShown() return self.shown end
     function frame:IsVisible() return self.shown end
-    function frame:Show() self.shown = true end
-    function frame:Hide() self.shown = false end
-    function frame:CreateTexture() return texture_stub() end
+    function frame:Show()
+        self.shown = true
+        if self.name == "ApplicantScoutQRFrame" then
+            qr_mutation_count = qr_mutation_count + 1
+        end
+    end
+    function frame:Hide()
+        self.shown = false
+        if self.name == "ApplicantScoutQRFrame" then
+            qr_mutation_count = qr_mutation_count + 1
+        end
+    end
+    function frame:CreateTexture() return texture_stub(self.name) end
     function frame:CreateFontString()
         return {
             SetPoint = function() end,
@@ -194,9 +241,11 @@ CreateFrame = function(_kind, name)
 end
 
 C_Timer.After = function(delay, callback)
+    timer_sequence = timer_sequence + 1
     timers[#timers + 1] = {
         due = now + ((delay and delay > 0) and delay or frame_step),
         callback = callback,
+        sequence = timer_sequence,
     }
 end
 C_Timer.NewTicker = function(period, callback)
@@ -221,6 +270,13 @@ ApplicantScoutDB = {
 local qr_namespace = {}
 local qr_chunk = assert(loadfile("libs/qrencode.lua"))
 qr_chunk("ApplicantScout", qr_namespace)
+local original_qrcode = assert(qr_namespace.QR.qrcode)
+qr_namespace.QR.qrcode = function(...)
+    qr_encode_calls = qr_encode_calls + 1
+    local ok, result = original_qrcode(...)
+    if ok then qr_encode_successes = qr_encode_successes + 1 end
+    return ok, result
+end
 local harness = env.load_addon(qr_namespace.QR)
 
 local event_frame = nil
@@ -271,6 +327,139 @@ local function drain_due_timers()
     end
 end
 
+local function earliest_timer_index()
+    local selected = nil
+    for index, item in ipairs(timers) do
+        if not selected
+           or item.due < timers[selected].due
+           or (item.due == timers[selected].due
+               and item.sequence < timers[selected].sequence) then
+            selected = index
+        end
+    end
+    return selected
+end
+
+local function take_earliest_timer()
+    local index = earliest_timer_index()
+    if not index then return nil end
+    return table.remove(timers, index)
+end
+
+local function run_earliest_timer()
+    local item = take_earliest_timer()
+    assert(item, "expected a queued timer")
+    now = math.max(now, item.due)
+    item.callback()
+    return item
+end
+
+local function take_settle_timer(capture_at)
+    local target_due = capture_at + 0.3
+    local selected = nil
+    for index, item in ipairs(timers) do
+        if math.abs(item.due - target_due) < 0.000001
+           and (not selected
+                or item.sequence > timers[selected].sequence) then
+            selected = index
+        end
+    end
+    assert(selected, "capture settle callback was not queued")
+    return table.remove(timers, selected)
+end
+
+local transport_state_fields = {
+    "pendingShotDirty",
+    "lastSnapshotHash",
+    "deliverySnapshotHash",
+    "deliverySnapshotSendCount",
+    "paintInProgress",
+    "captureInProgress",
+    "forceVisible",
+    "alwaysVisible",
+    "qrFrameShown",
+    "screenshotFailureHash",
+    "screenshotFailureAttemptCount",
+    "terminalClearDispatchCount",
+    "terminalClearRetryScheduled",
+    "lastEmittedApplicantCount",
+    "overflowState",
+    "overflowLastFailure",
+    "overflowSupersededCount",
+    "sessionActive",
+    "suppressedByInteraction",
+}
+
+local function assert_transport_state_equal(before, after)
+    for _, field in ipairs(transport_state_fields) do
+        assert(after[field] == before[field],
+            "stale " .. tostring(restart_phase)
+            .. " callback mutated fresh transport field " .. field)
+    end
+end
+
+local restart_started = false
+local stale_callback_replayed = false
+local stale_callback = nil
+local restart_shots_before = nil
+local restart_attempts_before = nil
+local stale_overflow_state = nil
+local stale_overflow_chunk_index = nil
+local stale_overflow_pass = nil
+
+local function start_fresh_session_after_staging()
+    wide_applicants = false
+    applicant_ids = { 91, 92 }
+    restart_shots_before = #screenshot_times
+    restart_attempts_before = screenshot_attempts
+    harness.StartSession()
+    local state = harness.QRTransportState()
+    assert(state.sessionActive, "fresh session did not start")
+    assert(state.lastSnapshotHash == nil
+           and state.deliverySnapshotHash == nil
+           and state.deliverySnapshotSendCount == 0
+           and state.lastEmittedApplicantCount == 0
+           and state.overflowState == nil,
+        "fresh session inherited stale delivery state")
+    restart_started = true
+end
+
+local function stage_terminal_restart_callback()
+    timers = {}
+    harness.EndSession()
+    if restart_phase == "build" then
+        stale_callback = assert(take_earliest_timer()).callback
+    elseif restart_phase == "row-scan" then
+        local success_before = qr_encode_successes
+        run_earliest_timer()
+        assert(qr_encode_successes > success_before,
+            "terminal QR encode did not reach row-scan staging")
+        stale_callback = assert(take_earliest_timer()).callback
+    elseif restart_phase == "paint" then
+        local size_before = qr_frame_set_size_count
+        local safety = 1000
+        while qr_frame_set_size_count == size_before do
+            run_earliest_timer()
+            safety = safety - 1
+            assert(safety > 0, "terminal QR did not reach paint staging")
+        end
+        stale_callback = assert(take_earliest_timer()).callback
+    elseif restart_phase == "settle" then
+        local state = harness.QRTransportState()
+        local safety = 1000
+        while not state.captureInProgress do
+            run_earliest_timer()
+            state = harness.QRTransportState()
+            safety = safety - 1
+            assert(safety > 0, "terminal QR did not reach settle staging")
+        end
+        stale_callback = take_settle_timer(now).callback
+    else
+        error("terminal staging received unexpected phase " .. tostring(restart_phase))
+    end
+    start_fresh_session_after_staging()
+end
+
 local transient_failure_checked = false
 local transient_restore_checked = false
 local transient_failure_at = nil
@@ -283,6 +472,64 @@ for _ = 1, overflow_mode and 2500 or 360 do
         if not ticker.cancelled and ticker.next_due <= now and not hold_info_panel_poll then
             ticker.next_due = ticker.next_due + ticker.period
             ticker.callback()
+        end
+    end
+
+    if restart_race and not restart_started then
+        local state = harness.QRTransportState()
+        if restart_phase == "overflow-settle"
+           and #screenshot_times == 0
+           and state.captureInProgress
+           and state.forceVisible
+           and state.overflowState then
+            local item = take_settle_timer(now)
+            stale_callback = item.callback
+            stale_overflow_state = state.overflowState
+            stale_overflow_chunk_index = stale_overflow_state.chunkIndex
+            stale_overflow_pass = stale_overflow_state.pass
+            harness.EndSession()
+            start_fresh_session_after_staging()
+        elseif restart_phase ~= "overflow-settle"
+           and #screenshot_times == 2
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and cvars.screenshotFormat == "png"
+           and cvars.screenshotQuality == "3" then
+            stage_terminal_restart_callback()
+        end
+    end
+
+    if restart_race and restart_started and not stale_callback_replayed then
+        local before = harness.QRTransportState()
+        if before.sessionActive
+           and before.captureInProgress
+           and before.forceVisible
+           and before.terminalClearDispatchCount == 0 then
+            local shots_before = #screenshot_times
+            local attempts_before = screenshot_attempts
+            local timers_before = #timers
+            local encodes_before = qr_encode_calls
+            local mutations_before = qr_mutation_count
+            assert(stale_callback, "restart fixture lost its stale callback")
+            stale_callback()
+            local after = harness.QRTransportState()
+            assert(#screenshot_times == shots_before
+                   and screenshot_attempts == attempts_before,
+                "stale callback captured a terminal or overflow frame")
+            assert(#timers == timers_before,
+                "stale callback scheduled work into the fresh session")
+            assert(qr_encode_calls == encodes_before,
+                "stale callback restarted QR encoding")
+            assert(qr_mutation_count == mutations_before,
+                "stale callback mutated fresh QR frame textures")
+            assert_transport_state_equal(before, after)
+            if stale_overflow_state then
+                assert(stale_overflow_state.chunkIndex == stale_overflow_chunk_index
+                       and stale_overflow_state.pass == stale_overflow_pass,
+                    "stale overflow settle advanced the retired fragment stream")
+            end
+            stale_callback_replayed = true
         end
     end
 
@@ -462,6 +709,41 @@ elseif terminal_clear_always_fail then
         "persistent terminal clear exceeded or missed its dispatch budget")
     assert(state.lastSnapshotHash == pre_terminal_hash,
         "failed terminal captures committed a false delivery hash")
+elseif restart_race then
+    local state = harness.QRTransportState()
+    assert(restart_started and stale_callback_replayed,
+        "restart race did not stage and replay its stale callback")
+    assert(#screenshot_times - restart_shots_before == 2
+           and screenshot_attempts - restart_attempts_before == 2,
+        string.format(
+            "fresh restart produced shots=%d attempts=%d instead of 2/2",
+            #screenshot_times - restart_shots_before,
+            screenshot_attempts - restart_attempts_before
+        ))
+    assert(screenshot_times[restart_shots_before + 2]
+           - screenshot_times[restart_shots_before + 1] >= 0.5,
+        "fresh restart resend ignored the screenshot throttle")
+    assert(state.sessionActive
+           and not state.pendingShotDirty
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown
+           and state.overflowState == nil,
+        "fresh restart transport did not settle in its active idle state")
+    assert(state.lastSnapshotHash ~= nil
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2
+           and state.lastEmittedApplicantCount == 2,
+        "fresh restart did not commit its exact bounded delivery state")
+    assert(state.terminalClearDispatchCount == 0
+           and not state.terminalClearRetryScheduled,
+        "stale terminal work mutated the fresh session clear state")
+    if stale_overflow_state then
+        assert(stale_overflow_state.chunkIndex == stale_overflow_chunk_index
+               and stale_overflow_state.pass == stale_overflow_pass,
+            "retired overflow stream advanced after stale callback drain")
+    end
 elseif overflow_terminal then
     local state = harness.QRTransportState()
     assert(interaction_terminal_started,

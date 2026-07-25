@@ -3426,6 +3426,33 @@ def test_qr_capture_lifecycle_survives_poll_during_settle_window(pytestconfig):
     assert output.startswith("ok qr-capture-lifecycle mode=applicants shots=")
 
 
+@pytest.mark.parametrize(
+    ("phase", "shots"),
+    [
+        ("build", 4),
+        ("row-scan", 4),
+        ("paint", 4),
+        ("settle", 4),
+        ("overflow-settle", 2),
+    ],
+)
+def test_rapid_session_restart_rejects_every_stale_qr_callback(
+    pytestconfig,
+    phase,
+    shots,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "restart-race",
+        phase,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode=restart-race shots={shots} attempts={shots}"
+    )
+
+
 def test_partial_applicant_surface_debug_logging_does_not_abort_capture(pytestconfig):
     output = _run_lua_script(
         pytestconfig,
