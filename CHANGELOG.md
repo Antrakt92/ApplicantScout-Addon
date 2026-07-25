@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+## 0.9.0 - 25-Jul-2026 - Companion 0.13.0 state-bound reliability
+
+This paired addon + companion release keeps temporary unknown WoW state from
+being mistaken for authoritative changes, rejects ambiguous listing text, and
+strengthens capture cleanup and marketplace verification.
+
+### Fixed
+
+- Group Finder titles containing numbers are no longer treated as keystone
+  levels unless the short key field begins with an explicit plus marker.
+- Temporary unknown or secret party-leader identity keeps the last clean owned
+  key context within its normal lifetime and retries after combat, instead of
+  clearing valid context or accepting data for the wrong leader.
+- Party inspect batches blocked by an unreadable unit identity are rearmed when
+  clean evidence becomes available, preventing a member from remaining parked
+  indefinitely after a transient combat restriction.
+- Saved boolean settings are normalized when the addon's SavedVariables become
+  available, before setup and transport paths can consume malformed values.
+- Screenshot format and quality CVars are restored during logout, including
+  interrupted or superseded capture callbacks.
+
+### Improved
+
+- QR capture regressions now cover stale restart callbacks so an older capture
+  generation cannot release or overwrite the active generation's state.
+- Release automation verifies that the exact tagged archive becomes the first
+  processed stable Wago release with the tagged Retail patch metadata and
+  matching packaged file contents.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.13.0`.
+- APS1 payload compatibility is unchanged.
+
 ## 0.8.1 - 23-Jul-2026 - Companion 0.12.1 partial-state reliability
 
 This paired addon + companion release distinguishes incomplete applicant reads
