@@ -552,6 +552,10 @@ def test_release_requires_verified_exact_tag_marketplace_package_before_upload()
     assert "GITHUB_OAUTH" not in marketplace_release
     assert "contents: read" in marketplace_release
     assert "pandoc: false" in upload
+    assert "actions/upload-artifact@" not in marketplace_release
+    assert marketplace_release.rstrip().endswith(
+        "WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}"
+    )
     _assert_order(
         marketplace,
         "Record exact marketplace package commit",
@@ -772,7 +776,10 @@ def test_preupload_recovery_proves_source_failed_before_all_writers():
     ):
         assert step_name in identity
     assert "[string]$RequiredStep.conclusion -cne 'success'" in identity
-    assert "@('release', 'marketplace-release', 'verify-curseforge')" in identity
+    assert (
+        "@('release', 'marketplace-release', 'verify-curseforge', 'verify-wago')"
+        in identity
+    )
     assert "[string]$Writer.conclusion -cne 'skipped'" in identity
     assert "Reject ambiguous release rerun" in identity
     assert "applicantscout-addon-release-$ReleaseCommit" in identity
@@ -791,6 +798,12 @@ def test_preupload_recovery_revalidates_every_gate_before_publication():
     credentials = _step_block(recovery, "Require intended publication credentials")
     policy = _step_block(recovery, "Verify immutable release policy")
     download = _step_block(recovery, "Download verified source-run bundle")
+    verifier_validation = _step_block(
+        recovery, "Validate exact recovery verifier archive"
+    )
+    verifier_preserve = _step_block(
+        recovery, "Preserve exact recovery verifier archive"
+    )
     publish = _step_block(recovery, "Publish verified immutable GitHub release")
 
     assert "-RequirePublishedPairedCompanionAssets" in paired
@@ -802,6 +815,14 @@ def test_preupload_recovery_revalidates_every_gate_before_publication():
     assert download.count("\n        env:\n") == 1
     assert "gh run download $env:SOURCE_RUN_ID" in download
     assert "--name $env:ARTIFACT_NAME" in download
+    assert "scripts/check_addon_archive.py" in verifier_validation
+    assert '"ApplicantScout-$env:RELEASE_TAG.zip"' in verifier_validation
+    assert "actions/upload-artifact@" in verifier_preserve
+    assert "applicantscout-addon-wago-proof-${{ inputs.tag }}" in verifier_preserve
+    assert "${{ runner.temp }}/applicantscout-addon-release/" in verifier_preserve
+    assert "overwrite: true" in verifier_preserve
+    assert "if-no-files-found: error" in verifier_preserve
+    assert "retention-days: 7" in verifier_preserve
     assert "scripts/check_addon_archive.py" in publish
     assert "scripts/create_release_metadata.py" in publish
     assert "$OriginalMetadataHash -cne $RegeneratedMetadataHash" in publish
@@ -817,6 +838,8 @@ def test_preupload_recovery_revalidates_every_gate_before_publication():
         "Require intended publication credentials",
         "Verify immutable release policy",
         "Download verified source-run bundle",
+        "Validate exact recovery verifier archive",
+        "Preserve exact recovery verifier archive",
         "Publish verified immutable GitHub release",
     )
 
@@ -824,14 +847,21 @@ def test_preupload_recovery_revalidates_every_gate_before_publication():
 def test_preupload_recovery_publishes_marketplaces_only_after_github():
     workflow = _recovery_workflow_source()
     marketplace = _job_block(workflow, "marketplace-release")
-    verifier = _job_block(workflow, "verify-curseforge")
+    curseforge_verifier = _job_block(workflow, "verify-curseforge")
+    wago_verifier = _job_block(workflow, "verify-wago")
     checkout = _step_block(marketplace, "Checkout exact immutable release tag")
     revalidate = _step_block(
         marketplace, "Revalidate immutable GitHub and companion releases"
     )
     credentials = _step_block(marketplace, "Require intended marketplace credentials")
     upload = _step_block(marketplace, "Publish exact tag to marketplaces")
-    verify = _step_block(verifier, "Verify CurseForge public release propagation")
+    curseforge_verify = _step_block(
+        curseforge_verifier, "Verify CurseForge public release propagation"
+    )
+    wago_download = _step_block(
+        wago_verifier, "Download verified exact-tag package"
+    )
+    wago_verify = _step_block(wago_verifier, "Verify Wago public release propagation")
 
     assert "needs: recover-github-release" in marketplace
     assert re.search(r"(?m)^    permissions:\n      contents: read\s*$", marketplace)
@@ -846,13 +876,34 @@ def test_preupload_recovery_publishes_marketplaces_only_after_github():
         in upload
     )
     assert "GITHUB_OAUTH" not in marketplace
-    assert "needs: marketplace-release" in verifier
-    assert "contents: read" in verifier
-    assert "--tag \"$RELEASE_TAG\"" in verify
-    assert "--project-id 1541576" in verify
-    assert "--toc ApplicantScout.toc" in verify
-    assert "--game-version" not in verify
-    assert "--wait-seconds 900" in verify
+    assert "actions/upload-artifact@" not in marketplace
+    assert marketplace.rstrip().endswith(
+        "WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}"
+    )
+    assert "needs: marketplace-release" in curseforge_verifier
+    assert "contents: read" in curseforge_verifier
+    assert "--tag \"$RELEASE_TAG\"" in curseforge_verify
+    assert "--project-id 1541576" in curseforge_verify
+    assert "--toc ApplicantScout.toc" in curseforge_verify
+    assert "--game-version" not in curseforge_verify
+    assert "--wait-seconds 900" in curseforge_verify
+    assert "needs: marketplace-release" in wago_verifier
+    assert "actions: read" in wago_verifier
+    assert "contents: read" in wago_verifier
+    assert "secrets." not in wago_verifier
+    assert "BigWigsMods/packager@" not in wago_verifier
+    assert "actions/download-artifact@" in wago_download
+    assert "applicantscout-addon-wago-proof-${{ inputs.tag }}" in (
+        wago_download
+    )
+    assert "scripts/verify_wago_release.py" in wago_verify
+    assert "--tag \"$RELEASE_TAG\"" in wago_verify
+    assert "--project-id ANzke264" in wago_verify
+    assert "--addon-slug applicantscout-addon" in wago_verify
+    assert "--toc ApplicantScout.toc" in wago_verify
+    assert "--expected-archive" in wago_verify
+    assert "ApplicantScout-$RELEASE_TAG.zip" in wago_verify
+    assert "--wait-seconds 900" in wago_verify
 
 
 def test_preupload_recovery_pins_external_actions_to_commit_shas():
@@ -860,9 +911,11 @@ def test_preupload_recovery_pins_external_actions_to_commit_shas():
 
     assert Counter(action for action, _ in action_refs) == Counter(
         {
-            "actions/checkout": 3,
-            "actions/setup-python": 1,
+            "actions/checkout": 4,
+            "actions/setup-python": 2,
             "BigWigsMods/packager": 1,
+            "actions/upload-artifact": 1,
+            "actions/download-artifact": 1,
         }
     )
     for action, ref in action_refs:
@@ -956,6 +1009,44 @@ def test_curseforge_verifier_is_separate_read_only_post_release_job():
     assert "--project-id 1541576" in verify_step
     assert "--toc ApplicantScout.toc" in verify_step
     assert "--game-version" not in verify_step
+    assert "--wait-seconds 900" in verify_step
+
+
+def test_wago_verifier_is_separate_read_only_exact_package_proof():
+    workflow = _workflow_source()
+    marketplace_package = _job_block(workflow, "marketplace-package")
+    marketplace_release = _job_block(workflow, "marketplace-release")
+    verifier = _job_block(workflow, "verify-wago")
+    archive_preserve = _step_block(
+        marketplace_package, "Upload verified exact-tag release bundle"
+    )
+    archive_download = _step_block(
+        verifier, "Download verified exact-tag package"
+    )
+    verify_step = _step_block(verifier, "Verify Wago public release propagation")
+
+    assert "needs: marketplace-release" in verifier
+    assert "actions: read" in verifier
+    assert "contents: read" in verifier
+    assert "secrets." not in verifier
+    assert "BigWigsMods/packager@" not in verifier
+    assert "actions/upload-artifact@" not in marketplace_release
+    assert marketplace_release.rstrip().endswith(
+        "WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}"
+    )
+    assert "actions/upload-artifact@" in archive_preserve
+    assert "include-hidden-files: true" in archive_preserve
+    assert "applicantscout-addon-release-${{ steps.marketplace-identity.outputs.commit }}" in archive_preserve
+    assert "actions/download-artifact@" in archive_download
+    assert "applicantscout-addon-release-${{ github.sha }}" in (
+        archive_download
+    )
+    assert "scripts/verify_wago_release.py" in verify_step
+    assert "--tag \"$GITHUB_REF_NAME\"" in verify_step
+    assert "--project-id ANzke264" in verify_step
+    assert "--addon-slug applicantscout-addon" in verify_step
+    assert "--toc ApplicantScout.toc" in verify_step
+    assert "ApplicantScout-$GITHUB_REF_NAME.zip" in verify_step
     assert "--wait-seconds 900" in verify_step
 
 
@@ -1565,11 +1656,11 @@ def test_release_workflow_pins_external_actions_to_commit_shas():
 
     assert Counter(action for action, _ in action_refs) == Counter(
         {
-            "actions/checkout": 6,
-            "actions/setup-python": 2,
+            "actions/checkout": 7,
+            "actions/setup-python": 3,
             "BigWigsMods/packager": 2,
             "actions/upload-artifact": 1,
-            "actions/download-artifact": 1,
+            "actions/download-artifact": 2,
         }
     )
     for action, ref in action_refs:

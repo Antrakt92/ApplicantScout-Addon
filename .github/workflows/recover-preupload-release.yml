@@ -143,7 +143,7 @@ jobs:
               throw "Required attempt 1 preflight step did not succeed: $StepName"
             }
           }
-          foreach ($WriterName in @('release', 'marketplace-release', 'verify-curseforge')) {
+          foreach ($WriterName in @('release', 'marketplace-release', 'verify-curseforge', 'verify-wago')) {
             $Writer = Get-SingleJob $AttemptOne $WriterName
             if ([string]$Writer.conclusion -cne 'skipped') {
               throw "Source writer job $WriterName was not skipped in attempt 1."
@@ -161,7 +161,7 @@ jobs:
                 [string]$RetryGuard.conclusion -cne 'failure') {
               throw "Source run retry $Attempt did not stop at the pre-upload rerun guard."
             }
-            foreach ($WriterName in @('release', 'marketplace-release', 'verify-curseforge')) {
+            foreach ($WriterName in @('release', 'marketplace-release', 'verify-curseforge', 'verify-wago')) {
               $Writer = Get-SingleJob $Retry $WriterName
               if ([string]$Writer.conclusion -cne 'skipped') {
                 throw "Source writer job $WriterName was not skipped in retry $Attempt."
@@ -252,6 +252,28 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Could not download the verified source-run bundle."
           }
+
+      - name: Validate exact recovery verifier archive
+        shell: pwsh
+        run: |
+          $ReleaseDir = Join-Path $env:RUNNER_TEMP 'applicantscout-addon-release'
+          python3 scripts/check_addon_archive.py --release-dir $ReleaseDir
+          if ($LASTEXITCODE -ne 0) {
+            throw "Downloaded recovery archive failed validation."
+          }
+          $ExpectedArchive = Join-Path $ReleaseDir "ApplicantScout-$env:RELEASE_TAG.zip"
+          if (-not (Test-Path -LiteralPath $ExpectedArchive -PathType Leaf)) {
+            throw "Verified recovery archive is missing: $ExpectedArchive"
+          }
+
+      - name: Preserve exact recovery verifier archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: applicantscout-addon-wago-proof-${{ inputs.tag }}
+          path: ${{ runner.temp }}/applicantscout-addon-release/ApplicantScout-${{ inputs.tag }}.zip
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Publish verified immutable GitHub release
         shell: pwsh
@@ -475,4 +497,38 @@ jobs:
           --tag "$RELEASE_TAG"
           --project-id 1541576
           --toc ApplicantScout.toc
+          --wait-seconds 900
+
+  verify-wago:
+    needs: marketplace-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Download verified exact-tag package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: applicantscout-addon-wago-proof-${{ inputs.tag }}
+          path: .marketplace-upload
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.13'
+
+      - name: Verify Wago public release propagation
+        run: >-
+          python scripts/verify_wago_release.py
+          --tag "$RELEASE_TAG"
+          --project-id ANzke264
+          --addon-slug applicantscout-addon
+          --toc ApplicantScout.toc
+          --expected-archive ".marketplace-upload/ApplicantScout-$RELEASE_TAG.zip"
           --wait-seconds 900

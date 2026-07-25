@@ -527,3 +527,39 @@ jobs:
           --project-id 1541576
           --toc ApplicantScout.toc
           --wait-seconds 900
+
+  verify-wago:
+    needs: marketplace-release
+    if: ${{ github.event.created == true && github.event.forced == false && github.event.deleted == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout
+        # actions/checkout v6 pinned to the upstream tag commit.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Download verified exact-tag package
+        # actions/download-artifact v8.0.1 pinned to the upstream release commit.
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: applicantscout-addon-release-${{ github.sha }}
+          path: .marketplace-upload
+
+      - name: Set up Python
+        # actions/setup-python v6 pinned to the upstream tag commit.
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.13'
+
+      - name: Verify Wago public release propagation
+        run: >-
+          python scripts/verify_wago_release.py
+          --tag "$GITHUB_REF_NAME"
+          --project-id ANzke264
+          --addon-slug applicantscout-addon
+          --toc ApplicantScout.toc
+          --expected-archive ".marketplace-upload/ApplicantScout-$GITHUB_REF_NAME.zip"
+          --wait-seconds 900
