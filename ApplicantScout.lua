@@ -308,6 +308,7 @@ local entryCreationKeyState = {
     leaderKeystoneRefreshToken = 0,
     leaderKeystoneRefreshDeadline = nil,
     leaderKeystoneRefreshGeneration = nil,
+    leaderKeystoneContextCombatDeferred = false,
     leaderKeystoneCallbackRegistered = false,
     leaderKeystoneLib = nil,
     leaderKeystoneCallbackOwner = {},
@@ -3804,16 +3805,45 @@ entryCreationKeyState.PlayerNamesMatch = function(leftName, rightName)
 end
 
 entryCreationKeyState.CurrentPartyLeaderName = function()
-    if not _UnitExistsForRoster("player") then return "" end
-    if entryCreationKeyState.CleanUnitIsGroupLeader("player") == true then
-        return _UnitFullNameForTransport("player")
+    local grouped = entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup)
+    if grouped == false then return "" end
+    if grouped ~= true then
+        if entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) == true then
+            entryCreationKeyState.leaderKeystoneContextCombatDeferred = true
+        end
+        return nil
+    end
+    local sawUnknown = false
+
+    local playerLeader = entryCreationKeyState.CleanUnitIsGroupLeader("player")
+    if playerLeader == true then
+        local playerName = _UnitFullNameForTransport("player")
+        if playerName ~= "" then return playerName end
+        sawUnknown = true
+    elseif playerLeader == nil then
+        sawUnknown = true
     end
     for i = 1, 4 do
         local unit = "party" .. i
-        if _UnitExistsForRoster(unit)
-           and entryCreationKeyState.CleanUnitIsGroupLeader(unit) == true then
-            return _UnitFullNameForTransport(unit)
+        local exists = entryCreationKeyState.CleanUnitAPIBoolean(UnitExists, unit)
+        if exists == true then
+            local isLeader = entryCreationKeyState.CleanUnitIsGroupLeader(unit)
+            if isLeader == true then
+                local partyName = _UnitFullNameForTransport(unit)
+                if partyName ~= "" then return partyName end
+                sawUnknown = true
+            elseif isLeader == nil then
+                sawUnknown = true
+            end
+        elseif exists == nil then
+            sawUnknown = true
         end
+    end
+    if sawUnknown then
+        if entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) == true then
+            entryCreationKeyState.leaderKeystoneContextCombatDeferred = true
+        end
+        return nil
     end
     return ""
 end
@@ -3827,6 +3857,7 @@ end
 
 entryCreationKeyState.ClearLeaderKeystone = function()
     entryCreationKeyState.leaderKeystone = nil
+    entryCreationKeyState.leaderKeystoneContextCombatDeferred = false
     entryCreationKeyState.CancelLeaderKeystoneRefresh()
     entryCreationKeyState.CancelLeaderKeystoneRequestRetry()
 end
@@ -3836,7 +3867,7 @@ entryCreationKeyState.OnLeaderKeystoneData = function(keyLevel, challengeMapID, 
     if channel ~= "PARTY" then return end
     if not (IsInGroup and IsInGroup()) then return end
     local leaderName = entryCreationKeyState.CurrentPartyLeaderName()
-    if leaderName == "" then return end
+    if not leaderName or leaderName == "" then return end
     if not entryCreationKeyState.PlayerNamesMatch(playerName, leaderName) then return end
     local rawKeyLevel = SafeNumber(keyLevel, -1)
     local rawChallengeMapID = SafeNumber(challengeMapID, -1)
@@ -3862,6 +3893,7 @@ entryCreationKeyState.OnLeaderKeystoneData = function(keyLevel, challengeMapID, 
         playerName = leaderName,
         at = GetTime and GetTime() or 0,
     }
+    entryCreationKeyState.leaderKeystoneContextCombatDeferred = false
     MarkDirty("leaderkey")
 end
 
@@ -3968,14 +4000,21 @@ entryCreationKeyState.ResolveLeaderKeystoneContext = function()
     local leaderKeystone = entryCreationKeyState.leaderKeystone
     if type(leaderKeystone) ~= "table" then return nil end
     local leaderName = entryCreationKeyState.CurrentPartyLeaderName()
-    if leaderName == ""
-       or not entryCreationKeyState.PlayerNamesMatch(leaderKeystone.playerName, leaderName) then
+    if leaderName ~= nil
+       and (leaderName == ""
+            or not entryCreationKeyState.PlayerNamesMatch(leaderKeystone.playerName, leaderName)) then
         entryCreationKeyState.ClearLeaderKeystone()
         return nil
     end
     local now = GetTime and GetTime() or 0
-    if now > 0
-       and (now - SafeNumber(leaderKeystone.at, 0)) > entryCreationKeyState.LEADER_KEY_TTL_S then
+    local expired = now > 0
+        and (now - SafeNumber(leaderKeystone.at, 0)) > entryCreationKeyState.LEADER_KEY_TTL_S
+    if leaderName == nil then
+        if expired then return nil end
+        return leaderKeystone
+    end
+    entryCreationKeyState.leaderKeystoneContextCombatDeferred = false
+    if expired then
         entryCreationKeyState.ClearLeaderKeystone()
         entryCreationKeyState.ScheduleLeaderKeystoneRefresh()
         return nil
@@ -4691,6 +4730,12 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
         entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry
     _G.ApplicantScoutFixtureHarness.ResolveLeaderKeystoneContext =
         entryCreationKeyState.ResolveLeaderKeystoneContext
+    _G.ApplicantScoutFixtureHarness.LeaderKeystoneRecoveryState = function()
+        return {
+            combatDeferred =
+                entryCreationKeyState.leaderKeystoneContextCombatDeferred == true,
+        }
+    end
     _G.ApplicantScoutFixtureHarness.LastPayloadRosterIncomplete = function()
         return entryCreationKeyState.lastPayloadRosterIncomplete == true
     end
@@ -6150,6 +6195,13 @@ local EVENT_HANDLERS = {
         MarkDirty("spec")
     end,
     PLAYER_REGEN_ENABLED              = function()
+        if entryCreationKeyState.leaderKeystoneContextCombatDeferred then
+            entryCreationKeyState.leaderKeystoneContextCombatDeferred = false
+            if entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup) == true then
+                entryCreationKeyState.RequestLeaderKeystone(true)
+                MarkDirty("leaderkey")
+            end
+        end
         if entryCreationKeyState.rosterInspectBatchCombatDeferred then
             entryCreationKeyState.ClearRosterLoadRetryState()
             entryCreationKeyState.rosterInspectBatchCombatDeferred = false

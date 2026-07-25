@@ -50,6 +50,9 @@ LUA_LEADER_KEY_REFRESH_CHECK = (
 LUA_LEADER_KEY_VALIDATION_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_leader_keystone_validation.lua"
 )
+LUA_LEADER_KEY_IDENTITY_RECOVERY_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_leader_keystone_identity_recovery.lua"
+)
 LUA_LARGE_QR_BUDGET_CHECK = REPO_ROOT / "tests" / "lua" / "check_large_qr_budget.lua"
 LUA_LARGE_QR_ROSTER_FALLBACK_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_large_qr_prefers_roster_fallback.lua"
@@ -1299,6 +1302,17 @@ def test_expired_leader_keystone_schedules_one_generation_scoped_refresh(pytestc
     output = _run_lua_script(pytestconfig, LUA_LEADER_KEY_REFRESH_CHECK).strip()
 
     assert output == "ok leader-keystone-refresh sends=1"
+
+
+def test_unknown_leader_identity_preserves_context_and_rearms_once_after_combat(
+    pytestconfig,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_LEADER_KEY_IDENTITY_RECOVERY_CHECK,
+    ).strip()
+
+    assert output == "leader-keystone-identity-recovery-ok"
 
 
 def test_full_party_quiet_signature_requires_empty_resolved_non_raid_roster():
