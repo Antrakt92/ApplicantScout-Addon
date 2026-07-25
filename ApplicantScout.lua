@@ -6177,7 +6177,12 @@ local EVENT_HANDLERS = {
     -- They don't exist at PLAYER_LOGIN. Re-scan on every ADDON_LOADED catches
     -- each as its addon loads. Cost: ~10-15 fires per session × 12-frame
     -- iteration = microseconds.
-    ADDON_LOADED                     = function()
+    ADDON_LOADED                     = function(_, loadedAddonName)
+        if loadedAddonName == addonName then
+            -- SavedVariables are available when this addon's ADDON_LOADED fires.
+            -- Normalize them before any setup or transport path can read the DB.
+            InitDB()
+        end
         _SetupLFGEntryCreationKeyCapture()
         _SetupLFGDefaultPlaystyle()
         _TryHookInfoPanels()

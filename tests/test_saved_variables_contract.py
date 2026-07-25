@@ -63,6 +63,16 @@ def test_qr_always_visible_persists_and_disable_clears_it(pytestconfig):
     assert _run_db_check(pytestconfig, "qr-visible") == "ok qr-visible"
 
 
+def test_addon_loaded_normalizes_scalar_db_before_transport(pytestconfig):
+    for scenario in ("startup-scalar-zero", "startup-scalar-true"):
+        assert _run_db_check(pytestconfig, scenario) == f"ok {scenario}"
+
+
+def test_addon_loaded_fails_closed_for_malformed_disabled_values(pytestconfig):
+    for scenario in ("startup-disabled-string", "startup-disabled-zero"):
+        assert _run_db_check(pytestconfig, scenario) == f"ok {scenario}"
+
+
 def test_mplus_default_playstyle_applies_to_new_mplus_create_forms(pytestconfig):
     assert _run_default_playstyle_check(pytestconfig, "apply-default") == "ok apply-default"
 

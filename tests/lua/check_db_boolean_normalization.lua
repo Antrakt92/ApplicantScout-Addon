@@ -52,11 +52,62 @@ elseif scenario == "qr-visible" then
     ApplicantScoutDB = {
         qrAlwaysVisible = "yes",
     }
+elseif scenario == "startup-scalar-zero" then
+    ApplicantScoutDB = 0
+elseif scenario == "startup-scalar-true" then
+    ApplicantScoutDB = true
+elseif scenario == "startup-disabled-string" then
+    ApplicantScoutDB = { enabled = "false" }
+elseif scenario == "startup-disabled-zero" then
+    ApplicantScoutDB = { enabled = 0 }
 else
     fail("unsupported scenario: " .. tostring(scenario))
 end
 
 local qrShown = false
+local startupScenario = scenario:match("^startup%-") ~= nil
+local prefixRegistrations = 0
+local addonMessages = 0
+local chatMessages = 0
+local screenshots = 0
+local qrEncodes = 0
+local timerCallbacks = 0
+
+local function assert_normalized_action_state(action)
+    if type(ApplicantScoutDB) ~= "table"
+       or type(ApplicantScoutDB.enabled) ~= "boolean" then
+        fail(action .. " ran before SavedVariables normalization")
+    end
+end
+
+if startupScenario then
+    IsInGroup = function() return true end
+    C_ChatInfo = {
+        RegisterAddonMessagePrefix = function()
+            assert_normalized_action_state("prefix registration")
+            prefixRegistrations = prefixRegistrations + 1
+            return 0
+        end,
+        SendAddonMessage = function()
+            assert_normalized_action_state("addon-message send")
+            addonMessages = addonMessages + 1
+            return 0
+        end,
+        SendChatMessage = function()
+            assert_normalized_action_state("chat-message send")
+            chatMessages = chatMessages + 1
+        end,
+    }
+    Screenshot = function()
+        assert_normalized_action_state("screenshot")
+        screenshots = screenshots + 1
+    end
+    C_Timer.After = function()
+        assert_normalized_action_state("timer callback")
+        timerCallbacks = timerCallbacks + 1
+    end
+end
+
 local baseCreateFrame = CreateFrame
 if scenario == "qr-visible" then
     UIParent.GetWidth = function() return 1920 end
@@ -83,9 +134,50 @@ if scenario == "qr-visible" then
     end
 end
 
-local harness = env.load_addon()
+local harness = env.load_addon(startupScenario and {
+    qrcode = function()
+        assert_normalized_action_state("QR encode")
+        qrEncodes = qrEncodes + 1
+    end,
+} or nil)
 if type(SlashCmdList.APSCOUT) ~= "function" then
     fail("missing /apscout slash handler")
+end
+
+if startupScenario then
+    local addonLoadedOK, addonLoadedError = pcall(
+        harness.FireEvent,
+        "ADDON_LOADED",
+        "ApplicantScout"
+    )
+    if not addonLoadedOK then fail(tostring(addonLoadedError)) end
+
+    local expectsEnabled = scenario == "startup-scalar-zero"
+        or scenario == "startup-scalar-true"
+    assert_equal("normalized DB root", type(ApplicantScoutDB), "table")
+    assert_equal("normalized enabled type", type(ApplicantScoutDB.enabled), "boolean")
+    assert_equal("normalized enabled", ApplicantScoutDB.enabled, expectsEnabled)
+    assert_equal("normalized debug type", type(ApplicantScoutDB.debug), "boolean")
+    assert_equal("prefix registrations after ADDON_LOADED", prefixRegistrations,
+                 expectsEnabled and 1 or 0)
+    assert_equal("addon messages after ADDON_LOADED", addonMessages,
+                 expectsEnabled and 1 or 0)
+
+    local normalizedRoot = ApplicantScoutDB
+    local playerLoginOK, playerLoginError = pcall(harness.FireEvent, "PLAYER_LOGIN")
+    if not playerLoginOK then fail(tostring(playerLoginError)) end
+    assert_equal("idempotent DB root", ApplicantScoutDB, normalizedRoot)
+    assert_equal("enabled after PLAYER_LOGIN", ApplicantScoutDB.enabled, expectsEnabled)
+    assert_equal("prefix registrations after PLAYER_LOGIN", prefixRegistrations,
+                 expectsEnabled and 1 or 0)
+    assert_equal("addon messages after PLAYER_LOGIN", addonMessages,
+                 expectsEnabled and 1 or 0)
+    assert_equal("chat messages", chatMessages, 0)
+    assert_equal("timer callbacks", timerCallbacks, 0)
+    assert_equal("screenshots", screenshots, 0)
+    assert_equal("QR encodes", qrEncodes, 0)
+    io.write("ok " .. scenario .. "\n")
+    return
 end
 
 local real_print = print
