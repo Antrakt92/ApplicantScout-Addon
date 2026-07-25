@@ -386,13 +386,33 @@ entryCreationKeyState.CleanUnitIsGroupLeader = function(unit)
     return entryCreationKeyState.CleanUnitAPIBoolean(UnitIsGroupLeader, unit)
 end
 
+entryCreationKeyState.NoteRosterIdentityReadUnknown = function(reason)
+    entryCreationKeyState.rosterInspectBatchLastBlockReason = reason
+    if entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) == true then
+        entryCreationKeyState.rosterInspectBatchCombatDeferred = true
+    end
+end
+
 entryCreationKeyState.UnitGUIDForRoster = function(unit)
-    if not UnitGUID then return "" end
+    if not UnitGUID then
+        entryCreationKeyState.NoteRosterIdentityReadUnknown("unit-guid-unknown")
+        return ""
+    end
     local ok, guid = pcall(UnitGUID, unit)
-    if not ok then return "" end
+    if not ok then
+        entryCreationKeyState.NoteRosterIdentityReadUnknown("unit-guid-unknown")
+        return ""
+    end
     local okSecret, isSecret = pcall(IsSecretValue, guid)
-    if not okSecret or isSecret then return "" end
-    if type(guid) ~= "string" or guid == "" then return "" end
+    if not okSecret or isSecret then
+        entryCreationKeyState.NoteRosterIdentityReadUnknown("unit-guid-unknown")
+        return ""
+    end
+    if guid == nil or guid == "" then return "" end
+    if type(guid) ~= "string" then
+        entryCreationKeyState.NoteRosterIdentityReadUnknown("unit-guid-unknown")
+        return ""
+    end
     return guid
 end
 
@@ -2782,7 +2802,11 @@ local ROSTER_INSPECT_TIMEOUT_S = 4.0
 
 local function _UnitExistsForRoster(unit)
     if unit == "player" then return true end
-    return entryCreationKeyState.CleanUnitAPIBoolean(UnitExists, unit) == true
+    local exists = entryCreationKeyState.CleanUnitAPIBoolean(UnitExists, unit)
+    if exists == nil then
+        entryCreationKeyState.NoteRosterIdentityReadUnknown("unit-exists-unknown")
+    end
+    return exists == true
 end
 
 local function _UnitIsSelfForRoster(unit)
@@ -4700,6 +4724,9 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
             deadline = entryCreationKeyState.rosterLoadRetryDeadline,
             ready = entryCreationKeyState.rosterLoadRetryReady == true,
             exhausted = entryCreationKeyState.rosterLoadRetryExhausted == true,
+            combatDeferred =
+                entryCreationKeyState.rosterInspectBatchCombatDeferred == true,
+            blockReason = entryCreationKeyState.rosterInspectBatchLastBlockReason,
         }
     end
     _G.ApplicantScoutFixtureHarness.RosterInspectFailureState = function(guid)
@@ -6205,6 +6232,7 @@ local EVENT_HANDLERS = {
         if entryCreationKeyState.rosterInspectBatchCombatDeferred then
             entryCreationKeyState.ClearRosterLoadRetryState()
             entryCreationKeyState.rosterInspectBatchCombatDeferred = false
+            entryCreationKeyState.rosterInspectBatchLastBlockReason = nil
             if not entryCreationKeyState.FlushOrContinueRosterInspectBatch() then
                 MarkDirty("inspect")
             end

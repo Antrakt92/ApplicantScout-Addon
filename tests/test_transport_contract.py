@@ -41,6 +41,9 @@ LUA_ROSTER_INSPECT_EXHAUSTION_CHECK = (
 LUA_ROSTER_LOAD_RETRY_BACKOFF_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_load_retry_backoff.lua"
 )
+LUA_ROSTER_UNKNOWN_IDENTITY_RECOVERY_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_roster_unknown_identity_recovery.lua"
+)
 LUA_ROSTER_INSPECT_REJOIN_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_inspect_rejoin.lua"
 )
@@ -3631,6 +3634,25 @@ def test_roster_load_retry_backoff_parks_and_recovers_in_lua51(pytestconfig):
     ).strip()
 
     assert output.startswith("ok roster-load-retry-backoff reads=")
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "unit-exists-secret",
+        "unit-exists-error",
+        "unit-guid-secret",
+        "unit-guid-error",
+    ],
+)
+def test_roster_unknown_identity_rearms_once_after_combat(pytestconfig, mode):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_ROSTER_UNKNOWN_IDENTITY_RECOVERY_CHECK,
+        mode,
+    ).strip()
+
+    assert output == f"roster-unknown-identity-recovery-ok mode={mode}"
 
 
 def test_large_qr_run_analysis_is_chunked_in_lua51(pytestconfig):
