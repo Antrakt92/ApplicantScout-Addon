@@ -50,6 +50,17 @@ def parse_toc_interfaces(toc: str) -> tuple[int, ...]:
     return interfaces
 
 
+def retail_patch_from_interface(interface: int) -> str:
+    digits = str(interface)
+    if len(digits) != 6 or not digits.isascii() or not digits.isdigit():
+        raise ReleaseMetadataError(
+            f"mainline TOC Interface must be a six-digit integer, got {interface!r}"
+        )
+    return ".".join(
+        str(int(component)) for component in (digits[:2], digits[2:4], digits[4:6])
+    )
+
+
 def build_release_metadata(root: Path, release_dir: Path, tag: str) -> dict[str, object]:
     if not _SEMVER_TAG.fullmatch(tag):
         raise ReleaseMetadataError("release tag must use exact vMAJOR.MINOR.PATCH format")

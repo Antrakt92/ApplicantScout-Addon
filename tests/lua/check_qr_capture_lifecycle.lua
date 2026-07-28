@@ -5,6 +5,8 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "roster-only"
        or fixture_mode == "screenshot-failure"
        or fixture_mode == "screenshot-always-fail"
+       or fixture_mode == "screenshot-event-failure"
+       or fixture_mode == "screenshot-event-timeout"
        or fixture_mode == "terminal-clear-failure"
        or fixture_mode == "terminal-clear-always-fail"
        or fixture_mode == "interaction-during-paint"
@@ -13,6 +15,7 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "interaction-force"
        or fixture_mode == "interaction-terminal"
        or fixture_mode == "interaction-world-reset"
+       or fixture_mode == "interaction-manager-recovery"
        or fixture_mode == "partial-debug"
        or fixture_mode == "overflow"
        or fixture_mode == "overflow-terminal"
@@ -29,6 +32,8 @@ end
 local roster_only = fixture_mode == "roster-only"
 local transient_screenshot_failure = fixture_mode == "screenshot-failure"
 local persistent_screenshot_failure = fixture_mode == "screenshot-always-fail"
+local screenshot_event_failure = fixture_mode == "screenshot-event-failure"
+local screenshot_event_timeout = fixture_mode == "screenshot-event-timeout"
 local terminal_clear_failure = fixture_mode == "terminal-clear-failure"
 local terminal_clear_always_fail = fixture_mode == "terminal-clear-always-fail"
 local terminal_clear_mode = terminal_clear_failure or terminal_clear_always_fail
@@ -38,6 +43,7 @@ local info_panel_during_settle = fixture_mode == "info-panel-during-settle"
 local interaction_force = fixture_mode == "interaction-force"
 local interaction_terminal = fixture_mode == "interaction-terminal"
 local interaction_world_reset = fixture_mode == "interaction-world-reset"
+local interaction_manager_recovery = fixture_mode == "interaction-manager-recovery"
 local partial_debug = fixture_mode == "partial-debug"
 local overflow_mode = fixture_mode == "overflow"
     or fixture_mode == "overflow-terminal"
@@ -111,6 +117,30 @@ local qr_encode_calls = 0
 local qr_encode_successes = 0
 local qr_mutation_count = 0
 local qr_frame_set_size_count = 0
+local event_frame = nil
+local interaction_manager_active = {}
+
+Enum = Enum or {}
+Enum.PlayerInteractionType = {
+    Merchant = 1,
+    Gossip = 2,
+    QuestGiver = 3,
+    MailInfo = 4,
+    Banker = 5,
+    GuildBanker = 6,
+    TaxiNode = 7,
+    BarbersChoice = 8,
+    TradePartner = 9,
+    Auctioneer = 10,
+    Professions = 11,
+    ProfessionsCraftingOrder = 12,
+    ProfessionsCustomerOrder = 13,
+}
+C_PlayerInteractionManager = {
+    IsInteractingWithNpcOfType = function(interactionType)
+        return interaction_manager_active[interactionType] == true
+    end,
+}
 
 GetTime = function() return now end
 local cvars = {
@@ -136,7 +166,16 @@ Screenshot = function()
         end
         error("injected Screenshot() failure")
     end
+    assert(event_frame and event_frame.events.SCREENSHOT_STARTED,
+        "screenshot lifecycle events were not registered")
+    event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_STARTED")
+    if screenshot_event_timeout then return end
+    if screenshot_event_failure and screenshot_attempts == 1 then
+        event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_FAILED")
+        return
+    end
     screenshot_times[#screenshot_times + 1] = now
+    event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_SUCCEEDED")
 end
 
 local function texture_stub(owner_name)
@@ -191,7 +230,8 @@ local function frame_stub(name)
             qr_mutation_count = qr_mutation_count + 1
         end
     end
-    function frame:SetFrameStrata() end
+    function frame:SetFrameStrata(strata) self.strata = strata end
+    function frame:GetFrameStrata() return self.strata end
     function frame:SetAlpha() end
     function frame:SetBackdrop() end
     function frame:SetBackdropColor() end
@@ -279,7 +319,6 @@ qr_namespace.QR.qrcode = function(...)
 end
 local harness = env.load_addon(qr_namespace.QR)
 
-local event_frame = nil
 for _, frame in ipairs(frames) do
     if frame.events.PLAYER_ENTERING_WORLD and frame.scripts.OnEvent then
         event_frame = frame
@@ -293,6 +332,11 @@ assert(cvars.screenshotFormat == "png" and cvars.screenshotQuality == "3",
 
 local function send_interaction_event(event)
     assert(event_frame.events[event], "interaction event was not registered: " .. event)
+    if event == "MERCHANT_SHOW" then
+        interaction_manager_active[Enum.PlayerInteractionType.Merchant] = true
+    elseif event == "MERCHANT_CLOSED" then
+        interaction_manager_active[Enum.PlayerInteractionType.Merchant] = nil
+    end
     event_frame.scripts.OnEvent(event_frame, event)
 end
 
@@ -305,9 +349,19 @@ if interaction_world_reset then
     send_interaction_event("MERCHANT_SHOW")
     assert(harness.QRTransportState().suppressedByInteraction,
         "fixture did not establish stale interaction suppression")
+    interaction_manager_active[Enum.PlayerInteractionType.Merchant] = nil
     event_frame.scripts.OnEvent(event_frame, "PLAYER_ENTERING_WORLD")
     assert(not harness.QRTransportState().suppressedByInteraction,
         "PLAYER_ENTERING_WORLD did not clear stale interaction suppression")
+end
+
+if interaction_manager_recovery then
+    send_interaction_event("MERCHANT_SHOW")
+    assert(harness.QRTransportState().suppressedByInteraction,
+        "fixture did not establish interaction suppression")
+    -- Simulate a missed MERCHANT_CLOSED: only Blizzard's authoritative manager
+    -- state changes. The normal poll must repair the stale legacy slot.
+    interaction_manager_active[Enum.PlayerInteractionType.Merchant] = nil
 end
 
 local function drain_due_timers()
@@ -380,6 +434,9 @@ local transport_state_fields = {
     "qrFrameShown",
     "screenshotFailureHash",
     "screenshotFailureAttemptCount",
+    "screenshotAwaitingResult",
+    "screenshotLastResult",
+    "qrFrameStrata",
     "terminalClearDispatchCount",
     "terminalClearRetryScheduled",
     "lastEmittedApplicantCount",
@@ -463,7 +520,7 @@ end
 local transient_failure_checked = false
 local transient_restore_checked = false
 local transient_failure_at = nil
-for _ = 1, overflow_mode and 2500 or 360 do
+for _ = 1, overflow_mode and 2500 or screenshot_event_timeout and 650 or 360 do
     now = now + frame_step
     drain_due_timers()
     for _, ticker in ipairs(tickers) do
@@ -600,7 +657,7 @@ for _ = 1, overflow_mode and 2500 or 360 do
         harness.EndSession()
     end
 
-    if transient_screenshot_failure
+    if (transient_screenshot_failure or screenshot_event_failure)
        and screenshot_attempts == 1
        and not transient_failure_checked then
         local state = harness.QRTransportState()
@@ -650,7 +707,7 @@ for _ = 1, overflow_mode and 2500 or 360 do
     end
 end
 
-if transient_screenshot_failure then
+if transient_screenshot_failure or screenshot_event_failure then
     assert(transient_failure_checked and transient_restore_checked,
         "transient failure checkpoints did not run")
     assert(#screenshot_times == 2 and screenshot_attempts == 3,
@@ -670,6 +727,21 @@ elseif persistent_screenshot_failure then
     assert(state.screenshotFailureHash ~= nil
            and state.screenshotFailureAttemptCount == 2,
         "persistent failure did not exhaust the exact retry budget")
+elseif screenshot_event_timeout then
+    local state = harness.QRTransportState()
+    assert(#screenshot_times == 0 and screenshot_attempts == 2,
+        string.format("missing result events produced shots=%d attempts=%d, expected 0/2",
+            #screenshot_times, screenshot_attempts))
+    assert(not state.pendingShotDirty
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.screenshotAwaitingResult
+           and not state.forceVisible
+           and not state.qrFrameShown,
+        "missing result events did not recover to an idle state")
+    assert(state.screenshotFailureHash ~= nil
+           and state.screenshotFailureAttemptCount == 2,
+        "missing result events did not exhaust the bounded retry budget")
 elseif terminal_clear_failure then
     local state = harness.QRTransportState()
     assert(terminal_failure_started, "terminal-clear failure phase did not start")
@@ -798,7 +870,7 @@ elseif interaction_force then
            and not state.forceVisible
            and not state.qrFrameShown,
         "explicit force capture left the suppressed QR active")
-elseif interaction_world_reset then
+elseif interaction_world_reset or interaction_manager_recovery then
     local state = harness.QRTransportState()
     assert(#screenshot_times == 2 and screenshot_attempts == 2,
         "world-transition recovery did not resume bounded transport")
@@ -847,6 +919,11 @@ assert(cvars.screenshotFormat == "png" and cvars.screenshotQuality == "3",
 assert(ApplicantScoutDB.priorScreenshotFormat == nil
        and ApplicantScoutDB.priorScreenshotQuality == nil,
     "QR capture left stale screenshot CVar restore state")
+local final_state = harness.QRTransportState()
+assert(not final_state.screenshotAwaitingResult,
+    "QR capture left a stale SCREENSHOT_* result waiter")
+assert(final_state.qrFrameStrata == "DIALOG",
+    "QR capture did not restore DIALOG frame strata")
 
 print(string.format("ok qr-capture-lifecycle mode=%s shots=%d attempts=%d",
     fixture_mode, #screenshot_times, screenshot_attempts))

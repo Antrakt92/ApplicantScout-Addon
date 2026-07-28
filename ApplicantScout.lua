@@ -135,7 +135,6 @@ local QR_EC_LEVEL = 2                  -- error correction: 1=L 2=M 3=Q 4=H. M=1
 
 ---@type any
 local qrFrame = nil                    -- containing frame
-local qrBackground = nil               -- one white texture covering entire frame
 local qrTexturePool = {}               -- pool of black-module rectangle textures (reused)
 local qrTextureUsed = 0                -- count of textures CURRENTLY shown (rest hidden)
 local qrFrameCreated = false           -- one-shot init guard
@@ -157,14 +156,13 @@ local SafeStr, APSPrint, InitDB, StartSession, EndSession, CheckSessionTransitio
       -- three orthogonal axes: isSessionActive (auto), _qrSuppressedByInteraction
       -- (auto, see below), qrAlwaysVisible (manual debug override).
       _RefreshQRVisibility, _RefreshQRMouse, _RecomputeInteractionSuppression,
-      _TryHookInfoPanels, _OnInteractionEvent, _IsQRVisibleForScreenshot,
+      _TryHookInfoPanels, _OnInteractionEvent,
       -- PVEFrame movement (Phase 2). Forward-decl'd so PLAYER_LOGIN handler
       -- and _AttachSettingsPanel's ADDON_LOADED watcher can both reference it
       -- before the body is defined further down.
       _SetupPVEFrameMovement,
-      -- Group Finder creation helpers. Kept separate from QR/session state:
-      -- this defaults Blizzard's own entry-creation form only.
-      _SetupLFGEntryCreationKeyCapture, _SetupLFGDefaultPlaystyle,
+      -- Group Finder creation hooks. Kept separate from QR/session state.
+      _SetupLFGEntryCreationHooks,
       _MaybeAutoSelectDefaultPlaystyle
 -- Forward-decl mutable state used by StartSession/EndSession/reset. WHY: those
 -- functions assign via bare `x = ...`; without forward-decl, the `local` keyword
@@ -191,14 +189,11 @@ local lastSnapshotHash, lastShotTime, pendingShotDirty,
 -- Settings panel state. settingsFrame = parent of all widgets; created lazily
 -- in _AttachSettingsPanel. settingsFrameAttached = one-shot init guard.
 local settingsFrame, enabledCheckbox,
-      autoMPlusPlaystyleLabel, autoMPlusPlaystyleDropdown,
+      autoMPlusPlaystyleDropdown,
       autoMPlusPlaystyleFallbackText
 local settingsFrameAttached = false
 
-local lfgDefaultPlaystyleHooksSetup = false
-local lfgDefaultPlaystyleApplying = false
-local lfgDefaultPlaystyleHookError = nil
-local lfgEntryCreationKeyCaptureState = {
+local lfgEntryCreationHookState = {
     hooksSetup = false,
     hookError = nil,
 }
@@ -216,16 +211,12 @@ local entryCreationKeyState = {
     activeListingCacheContext = nil,
     activeListingGeneration = 0,
     activeListingMaybeChanged = false,
-    lfgEntryCreationWorkPending = false,
     lfgEntryCreationKeyCapturePending = false,
     lfgDefaultPlaystylePending = false,
-    lfgDefaultPlaystyleUserTouched = false,
     entryCreationKeyLevelCacheDecision = "none",
     lastPayloadApplicantCount = 0,
-    lastPayloadApplicantsUnavailable = false,
     lastPayloadRosterCount = 0,
     lastPayloadRosterIncomplete = false,
-    lastPayloadRosterUnavailable = false,
     lastEmittedApplicantCount = 0,
     rosterChangedSinceLastPayload = false,
     ROSTER_CHANGE_PREFLIGHT_DEADLINE_S = 2.0,
@@ -287,10 +278,13 @@ local entryCreationKeyState = {
     SCREENSHOT_FAILURE_MAX_ATTEMPTS = 2,
     screenshotFailureHash = nil,
     screenshotFailureAttemptCount = 0,
+    screenshotAwaitingResult = false,
+    screenshotAwaitingJobGen = nil,
+    screenshotResultHandler = nil,
+    screenshotLastResult = "never",
     QR_TRANSPORT_JOB_TIMEOUT_S = 8.0,
     QR_RECOVERY_NOTICE_COOLDOWN_S = 30,
     qrTransportRecoveryCount = 0,
-    qrTransportLastRecoveryAt = nil,
     qrTransportLastRecoveryReason = "never",
     qrTransportLastRecoveryPrintAt = nil,
     qrTextureVisibleHighWater = 0,
@@ -702,6 +696,12 @@ StartSession = function()
     entryCreationKeyState.qrPaintDirtyDuringPaint = false
     entryCreationKeyState.qrTransportJobStartedAt = nil
     entryCreationKeyState.qrTransportJobTerminalClear = false
+    entryCreationKeyState.screenshotAwaitingResult = false
+    entryCreationKeyState.screenshotAwaitingJobGen = nil
+    entryCreationKeyState.screenshotResultHandler = nil
+    qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
+    qrForceVisibleForShot = false
+    if qrFrame then qrFrame:SetFrameStrata("DIALOG") end
     entryCreationKeyState.rioMPlusSummaryCache = {}
     entryCreationKeyState.lastQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
@@ -746,6 +746,15 @@ EndSession = function()
     entryCreationKeyState.qrPaintDirtyDuringPaint = false
     entryCreationKeyState.qrTransportJobStartedAt = nil
     entryCreationKeyState.qrTransportJobTerminalClear = false
+    entryCreationKeyState.screenshotAwaitingResult = false
+    entryCreationKeyState.screenshotAwaitingJobGen = nil
+    entryCreationKeyState.screenshotResultHandler = nil
+    qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
+    qrForceVisibleForShot = false
+    if qrFrame then
+        qrFrame:SetFrameStrata("DIALOG")
+        _RefreshQRVisibility()
+    end
     entryCreationKeyState.terminalClearDispatchCount = 0
     entryCreationKeyState.terminalClearSessionGen = sessionGen
     entryCreationKeyState.terminalClearRetryScheduled = false
@@ -791,7 +800,7 @@ EndSession = function()
 end
 
 local function _HasGroupRosterForTransport()
-    return math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0)) > 0
+    return entryCreationKeyState.AutoHiGroupMemberCount() > 0
 end
 
 entryCreationKeyState.AutoHiGroupMemberCount = function()
@@ -1353,27 +1362,27 @@ end
 -- One containing frame, sized to whatever QR version we just generated
 -- (adaptive). White background covers the entire frame; row-RLE pool of
 -- black-rectangle textures draws the QR data.
-local function _IsFiniteQRPositionNumber(v)
-    local QR_POSITION_LIMIT = 100000
+local function _IsFinitePositionNumber(v)
+    local POSITION_LIMIT = 100000
     return type(v) == "number" and v == v
-           and v > -QR_POSITION_LIMIT and v < QR_POSITION_LIMIT
+           and v > -POSITION_LIMIT and v < POSITION_LIMIT
 end
 
 local function _NormalizeQRPosition(pos)
     if type(pos) ~= "table" then return 0, 0, false end
     local x, y = pos.x, pos.y
-    if not (_IsFiniteQRPositionNumber(x) and _IsFiniteQRPositionNumber(y)) then
+    if not (_IsFinitePositionNumber(x) and _IsFinitePositionNumber(y)) then
         return 0, 0, false
     end
     return x, y, true
 end
 
 local function _ClampQRPosition(x, y, frameSize)
-    frameSize = _IsFiniteQRPositionNumber(frameSize) and frameSize or 64
+    frameSize = _IsFinitePositionNumber(frameSize) and frameSize or 64
     local parentW = UIParent and UIParent:GetWidth() or 0
     local parentH = UIParent and UIParent:GetHeight() or 0
-    if not _IsFiniteQRPositionNumber(parentW) or parentW <= 0 then parentW = frameSize end
-    if not _IsFiniteQRPositionNumber(parentH) or parentH <= 0 then parentH = frameSize end
+    if not _IsFinitePositionNumber(parentW) or parentW <= 0 then parentW = frameSize end
+    if not _IsFinitePositionNumber(parentH) or parentH <= 0 then parentH = frameSize end
 
     local maxX = parentW - frameSize
     local minY = frameSize - parentH
@@ -1388,7 +1397,7 @@ end
 local function _GetQRFrameSize()
     if qrFrame then
         local w = qrFrame:GetWidth()
-        if _IsFiniteQRPositionNumber(w) and w > 0 then return w end
+        if _IsFinitePositionNumber(w) and w > 0 then return w end
     end
     return qrCurrentSize > 0 and qrCurrentSize or 64
 end
@@ -1406,8 +1415,8 @@ local function _SaveQRFramePositionFromFrame()
     local frameLeft, frameTop = qrFrame:GetLeft(), qrFrame:GetTop()
     local parentLeft = UIParent and UIParent:GetLeft() or 0
     local parentTop = UIParent and UIParent:GetTop() or (UIParent and UIParent:GetHeight() or 0)
-    if not (_IsFiniteQRPositionNumber(frameLeft) and _IsFiniteQRPositionNumber(frameTop)
-            and _IsFiniteQRPositionNumber(parentLeft) and _IsFiniteQRPositionNumber(parentTop)) then
+    if not (_IsFinitePositionNumber(frameLeft) and _IsFinitePositionNumber(frameTop)
+            and _IsFinitePositionNumber(parentLeft) and _IsFinitePositionNumber(parentTop)) then
         return false
     end
     local x = frameLeft - parentLeft
@@ -1468,7 +1477,7 @@ local function CreateQRFrame()
     -- layer. Black module textures (BORDER layer above) overlay it. pyzbar's
     -- QR detector relies on black-on-white contrast — this gives it the
     -- canonical look.
-    qrBackground = qrFrame:CreateTexture(nil, "BACKGROUND")
+    local qrBackground = qrFrame:CreateTexture(nil, "BACKGROUND")
     qrBackground:SetColorTexture(1, 1, 1, 1)
     qrBackground:SetAllPoints(qrFrame)
 
@@ -1524,47 +1533,38 @@ end
 -- exist at PLAYER_LOGIN. Re-scan on every ADDON_LOADED catches them as their
 -- addons load. _trackedInfoPanels keeps scans idempotent.
 
--- desired = true  → event opens an interaction frame (suppress QR)
--- desired = false → event closes one (clear that slot)
--- desired = nil   → event ignored (no state change)
-local INTERACTION_EVENT_DESIRED = {
-    MERCHANT_SHOW          = true,  MERCHANT_CLOSED        = false,
-    GOSSIP_SHOW            = true,  GOSSIP_CLOSED          = false,
-    QUEST_DETAIL           = true,  QUEST_GREETING         = true,
-    QUEST_PROGRESS         = true,  QUEST_COMPLETE         = true,
-    QUEST_FINISHED         = false,
-    MAIL_SHOW              = true,  MAIL_CLOSED            = false,
-    BANKFRAME_OPENED       = true,  BANKFRAME_CLOSED       = false,
-    GUILDBANKFRAME_OPENED  = true,  GUILDBANKFRAME_CLOSED  = false,
+-- Each value is { slot kind, desired active state }. Keeping both fields in
+-- one map prevents registration and state transitions from drifting apart.
+local INTERACTION_EVENTS = {
+    MERCHANT_SHOW          = { "vendor", true },
+    MERCHANT_CLOSED        = { "vendor", false },
+    GOSSIP_SHOW            = { "gossip", true },
+    GOSSIP_CLOSED          = { "gossip", false },
+    QUEST_DETAIL           = { "quest", true },
+    QUEST_GREETING         = { "quest", true },
+    QUEST_PROGRESS         = { "quest", true },
+    QUEST_COMPLETE         = { "quest", true },
+    QUEST_FINISHED         = { "quest", false },
+    MAIL_SHOW              = { "mail", true },
+    MAIL_CLOSED            = { "mail", false },
+    BANKFRAME_OPENED       = { "bank", true },
+    BANKFRAME_CLOSED       = { "bank", false },
+    GUILDBANKFRAME_OPENED  = { "guildbank", true },
+    GUILDBANKFRAME_CLOSED  = { "guildbank", false },
     -- VOID_STORAGE_* removed in Midnight 12.x — `Frame:RegisterEvent` warns
     -- "Attempt to register unknown event" 3x. Void storage UI no longer fires
     -- those events; the frame uses different mechanics. No replacement event
     -- is needed (companion's QR fade-on-interaction list isn't user-facing).
-    TAXIMAP_OPENED         = true,  TAXIMAP_CLOSED         = false,
-    BARBER_SHOP_OPEN       = true,  BARBER_SHOP_CLOSE      = false,
-    TRADE_SHOW             = true,  TRADE_CLOSED           = false,
-    AUCTION_HOUSE_SHOW     = true,  AUCTION_HOUSE_CLOSED   = false,
-    TRADE_SKILL_SHOW       = true,  TRADE_SKILL_CLOSE      = false,
-}
-
--- Map event name → "kind" (slot key). Multiple events share a slot
--- (QUEST_DETAIL/GREETING/PROGRESS/COMPLETE all set "quest" true; QUEST_FINISHED
--- clears it). Set-true events are idempotent — repeated writes don't break
--- aggregation because they all write the same slot+value.
-local INTERACTION_EVENT_KIND = {
-    MERCHANT_SHOW          = "vendor",       MERCHANT_CLOSED        = "vendor",
-    GOSSIP_SHOW            = "gossip",       GOSSIP_CLOSED          = "gossip",
-    QUEST_DETAIL           = "quest",        QUEST_GREETING         = "quest",
-    QUEST_PROGRESS         = "quest",        QUEST_COMPLETE         = "quest",
-    QUEST_FINISHED         = "quest",
-    MAIL_SHOW              = "mail",         MAIL_CLOSED            = "mail",
-    BANKFRAME_OPENED       = "bank",         BANKFRAME_CLOSED       = "bank",
-    GUILDBANKFRAME_OPENED  = "guildbank",    GUILDBANKFRAME_CLOSED  = "guildbank",
-    TAXIMAP_OPENED         = "taxi",         TAXIMAP_CLOSED         = "taxi",
-    BARBER_SHOP_OPEN       = "barber",       BARBER_SHOP_CLOSE      = "barber",
-    TRADE_SHOW             = "trade",        TRADE_CLOSED           = "trade",
-    AUCTION_HOUSE_SHOW     = "auctionhouse", AUCTION_HOUSE_CLOSED   = "auctionhouse",
-    TRADE_SKILL_SHOW       = "professions",  TRADE_SKILL_CLOSE      = "professions",
+    TAXIMAP_OPENED         = { "taxi", true },
+    TAXIMAP_CLOSED         = { "taxi", false },
+    BARBER_SHOP_OPEN       = { "barber", true },
+    BARBER_SHOP_CLOSE      = { "barber", false },
+    TRADE_SHOW             = { "trade", true },
+    TRADE_CLOSED           = { "trade", false },
+    AUCTION_HOUSE_SHOW     = { "auctionhouse", true },
+    AUCTION_HOUSE_CLOSED   = { "auctionhouse", false },
+    TRADE_SKILL_SHOW       = { "professions", true },
+    TRADE_SKILL_CLOSE      = { "professions", false },
 }
 
 -- Frames without dedicated events. Track them when the frame becomes available;
@@ -1579,11 +1579,58 @@ local INFO_PANEL_FRAMES = {
 local _interactionSlots = {}  -- kind → bool (only set when active; nil = inactive)
 local _trackedInfoPanels = {} -- frame name → true once available for polling
 
+-- Current Retail exposes one authoritative interaction manager for NPC-backed
+-- panels. Keep its enum mapping on the existing state table (rather than adding
+-- more file-scope locals in this Lua 5.1-sized file) and use it to repair both
+-- missed close events and missed show events during the normal poll.
+entryCreationKeyState.RefreshInteractionTypeMappings = function()
+    local playerInteractionType = _G.Enum and _G.Enum.PlayerInteractionType
+    if type(playerInteractionType) ~= "table" then return false end
+
+    local typeKinds = {}
+    local kindTypes = {}
+    local function Add(kind, enumName)
+        local interactionType = playerInteractionType[enumName]
+        if type(interactionType) ~= "number" or IsSecretValue(interactionType) then
+            return
+        end
+        typeKinds[interactionType] = kind
+        local types = kindTypes[kind]
+        if not types then
+            types = {}
+            kindTypes[kind] = types
+        end
+        types[#types + 1] = interactionType
+    end
+
+    Add("vendor", "Merchant")
+    Add("vendor", "Vendor")
+    Add("gossip", "Gossip")
+    Add("quest", "QuestGiver")
+    Add("mail", "MailInfo")
+    Add("bank", "Banker")
+    Add("bank", "CharacterBanker")
+    Add("bank", "AccountBanker")
+    Add("guildbank", "GuildBanker")
+    Add("taxi", "TaxiNode")
+    Add("barber", "BarbersChoice")
+    Add("trade", "TradePartner")
+    Add("auctionhouse", "Auctioneer")
+    Add("professions", "Professions")
+    Add("professions", "ProfessionsCraftingOrder")
+    Add("professions", "ProfessionsCustomerOrder")
+    Add("professions", "ProfessionsCustomerOrders")
+
+    entryCreationKeyState.interactionTypeKinds = typeKinds
+    entryCreationKeyState.interactionKindTypes = kindTypes
+    return true
+end
+
 -- A loading-screen/world transition cannot preserve an event-owned merchant,
 -- bank, trade, auction, taxi, or quest interaction. If Blizzard omits a paired
 -- *_CLOSED event during that transition, retaining the slot would suppress
 -- every later non-force transport until /reload. Polled info panels are not
--- cleared; the recompute below still observes their actual IsShown state.
+-- cleared; the recompute below still observes their actual IsVisible state.
 entryCreationKeyState.ResetInteractionSlotsForWorldTransition = function()
     for kind in pairs(_interactionSlots) do
         _interactionSlots[kind] = nil
@@ -1624,15 +1671,54 @@ _RefreshQRVisibility = function()
     end
 end
 
-_IsQRVisibleForScreenshot = function()
-    return qrFrame and qrFrame:IsShown()
-end
-
 -- Aggregator: walks events table + tracked info panels to determine if any
 -- interaction frame is currently open. Calls _RefreshQRVisibility only when
 -- the suppression boolean actually flips — avoids redundant Show/Hide calls
 -- on every event burst.
-_RecomputeInteractionSuppression = function()
+_RecomputeInteractionSuppression = function(skipManagerReconcile)
+    local managerStates = nil
+    local interactionManager = _G.C_PlayerInteractionManager
+    local isInteracting = interactionManager
+        and interactionManager.IsInteractingWithNpcOfType
+    if not skipManagerReconcile and type(isInteracting) == "function" then
+        if type(entryCreationKeyState.interactionTypeKinds) ~= "table" then
+            entryCreationKeyState.RefreshInteractionTypeMappings()
+        end
+        managerStates = {}
+        for interactionType in pairs(entryCreationKeyState.interactionTypeKinds or {}) do
+            local active = entryCreationKeyState.CleanUnitAPIBoolean(
+                isInteracting,
+                interactionType
+            )
+            managerStates[interactionType] = active
+            if active == true then
+                _interactionSlots[interactionType] = true
+            elseif active == false then
+                _interactionSlots[interactionType] = nil
+            end
+        end
+
+        -- Legacy events remain useful for third-party replacement panels, but
+        -- a missing *_CLOSED must not become a permanent latch. Clear a legacy
+        -- kind only when every mapped manager query returned a clean false.
+        for kind in pairs(entryCreationKeyState.interactionKindTypes or {}) do
+            if _interactionSlots[kind] then
+                local mappedTypes = entryCreationKeyState.interactionKindTypes
+                    and entryCreationKeyState.interactionKindTypes[kind]
+                local allKnownInactive = mappedTypes and #mappedTypes > 0
+                for _, interactionType in ipairs(mappedTypes or {}) do
+                    if managerStates[interactionType] ~= false then
+                        allKnownInactive = false
+                        break
+                    end
+                end
+                if allKnownInactive then
+                    _interactionSlots[kind] = nil
+                end
+            end
+        end
+    end
+
     local anyActive = false
     for _, active in pairs(_interactionSlots) do
         if active then anyActive = true; break end
@@ -1640,7 +1726,8 @@ _RecomputeInteractionSuppression = function()
     if not anyActive then
         for name in pairs(_trackedInfoPanels) do
             local frame = _G[name]
-            if frame and frame:IsShown() then
+            if frame
+               and entryCreationKeyState.CleanUnitAPIBoolean(frame.IsVisible, frame) == true then
                 anyActive = true; break
             end
         end
@@ -1653,15 +1740,29 @@ end
 
 -- Event-driven slot updater. Idempotent: repeated set-true for the same kind
 -- writes the same slot. desired=nil events filtered upstream by EVENT_HANDLERS
--- registration (only events present in INTERACTION_EVENT_DESIRED are bound).
+-- registration (only events present in INTERACTION_EVENTS are bound).
 _OnInteractionEvent = function(event)
-    local kind = INTERACTION_EVENT_KIND[event]
-    local desired = INTERACTION_EVENT_DESIRED[event]
-    if not kind or desired == nil then return end
+    local config = INTERACTION_EVENTS[event]
+    if not config then return end
+    local kind, desired = config[1], config[2]
     -- Sparse storage: false → nil to keep the table minimal; aggregator's
     -- pairs() loop only walks active slots.
     _interactionSlots[kind] = desired or nil
-    _RecomputeInteractionSuppression()
+    -- The legacy SHOW event can precede the manager's state flip in the same
+    -- frame. Trust this event immediately; the next poll performs repair.
+    _RecomputeInteractionSuppression(desired == true)
+end
+
+entryCreationKeyState.OnPlayerInteractionManagerEvent = function(event, interactionType)
+    if type(interactionType) ~= "number" or IsSecretValue(interactionType) then return end
+    if event == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" then
+        _interactionSlots[interactionType] = true
+    elseif event == "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" then
+        _interactionSlots[interactionType] = nil
+    else
+        return
+    end
+    _RecomputeInteractionSuppression(event == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW")
 end
 
 -- Lazy tracker. Called at PLAYER_LOGIN, ADDON_LOADED, and the scan ticker.
@@ -1673,9 +1774,9 @@ _TryHookInfoPanels = function()
     for _, name in ipairs(INFO_PANEL_FRAMES) do
         if not _trackedInfoPanels[name] then
             local frame = _G[name]
-            if frame then
+            if frame and type(frame.IsVisible) == "function" then
                 _trackedInfoPanels[name] = true
-                if frame.IsShown and frame:IsShown() then
+                if entryCreationKeyState.CleanUnitAPIBoolean(frame.IsVisible, frame) == true then
                     newlyTrackedVisible = true
                 end
             end
@@ -1727,19 +1828,13 @@ local PVE_VALID_POINTS = {
     BOTTOMRIGHT = true,
 }
 
-local function _IsFinitePVEPositionNumber(v)
-    local PVE_POSITION_LIMIT = 100000
-    return type(v) == "number" and v == v
-           and v > -PVE_POSITION_LIMIT and v < PVE_POSITION_LIMIT
-end
-
 local function _NormalizePVEFramePosition(pos)
     if type(pos) ~= "table" then return nil, 0, 0, false end
     local point, x, y = pos.point, pos.x, pos.y
     if type(point) ~= "string" or not PVE_VALID_POINTS[point] then
         return nil, 0, 0, false
     end
-    if not (_IsFinitePVEPositionNumber(x) and _IsFinitePVEPositionNumber(y)) then
+    if not (_IsFinitePositionNumber(x) and _IsFinitePositionNumber(y)) then
         return nil, 0, 0, false
     end
     return point, x, y, true
@@ -1766,19 +1861,20 @@ local function _SavePVEFramePositionFromFrame(frame)
     }
 end
 
+entryCreationKeyState.ClearPVEFrameRestoreMemo = function()
+    entryCreationKeyState.pveFrameRestoreShown = false
+    entryCreationKeyState.pveFrameRestorePoint = nil
+    entryCreationKeyState.pveFrameRestoreX = nil
+    entryCreationKeyState.pveFrameRestoreY = nil
+end
+
 entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker = function()
     if not _G.PVEFrame then
-        entryCreationKeyState.pveFrameRestoreShown = false
-        entryCreationKeyState.pveFrameRestorePoint = nil
-        entryCreationKeyState.pveFrameRestoreX = nil
-        entryCreationKeyState.pveFrameRestoreY = nil
+        entryCreationKeyState.ClearPVEFrameRestoreMemo()
         return
     end
     if not PVEFrame:IsShown() then
-        entryCreationKeyState.pveFrameRestoreShown = false
-        entryCreationKeyState.pveFrameRestorePoint = nil
-        entryCreationKeyState.pveFrameRestoreX = nil
-        entryCreationKeyState.pveFrameRestoreY = nil
+        entryCreationKeyState.ClearPVEFrameRestoreMemo()
         return
     end
 
@@ -1787,10 +1883,7 @@ entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker = function()
     local point, x, y, ok = _NormalizePVEFramePosition(saved)
     if not ok then
         _ClearInvalidPVEFramePosition()
-        entryCreationKeyState.pveFrameRestoreShown = false
-        entryCreationKeyState.pveFrameRestorePoint = nil
-        entryCreationKeyState.pveFrameRestoreX = nil
-        entryCreationKeyState.pveFrameRestoreY = nil
+        entryCreationKeyState.ClearPVEFrameRestoreMemo()
         return
     end
     if InCombatLockdown() then return end
@@ -2028,7 +2121,7 @@ end
 -- belt-and-suspenders.
 --
 -- Applicants sorted by ID before serialization → identical state produces
--- identical bytes → HashSnapshot dedup works reliably.
+-- identical bytes → snapshot-hash dedup works reliably.
 
 -- WoW classID 1-13 (retail Midnight). Inverse of LOCALIZED_CLASS_NAMES_MALE.
 local CLASS_NAME_TO_ID = {
@@ -2295,9 +2388,9 @@ local function _ClearEntryCreationKeystoneLevelCache(activityID, questID)
 end
 
 entryCreationKeyState.PrintDiagnostics = function()
-    print("  entry key capture hooks: " .. tostring(lfgEntryCreationKeyCaptureState.hooksSetup)
-          .. (lfgEntryCreationKeyCaptureState.hookError
-              and (" (error: " .. lfgEntryCreationKeyCaptureState.hookError .. ")")
+    print("  entry creation hooks: " .. tostring(lfgEntryCreationHookState.hooksSetup)
+          .. (lfgEntryCreationHookState.hookError
+              and (" (error: " .. lfgEntryCreationHookState.hookError .. ")")
               or ""))
     local pendingCache = SafeTable(entryCreationKeyState.pendingEntryCreationKeyLevelCache)
     local publishedCache = SafeTable(entryCreationKeyState.entryCreationKeyLevelCache)
@@ -2435,20 +2528,23 @@ local function _HookEntryCreationKeyCapture(panel)
     end
 end
 
-local function _GetVisibleApplicationViewerKeystoneLevel()
-    local lfgFrame = _G.LFGListFrame
-    local viewer = lfgFrame and lfgFrame.ApplicationViewer
-    if not viewer then return 0 end
-    if type(viewer.IsShown) == "function" and not viewer:IsShown() then return 0 end
-
-    local candidates = {
+local function _ApplicationViewerTextCandidates(viewer)
+    return {
         { label = "EntryName", fontString = viewer.EntryName },
         {
             label = "DescriptionFrame.Text",
             fontString = viewer.DescriptionFrame and viewer.DescriptionFrame.Text,
         },
     }
-    for _, candidate in ipairs(candidates) do
+end
+
+local function _GetVisibleApplicationViewerKeystoneLevel()
+    local lfgFrame = _G.LFGListFrame
+    local viewer = lfgFrame and lfgFrame.ApplicationViewer
+    if not viewer then return 0 end
+    if type(viewer.IsShown) == "function" and not viewer:IsShown() then return 0 end
+
+    for _, candidate in ipairs(_ApplicationViewerTextCandidates(viewer)) do
         local fontString = candidate.fontString
         if fontString and type(fontString.GetText) == "function" then
             local ok, text = pcall(fontString.GetText, fontString)
@@ -2477,14 +2573,7 @@ local function _GetVisibleApplicationViewerKeystoneDiagnostics()
     end
     lines[#lines + 1] = "  visibleFrame.viewerShown: " .. shown
 
-    local candidates = {
-        { label = "EntryName", fontString = viewer.EntryName },
-        {
-            label = "DescriptionFrame.Text",
-            fontString = viewer.DescriptionFrame and viewer.DescriptionFrame.Text,
-        },
-    }
-    for _, candidate in ipairs(candidates) do
+    for _, candidate in ipairs(_ApplicationViewerTextCandidates(viewer)) do
         local label = candidate.label
         local fontString = candidate.fontString
         if fontString and type(fontString.GetText) == "function" then
@@ -2582,8 +2671,6 @@ local function _GetListingKeystoneLevel(activityID, questID, listingName, listin
     return keyLevel
 end
 _G.ApplicantScout_GetListingKeystoneLevel = _GetListingKeystoneLevel
-_G.ApplicantScout_CachedEntryCreationKeystoneLevel =
-    _GetCachedEntryCreationKeystoneLevel
 
 local function _RaiderIODungeonMatchesActivity(dungeon, listingActivityID)
     dungeon = SafeTable(dungeon)
@@ -2742,6 +2829,18 @@ local function _GetRaiderIOMPlusSummaryForCleanName(memberName, listingActivityI
     return StoreRaiderIOSummary(summary)
 end
 
+entryCreationKeyState.AppendRaiderIOMPlusSummary = function(out, summary)
+    table.insert(out, _Uint16BE(summary.mainScore))
+    table.insert(out, string.char(summary.hasProfile and 1 or 0))
+    table.insert(out, string.char(summary.bestKey))
+    table.insert(out, string.char(summary.bestDungeonKey))
+    table.insert(out, string.char(summary.timedAtOrAbove))
+    table.insert(out, string.char(summary.timedAtOrAboveMinus1))
+    table.insert(out, string.char(summary.timedAtOrAboveMinus2))
+    table.insert(out, string.char(summary.completedAtOrAboveMinus1))
+    table.insert(out, string.char(summary.dungeonCount))
+end
+
 local function _IsPlaceholderCleanUnitName(name)
     local sep = name:find("-", 1, true)
     local base = sep and name:sub(1, sep - 1) or name
@@ -2863,9 +2962,7 @@ entryCreationKeyState.ClearRosterInspectDataForGUID = function(guid)
     if rosterInspectPendingGUID == guid then
         entryCreationKeyState.ReleaseOwnedRosterInspect()
     end
-    if entryCreationKeyState.ClearRosterInspectFailureForGUID then
-        entryCreationKeyState.ClearRosterInspectFailureForGUID(guid)
-    end
+    entryCreationKeyState.ClearRosterInspectFailureForGUID(guid)
 end
 
 entryCreationKeyState.ResetRosterInspectDataCache = function()
@@ -2899,9 +2996,7 @@ entryCreationKeyState.ReconcileRosterInspectMembership = function()
         -- A secret/unavailable unit identity makes selective reconciliation
         -- unsafe. Prefer fresh inspection work over emitting stale member data.
         entryCreationKeyState.ResetRosterInspectDataCache()
-        if entryCreationKeyState.ClearRosterInspectFailureState then
-            entryCreationKeyState.ClearRosterInspectFailureState()
-        end
+        entryCreationKeyState.ClearRosterInspectFailureState()
     else
         for guid in pairs(entryCreationKeyState.rosterInspectKnownGUIDs) do
             if not currentGUIDs[guid] then
@@ -2920,9 +3015,7 @@ local function _InvalidateRosterSpecCacheForUnit(unit)
         return
     end
     entryCreationKeyState.ResetRosterInspectDataCache()
-    if entryCreationKeyState.ClearRosterInspectFailureState then
-        entryCreationKeyState.ClearRosterInspectFailureState()
-    end
+    entryCreationKeyState.ClearRosterInspectFailureState()
 end
 
 local function _MaybeRequestRosterInspect(unit, guid, isSelf)
@@ -2936,8 +3029,7 @@ local function _MaybeRequestRosterInspect(unit, guid, isSelf)
     end
 
     local now = GetTime and GetTime() or 0
-    if entryCreationKeyState.RosterInspectRetryBlocked
-       and entryCreationKeyState.RosterInspectRetryBlocked(guid, now) then
+    if entryCreationKeyState.RosterInspectRetryBlocked(guid, now) then
         return false, "retry-budget"
     end
     if rosterInspectPendingGUID == guid
@@ -3025,7 +3117,7 @@ entryCreationKeyState.RosterUnitHasResolvedInspectData = function(unit, guid, is
     end
 
     local resolved = hasSpec and hasIlvl
-    if resolved and entryCreationKeyState.ClearRosterInspectFailureForGUID then
+    if resolved then
         entryCreationKeyState.ClearRosterInspectFailureForGUID(guid)
     end
     return resolved
@@ -3939,7 +4031,7 @@ entryCreationKeyState.RegisterLeaderKeystoneCallback = function()
     return lib
 end
 
-entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry = function(force, attempt, reason)
+entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry = function(attempt, reason)
     if not entryCreationKeyState.IsLibKeystoneSendRetryable(reason) then
         return false
     end
@@ -4016,7 +4108,7 @@ entryCreationKeyState.RequestLeaderKeystone = function(force, attempt)
     reason = reason or "request-failed"
     entryCreationKeyState.leaderKeystoneLastRequestStatus =
         "request failed: " .. tostring(reason or "unknown")
-    entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry(force, attempt, reason)
+    entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry(attempt, reason)
     return false
 end
 
@@ -4101,7 +4193,6 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
             listingKeyLevelForRio
         )
         local currentScoreBytes = _Uint16BE(rioSummary.currentScore)
-        local mainScoreBytes = _Uint16BE(rioSummary.mainScore)
         table.insert(rosterOut, string.char(_ClampUInt8(row.unitIndex)))
         table.insert(rosterOut, string.char(_ClampUInt8(row.flags)))
         table.insert(rosterOut, string.char(_ClampUInt8(row.subgroup)))
@@ -4109,15 +4200,7 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
         table.insert(rosterOut, _Uint16BE(row.specID))
         table.insert(rosterOut, _Uint16BE(row.ilvl))
         table.insert(rosterOut, currentScoreBytes)
-        table.insert(rosterOut, mainScoreBytes)
-        table.insert(rosterOut, string.char(rioSummary.hasProfile and 1 or 0))
-        table.insert(rosterOut, string.char(rioSummary.bestKey))
-        table.insert(rosterOut, string.char(rioSummary.bestDungeonKey))
-        table.insert(rosterOut, string.char(rioSummary.timedAtOrAbove))
-        table.insert(rosterOut, string.char(rioSummary.timedAtOrAboveMinus1))
-        table.insert(rosterOut, string.char(rioSummary.timedAtOrAboveMinus2))
-        table.insert(rosterOut, string.char(rioSummary.completedAtOrAboveMinus1))
-        table.insert(rosterOut, string.char(rioSummary.dungeonCount))
+        entryCreationKeyState.AppendRaiderIOMPlusSummary(rosterOut, rioSummary)
         table.insert(rosterOut, string.char(_ClampUInt8(row.role)))
         _PackCleanLenStr(rosterOut, row.name)
         emittedCount = emittedCount + 1
@@ -4173,10 +4256,8 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     entryCreationKeyState.lastPayloadTotalBytes = 0
     entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
     entryCreationKeyState.lastPayloadApplicantCount = 0
-    entryCreationKeyState.lastPayloadApplicantsUnavailable = false
     entryCreationKeyState.lastPayloadRosterCount = 0
     entryCreationKeyState.lastPayloadRosterIncomplete = false
-    entryCreationKeyState.lastPayloadRosterUnavailable = false
     if terminalClear then
         lfgUnavailable = false
     end
@@ -4240,7 +4321,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
 
         -- Strip player-link |Kxxx|k from listing name after SafeStr has
         -- handled secret-tagged strings and regular WoW escape sequences.
-        local listingName = SafeStr(cleanEntry.name, "?"):gsub("|K[^|]*|k", "")
+        local listingName = SafeStr(cleanEntry.name, "?")
         local listingComment = SafeStr(cleanEntry.comment, "?")
 
         local keyLevel = 0
@@ -4416,15 +4497,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
                     listingActivityIDForRio,
                     listingKeyLevelForRio
                 )
-                table.insert(memberOut, _Uint16BE(rioSummary.mainScore))
-                table.insert(memberOut, string.char(rioSummary.hasProfile and 1 or 0))
-                table.insert(memberOut, string.char(rioSummary.bestKey))
-                table.insert(memberOut, string.char(rioSummary.bestDungeonKey))
-                table.insert(memberOut, string.char(rioSummary.timedAtOrAbove))
-                table.insert(memberOut, string.char(rioSummary.timedAtOrAboveMinus1))
-                table.insert(memberOut, string.char(rioSummary.timedAtOrAboveMinus2))
-                table.insert(memberOut, string.char(rioSummary.completedAtOrAboveMinus1))
-                table.insert(memberOut, string.char(rioSummary.dungeonCount))
+                entryCreationKeyState.AppendRaiderIOMPlusSummary(memberOut, rioSummary)
                 table.insert(memberOut, string.char(ROLE_NAME_TO_BYTE[roleToken] or 2))
                 _PackCleanLenStr(memberOut, memberName)
                 emittedCount = emittedCount + 1
@@ -4469,8 +4542,6 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     end
     entryCreationKeyState.lastPayloadRosterCount = rosterCount
     rosterUnavailable = rosterUnavailable or rosterIncomplete
-    entryCreationKeyState.lastPayloadApplicantsUnavailable = applicantsIncomplete
-    entryCreationKeyState.lastPayloadRosterUnavailable = rosterUnavailable
     if rosterUnavailable then
         headerFlags = headerFlags + 0x04
     end
@@ -4672,16 +4743,6 @@ entryCreationKeyState.AdvanceQROverflowTransport = function(state)
     return completedPass > 0, false
 end
 
--- Independent djb2 oracle for fixtures. Runtime receives the same hash from
--- BuildPayload's CRC pass instead of scanning the completed payload again.
-local function HashSnapshot(payload)
-    local h = 5381
-    for i = 1, #payload do
-        h = ((h * 33) + string.byte(payload, i)) % 4294967296
-    end
-    return h
-end
-
 if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.SafeNumber = SafeNumber
     _G.ApplicantScoutFixtureHarness.Uint32BE = _Uint32BE
@@ -4703,7 +4764,6 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.BuildRosterPayloadRows = BuildRosterPayloadRows
     _G.ApplicantScoutFixtureHarness.GetRaiderIOMPlusSummaryForCleanName =
         _GetRaiderIOMPlusSummaryForCleanName
-    _G.ApplicantScoutFixtureHarness.HashSnapshot = HashSnapshot
     _G.ApplicantScoutFixtureHarness.StartQROverflowTransport =
         entryCreationKeyState.StartQROverflowTransport
     _G.ApplicantScoutFixtureHarness.BuildQROverflowFragment =
@@ -4790,7 +4850,7 @@ end
 -- Resolve QR encoder reference (set by libs/qrencode.lua via addon namespace).
 -- Nil-safe so BuildQRMatrix can show its missing-library diagnostic instead of
 -- crashing at file load if the embedded QR library failed to populate ns.QR.
-local _, _addonNS = ...
+local _addonNS = select(2, ...)
 local _qrencode = _addonNS.QR and _addonNS.QR.qrcode
 
 -- Acquire (or reuse from pool) a black-rectangle texture and position+size it.
@@ -5219,6 +5279,7 @@ local lastTransportPollTime = 0
 local function _ReleaseForceVisibleShotLease(forceVisibleShotGen)
     if forceVisibleShotGen and qrForceVisibleShotGen == forceVisibleShotGen then
         qrForceVisibleForShot = false
+        if qrFrame then qrFrame:SetFrameStrata("DIALOG") end
         _RefreshQRVisibility()
     end
 end
@@ -5227,13 +5288,15 @@ local function _AcquireQRShotLease()
     -- WHY: every QR repaint needs a framebuffer settle delay, even when the
     -- frame was already visible; otherwise captures can decode APS1 magic with
     -- corrupt payload bytes from an old-new texture mix.
-    if qrAlwaysVisible or qrMoveMode then
-        _RefreshQRVisibility()
-        return nil, QR_RENDER_SETTLE_S
-    end
-    qrForceVisibleForShot = true
     qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
     local forceVisibleShotGen = qrForceVisibleShotGen
+    if not qrAlwaysVisible and not qrMoveMode then
+        qrForceVisibleForShot = true
+    end
+    -- The capture lease is brief and non-interactive. TOOLTIP prevents chat
+    -- replacements and other DIALOG-strata UI from covering QR pixels without
+    -- leaving a permanently topmost frame after the capture finishes.
+    if qrFrame then qrFrame:SetFrameStrata("TOOLTIP") end
     _RefreshQRVisibility()
     return forceVisibleShotGen, QR_RENDER_SETTLE_S
 end
@@ -5247,7 +5310,28 @@ entryCreationKeyState.ClearQRTransportJob = function(jobGen)
     entryCreationKeyState.qrPaintDirtyDuringPaint = false
     entryCreationKeyState.qrTransportJobStartedAt = nil
     entryCreationKeyState.qrTransportJobTerminalClear = false
+    if not jobGen or entryCreationKeyState.screenshotAwaitingJobGen == jobGen then
+        entryCreationKeyState.screenshotAwaitingResult = false
+        entryCreationKeyState.screenshotAwaitingJobGen = nil
+        entryCreationKeyState.screenshotResultHandler = nil
+    end
     return true
+end
+
+entryCreationKeyState.OnScreenshotEvent = function(event)
+    if event == "SCREENSHOT_STARTED" then
+        if entryCreationKeyState.screenshotAwaitingResult then
+            entryCreationKeyState.screenshotLastResult = "started"
+        end
+        return
+    end
+    local handler = entryCreationKeyState.screenshotResultHandler
+    if type(handler) ~= "function" then return end
+    if event == "SCREENSHOT_SUCCEEDED" then
+        handler(true, "succeeded event")
+    elseif event == "SCREENSHOT_FAILED" then
+        handler(false, "failed event")
+    end
 end
 
 entryCreationKeyState.ScheduleTerminalClearRetry = function(clearSessionGen)
@@ -5292,15 +5376,21 @@ entryCreationKeyState.RecoverStalledQRTransport = function(now)
 
     local wasTerminalClear = entryCreationKeyState.qrTransportJobTerminalClear
     local phase = entryCreationKeyState.qrCaptureInProgress and "capture" or "build/paint"
+    local screenshotResultHandler = entryCreationKeyState.screenshotResultHandler
+    if entryCreationKeyState.qrCaptureInProgress
+       and type(screenshotResultHandler) == "function" then
+        entryCreationKeyState.qrTransportRecoveryCount =
+            (entryCreationKeyState.qrTransportRecoveryCount or 0) + 1
+        entryCreationKeyState.qrTransportLastRecoveryReason = "capture result timeout"
+        screenshotResultHandler(false, "result timeout")
+        return true
+    end
     entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
     entryCreationKeyState.ClearQRTransportJob()
-    qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
-    qrForceVisibleForShot = false
-    _RefreshQRVisibility()
+    _ReleaseForceVisibleShotLease(qrForceVisibleShotGen)
     pendingShotDirty = true
     entryCreationKeyState.qrTransportRecoveryCount =
         (entryCreationKeyState.qrTransportRecoveryCount or 0) + 1
-    entryCreationKeyState.qrTransportLastRecoveryAt = now
     entryCreationKeyState.qrTransportLastRecoveryReason = phase .. " timeout"
 
     local lastPrintAt = entryCreationKeyState.qrTransportLastRecoveryPrintAt
@@ -5451,8 +5541,6 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     local latestDirtyGeneration =
         entryCreationKeyState.transportDirtyGeneration or 0
     local logicalPayload = latestPayload
-    payload = latestPayload
-    h = latestHash
     local payloadDirtyGeneration = latestDirtyGeneration
     local payloadApplicantCount = entryCreationKeyState.lastPayloadApplicantCount
     local payloadRosterIncomplete = rosterLoadDeferred
@@ -5679,11 +5767,19 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 screenshotCVarLeaseGeneration,
                 entryCreationKeyState.SCREENSHOT_CVAR_RESTORE_DELAY_S
             )
-            local screenshotOK = pcall(Screenshot)
-            if not screenshotOK then
+            local screenshotResolved = false
+            local function FinishScreenshotAttempt(screenshotSucceeded, failureReason)
+            if screenshotResolved
+               or entryCreationKeyState.qrPaintJobGen ~= jobGen then
+                return false
+            end
+            screenshotResolved = true
+            entryCreationKeyState.screenshotLastResult = failureReason
+                or (screenshotSucceeded and "succeeded" or "failed")
+            if not screenshotSucceeded then
                 -- Do not commit dedup/delivery state for a capture that never
-                -- started. The pending drain retries the same payload after the
-                -- normal shot throttle instead of treating it as delivered.
+                -- completed. The pending drain retries the same payload after
+                -- the normal throttle instead of treating it as delivered.
                 if entryCreationKeyState.screenshotFailureHash == h then
                     entryCreationKeyState.screenshotFailureAttemptCount =
                         (entryCreationKeyState.screenshotFailureAttemptCount or 0) + 1
@@ -5704,21 +5800,23 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                     )
                 end
                 if force then
-                    APSPrint("WARN: Screenshot() failed during forced capture")
+                    APSPrint("WARN: screenshot capture failed during forced capture")
                 elseif not retryBudgetRemaining then
-                    APSPrint("WARN: Screenshot() failed repeatedly; snapshot paused until data changes or /apscout shotnow")
+                    APSPrint("WARN: screenshot capture failed repeatedly; snapshot paused until data changes or /apscout shotnow")
                 elseif ApplicantScoutDB and ApplicantScoutDB.debug then
-                    print("|cff999999[APS-debug]|r Screenshot() failed; snapshot remains pending")
+                    print("|cff999999[APS-debug]|r screenshot capture failed; snapshot remains pending")
                 end
-                return
+                return true
             end
             entryCreationKeyState.ClearScreenshotFailureState()
-            local overflowPassCompleted, overflowDeliveryCompleted = false, false
+            local overflowDeliveryCompleted = false
             if overflowInUse and overflowState then
                 overflowState.failure = nil
                 entryCreationKeyState.qrOverflowLastFailure = nil
-                overflowPassCompleted, overflowDeliveryCompleted =
+                overflowDeliveryCompleted = select(
+                    2,
                     entryCreationKeyState.AdvanceQROverflowTransport(overflowState)
+                )
             end
 
             if not overflowInUse or overflowDeliveryCompleted then
@@ -5770,10 +5868,6 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 -- has been captured. If a newer snapshot was queued, the
                 -- first completed pass retires this generation and rebuilds it.
                 pendingShotDirty = true
-                if overflowPassCompleted
-                   and entryCreationKeyState.qrOverflowState == nil then
-                    pendingShotDirty = true
-                end
             end
             if ApplicantScoutDB and ApplicantScoutDB.debug then
                 local overflowProgress = overflowInUse and overflowState
@@ -5796,6 +5890,20 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 C_Timer.After(0.05, function()
                     _ReleaseForceVisibleShotLease(forceVisibleShotGen)
                 end)
+            end
+            return true
+            end
+
+            -- Screenshot() has no delivery return value. Arm the result
+            -- handler before invoking it because current Retail may dispatch a
+            -- synchronous SCREENSHOT_* event from inside this call.
+            entryCreationKeyState.screenshotAwaitingResult = true
+            entryCreationKeyState.screenshotAwaitingJobGen = jobGen
+            entryCreationKeyState.screenshotResultHandler = FinishScreenshotAttempt
+            entryCreationKeyState.screenshotLastResult = "requested"
+            local screenshotOK = pcall(Screenshot)
+            if not screenshotOK then
+                FinishScreenshotAttempt(false, "Screenshot() API error")
             end
         end)
 
@@ -5854,26 +5962,14 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             end
             return
         end
-        if not PaintQR(
+        PaintQR(
             matrix,
             runs,
             renderRunCount,
             module_ui_size,
             jobGen,
             OnQRPaintComplete
-        ) then
-            entryCreationKeyState.ClearQRTransportJob(jobGen)
-            pendingShotDirty = false
-            if overflowInUse and overflowState then
-                overflowState.failure = "fragment paint did not start"
-                entryCreationKeyState.qrOverflowLastFailure = overflowState.failure
-            end
-            if terminalClearSessionGen then
-                entryCreationKeyState.ScheduleTerminalClearRetry(
-                    terminalClearSessionGen
-                )
-            end
-        end
+        )
     end
 
     BuildQRMatrix(
@@ -5901,6 +5997,11 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
             screenshotFailureHash = entryCreationKeyState.screenshotFailureHash,
             screenshotFailureAttemptCount =
                 entryCreationKeyState.screenshotFailureAttemptCount or 0,
+            screenshotAwaitingResult =
+                entryCreationKeyState.screenshotAwaitingResult == true,
+            screenshotLastResult = entryCreationKeyState.screenshotLastResult,
+            qrFrameStrata = qrFrame and qrFrame.GetFrameStrata
+                and qrFrame:GetFrameStrata() or nil,
             terminalClearDispatchCount =
                 entryCreationKeyState.terminalClearDispatchCount or 0,
             terminalClearRetryScheduled =
@@ -5942,7 +6043,6 @@ end
 -- HookScript calls, and form mutations are drained from ApplicantScout's ticker.
 
 entryCreationKeyState.QueueLFGEntryCreationDeferredWork = function(keyCapture, defaultPlaystyle)
-    entryCreationKeyState.lfgEntryCreationWorkPending = true
     if keyCapture then
         entryCreationKeyState.lfgEntryCreationKeyCapturePending = true
     end
@@ -5952,7 +6052,8 @@ entryCreationKeyState.QueueLFGEntryCreationDeferredWork = function(keyCapture, d
 end
 
 entryCreationKeyState.ProcessLFGEntryCreationDeferredWork = function()
-    if not entryCreationKeyState.lfgEntryCreationWorkPending then return end
+    if not (entryCreationKeyState.lfgEntryCreationKeyCapturePending
+            or entryCreationKeyState.lfgDefaultPlaystylePending) then return end
 
     local frame = _G.LFGListFrame
     local panel = frame and frame.EntryCreation
@@ -5961,7 +6062,6 @@ entryCreationKeyState.ProcessLFGEntryCreationDeferredWork = function()
     local keyCapturePending = entryCreationKeyState.lfgEntryCreationKeyCapturePending
     local defaultPlaystylePending = entryCreationKeyState.lfgDefaultPlaystylePending
 
-    entryCreationKeyState.lfgEntryCreationWorkPending = false
     entryCreationKeyState.lfgEntryCreationKeyCapturePending = false
     entryCreationKeyState.lfgDefaultPlaystylePending = false
     if keyCapturePending then
@@ -5980,7 +6080,7 @@ _MaybeAutoSelectDefaultPlaystyle = function(panel, reason)
     local configuredPlaystyle, token = _GetConfiguredMPlusPlaystyleEnum()
     if configuredPlaystyle == nil then return false end
 
-    if not panel or entryCreationKeyState.lfgDefaultPlaystyleUserTouched then return false end
+    if not panel then return false end
 
     local isEditMode = _G.LFGListEntryCreation_IsEditMode
     if type(isEditMode) ~= "function" or isEditMode(panel) then return false end
@@ -5999,22 +6099,22 @@ _MaybeAutoSelectDefaultPlaystyle = function(panel, reason)
     local currentPlaystyle = panel.generalPlaystyle
     if IsSecretValue(currentPlaystyle) then return false end
     if currentPlaystyle == configuredPlaystyle then return true end
+    local generalPlaystyleEnum = _G.Enum and _G.Enum.LFGEntryGeneralPlaystyle
+    local emptyPlaystyle = generalPlaystyleEnum and generalPlaystyleEnum.None or 0
+    if currentPlaystyle ~= nil and currentPlaystyle ~= emptyPlaystyle then
+        -- Blizzard or the user already selected a value. Never overwrite it.
+        return false
+    end
 
-    lfgDefaultPlaystyleApplying = true
-    local ok, err = pcall(function()
-        panel.generalPlaystyle = configuredPlaystyle
-
-        local updateValidState = _G.LFGListEntryCreation_UpdateValidState
-        if type(updateValidState) == "function" then
-            updateValidState(panel)
-        end
-
-        local dropdown = panel.PlayStyleDropdown
-        if dropdown and type(dropdown.GenerateMenu) == "function" then
-            dropdown:GenerateMenu()
-        end
-    end)
-    lfgDefaultPlaystyleApplying = false
+    local secureCall = _G.securecallfunction
+    local selectPlaystyle = _G.LFGListEntryCreation_OnPlayStyleSelectedInternal
+    if type(secureCall) ~= "function" or type(selectPlaystyle) ~= "function" then
+        return false
+    end
+    -- WARNING: direct writes followed by UpdateValidState taint SetEntryTitle
+    -- in current Retail. securecallfunction keeps Blizzard's protected update
+    -- on its own stack while still using the native selection implementation.
+    local ok, err = pcall(secureCall, selectPlaystyle, panel, configuredPlaystyle)
     if not ok then
         if ApplicantScoutDB.debug then
             print("|cff999999[APS-debug]|r LFG default playstyle failed: "
@@ -6039,15 +6139,15 @@ if type(_addonNS) == "table"
         entryCreationKeyState.ProcessLFGEntryCreationDeferredWork
 end
 
-_SetupLFGEntryCreationKeyCapture = function()
-    if lfgEntryCreationKeyCaptureState.hooksSetup then
+_SetupLFGEntryCreationHooks = function()
+    if lfgEntryCreationHookState.hooksSetup then
         local frame = _G.LFGListFrame
         if frame and frame.EntryCreation then
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false)
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, true)
         end
         return true
     end
-    if lfgEntryCreationKeyCaptureState.hookError then
+    if lfgEntryCreationHookState.hookError then
         return false
     end
 
@@ -6064,92 +6164,29 @@ _SetupLFGEntryCreationKeyCapture = function()
 
     local ok, err = pcall(function()
         hook("LFGListEntryCreation_Select", function()
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false)
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, true)
         end)
         hook("LFGListEntryCreation_Show", function()
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false)
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, true)
         end)
         hook("LFGListEntryCreation_SetEditMode", function()
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false)
+            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, true)
         end)
     end)
 
     if not ok then
-        lfgEntryCreationKeyCaptureState.hookError = tostring(err)
+        lfgEntryCreationHookState.hookError = tostring(err)
         if ApplicantScoutDB and ApplicantScoutDB.debug then
-            print("|cff999999[APS-debug]|r LFG key capture hook failed: "
-                  .. lfgEntryCreationKeyCaptureState.hookError)
+            print("|cff999999[APS-debug]|r LFG entry creation hook failed: "
+                  .. lfgEntryCreationHookState.hookError)
         end
         return false
     end
 
-    lfgEntryCreationKeyCaptureState.hooksSetup = true
+    lfgEntryCreationHookState.hooksSetup = true
     local frame = _G.LFGListFrame
     if frame and frame.EntryCreation then
-        entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, false)
-    end
-    return true
-end
-
-_SetupLFGDefaultPlaystyle = function()
-    if lfgDefaultPlaystyleHooksSetup then
-        local frame = _G.LFGListFrame
-        if frame and frame.EntryCreation then
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true)
-        end
-        return true
-    end
-    if lfgDefaultPlaystyleHookError then
-        return false
-    end
-
-    local hook = _G.hooksecurefunc
-    local selectFn = _G.LFGListEntryCreation_Select
-    local showFn = _G.LFGListEntryCreation_Show
-    local setEditModeFn = _G.LFGListEntryCreation_SetEditMode
-    local selectPlaystyleFn = _G.LFGListEntryCreation_OnPlayStyleSelectedInternal
-    if type(hook) ~= "function"
-       or type(selectFn) ~= "function"
-       or type(showFn) ~= "function"
-       or type(setEditModeFn) ~= "function"
-       or type(selectPlaystyleFn) ~= "function" then
-        return false
-    end
-
-    local ok, err = pcall(function()
-        hook("LFGListEntryCreation_Select", function()
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true)
-        end)
-        hook("LFGListEntryCreation_Show", function()
-            -- The post-hook runs after every synchronous Blizzard Show/select
-            -- initialization touch. User input cannot interleave until Show
-            -- returns, so later manual choices remain authoritative.
-            entryCreationKeyState.lfgDefaultPlaystyleUserTouched = false
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true)
-        end)
-        hook("LFGListEntryCreation_SetEditMode", function()
-            entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true)
-        end)
-        hook("LFGListEntryCreation_OnPlayStyleSelectedInternal", function()
-            if not lfgDefaultPlaystyleApplying then
-                entryCreationKeyState.lfgDefaultPlaystyleUserTouched = true
-            end
-        end)
-    end)
-
-    if not ok then
-        lfgDefaultPlaystyleHookError = tostring(err)
-        if ApplicantScoutDB and ApplicantScoutDB.debug then
-            print("|cff999999[APS-debug]|r LFG default playstyle hook failed: "
-                  .. lfgDefaultPlaystyleHookError)
-        end
-        return false
-    end
-
-    lfgDefaultPlaystyleHooksSetup = true
-    local frame = _G.LFGListFrame
-    if frame and frame.EntryCreation then
-        entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true)
+        entryCreationKeyState.QueueLFGEntryCreationDeferredWork(true, true)
     end
     return true
 end
@@ -6157,12 +6194,12 @@ end
 local EVENT_HANDLERS = {
     PLAYER_LOGIN                     = function()
         InitDB()
+        entryCreationKeyState.RefreshInteractionTypeMappings()
         entryCreationKeyState.SyncAutoHiInitialGroupState()
         MarkDirty("login")
         _AttachSettingsPanel()
         _SetupPVEFrameMovement()  -- no-ops if BlizzMove loaded OR PVEFrame missing
-        _SetupLFGEntryCreationKeyCapture() -- no-ops until Blizzard LFG globals exist
-        _SetupLFGDefaultPlaystyle() -- no-ops until Blizzard LFG globals exist
+        _SetupLFGEntryCreationHooks() -- no-ops until Blizzard LFG globals exist
         _TryHookInfoPanels()      -- initial track; ADDON_LOADED/ticker catches LoD frames later
     end,
     PLAYER_ENTERING_WORLD            = function()
@@ -6176,6 +6213,13 @@ local EVENT_HANDLERS = {
         RestoreScreenshotCVars()
         MarkDirty("pew")
     end,
+    PLAYER_INTERACTION_MANAGER_FRAME_SHOW =
+        entryCreationKeyState.OnPlayerInteractionManagerEvent,
+    PLAYER_INTERACTION_MANAGER_FRAME_HIDE =
+        entryCreationKeyState.OnPlayerInteractionManagerEvent,
+    SCREENSHOT_STARTED                = entryCreationKeyState.OnScreenshotEvent,
+    SCREENSHOT_SUCCEEDED              = entryCreationKeyState.OnScreenshotEvent,
+    SCREENSHOT_FAILED                 = entryCreationKeyState.OnScreenshotEvent,
     -- WHY register ADDON_LOADED globally: many info-panel frames live in
     -- LoD addons (Blizzard_AchievementUI, Blizzard_EncounterJournal, etc.).
     -- They don't exist at PLAYER_LOGIN. Re-scan on every ADDON_LOADED catches
@@ -6187,8 +6231,7 @@ local EVENT_HANDLERS = {
             -- Normalize them before any setup or transport path can read the DB.
             InitDB()
         end
-        _SetupLFGEntryCreationKeyCapture()
-        _SetupLFGDefaultPlaystyle()
+        _SetupLFGEntryCreationHooks()
         _TryHookInfoPanels()
         entryCreationKeyState.RequestLeaderKeystone(false)
     end,
@@ -6267,13 +6310,11 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
     end
 end
 
--- Bind every interaction event to _OnInteractionEvent. Loop populates the
--- table directly so the registration loop below picks them up automatically.
--- Each handler closure captures the event name in its own loop-local — Lua
--- 5.1+ for-in semantics give per-iteration distinct bindings, so closures
--- don't share a single mutable upvalue.
-for evt in pairs(INTERACTION_EVENT_DESIRED) do
-    EVENT_HANDLERS[evt] = function() _OnInteractionEvent(evt) end
+-- Bind every interaction event to _OnInteractionEvent.
+-- The frame passes the event name as the first argument, so per-event proxy
+-- closures add no state.
+for evt in pairs(INTERACTION_EVENTS) do
+    EVENT_HANDLERS[evt] = _OnInteractionEvent
 end
 
 local frame = CreateFrame("Frame")
@@ -6316,10 +6357,7 @@ C_Timer.NewTicker(0.25, function()
             lastTransportPollTime = now
             local entry = CheckSessionTransition(lfgReadsAllowed)
             if isSessionActive then
-                local transportReady = lfgReadsAllowed or _HasGroupRosterForTransport() or isSessionActive
-                if transportReady then
-                    MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)
-                end
+                MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)
             end
         end
         return
@@ -6465,8 +6503,7 @@ _SetAutoMPlusPlaystyle = function(token, quiet)
     ApplicantScoutDB.autoMPlusPlaystyle = token
     _SyncAutoMPlusPlaystyleDropdown()
     if token ~= AUTO_MPLUS_PLAYSTYLE_DISABLED then
-        _SetupLFGEntryCreationKeyCapture()
-        _SetupLFGDefaultPlaystyle()
+        _SetupLFGEntryCreationHooks()
         local frame = _G.LFGListFrame
         if frame and frame.EntryCreation then
             entryCreationKeyState.QueueLFGEntryCreationDeferredWork(false, true)
@@ -6652,7 +6689,8 @@ _AttachSettingsPanel = function()
         "When on, ApplicantScout captures listing applicants and emits QR codes for the companion to decode. When off, no scans / no QR / no Screenshot() calls — addon stays loaded but idle."
     )
 
-    autoMPlusPlaystyleLabel = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    local autoMPlusPlaystyleLabel =
+        settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     autoMPlusPlaystyleLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_RIGHT_COL_X, -14)
     autoMPlusPlaystyleLabel:SetText("M+ default playstyle")
 
@@ -6893,6 +6931,13 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
     print("  QR force-visible shot lease: " .. tostring(qrForceVisibleForShot or false))
     print("  QR build/paint active: " .. tostring(entryCreationKeyState.qrPaintInProgress))
     print("  QR capture settle active: " .. tostring(entryCreationKeyState.qrCaptureInProgress))
+    print("  screenshot result pending: "
+          .. tostring(entryCreationKeyState.screenshotAwaitingResult))
+    print("  last screenshot result: "
+          .. tostring(entryCreationKeyState.screenshotLastResult or "never"))
+    print("  screenshot failure attempts: "
+          .. tostring(entryCreationKeyState.screenshotFailureAttemptCount or 0)
+          .. "/" .. tostring(entryCreationKeyState.SCREENSHOT_FAILURE_MAX_ATTEMPTS))
     print("  QR job generation: " .. tostring(entryCreationKeyState.qrPaintJobGen or 0))
     print("  QR job age: " .. (entryCreationKeyState.qrTransportJobStartedAt
           and string.format("%.1fs", GetTime() - entryCreationKeyState.qrTransportJobStartedAt)
@@ -6999,7 +7044,7 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
             entryCreationKeyState.PeekCachedEntryCreationKeystoneLevel(
                 cleanActivityID, cleanQuestID)
         print("  entryCreationCache.keyLevel: " .. tostring(cachedKeyLevel))
-        local statusListingName = SafeStr(entry.name, "?"):gsub("|K[^|]*|k", "")
+        local statusListingName = SafeStr(entry.name, "?")
         local statusListingComment = SafeStr(entry.comment, "?")
         local ownedActivityID, ownedGroupID, ownedLevel, ownedInfo =
             _GetOwnedKeystoneListingInfo()
@@ -7053,7 +7098,7 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
     print("  QR suppressed by interaction: " .. tostring(_qrSuppressedByInteraction or false))
     local activeKinds = {}
     for kind, active in pairs(_interactionSlots) do
-        if active then activeKinds[#activeKinds + 1] = kind end
+        if active then activeKinds[#activeKinds + 1] = tostring(kind) end
     end
     print("  active interaction slots: " .. (#activeKinds > 0
           and table.concat(activeKinds, ", ") or "(none)"))
@@ -7067,10 +7112,6 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
     print("  movement setup: " .. tostring(PVEFrame
           and PVEFrame.apsMovementSetup or false))
     entryCreationKeyState.PrintDiagnostics()
-    print("  default playstyle hooks: " .. tostring(lfgDefaultPlaystyleHooksSetup)
-          .. (lfgDefaultPlaystyleHookError
-              and (" (error: " .. lfgDefaultPlaystyleHookError .. ")")
-              or ""))
     if ApplicantScoutDB.pveFramePosition then
         local point, x, y, ok =
             _NormalizePVEFramePosition(ApplicantScoutDB.pveFramePosition)
@@ -7197,6 +7238,7 @@ SlashCmdList.APSCOUT = function(msg)
         entryCreationKeyState.ClearRosterInspectBatchState()
         entryCreationKeyState.ClearRosterInspectFailureState()
         entryCreationKeyState.ClearRosterLoadRetryState()
+        entryCreationKeyState.ResetInteractionSlotsForWorldTransition()
         scanDirty = true
         APSPrint("resync queued — emits when transport is active and QR is available")
     elseif msg == "shotnow" then

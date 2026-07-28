@@ -1,25 +1,8 @@
 local scenario = arg and arg[1] or "corrupt"
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
-
-local function fail(message)
-    io.stderr:write(message .. "\n")
-    os.exit(1)
-end
-
-local function assert_equal(name, actual, expected)
-    if actual ~= expected then
-        fail(name .. " expected " .. tostring(expected)
-             .. " (" .. type(expected) .. ") but got "
-             .. tostring(actual) .. " (" .. type(actual) .. ")")
-    end
-end
-
-local function assert_nil(name, actual)
-    if actual ~= nil then
-        fail(name .. " expected nil but got " .. tostring(actual)
-             .. " (" .. type(actual) .. ")")
-    end
-end
+local fail = env.fail
+local assert_equal = env.assert_equal
+local assert_nil = env.assert_nil
 
 if scenario == "corrupt" then
     ApplicantScoutDB = {

@@ -13,6 +13,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_COMPANION_ROOT = REPO_ROOT.parent / "ApplicantScout-Companion"
 LUA_FIXTURE_GENERATOR = REPO_ROOT / "tests" / "lua" / "generate_aps1_v8_fixture.lua"
+LUA_FIXTURE_ENV = REPO_ROOT / "tests" / "lua" / "appscout_fixture_env.lua"
 LUA_LIBKEYSTONE_DISABLED_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_libkeystone_disabled_transport.lua"
 )
@@ -120,6 +121,9 @@ MAYBE_TRIGGER_SCREENSHOT_ANCHOR = (
 )
 BUILD_PAYLOAD_ANCHOR = (
     "local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, rosterUnavailable)"
+)
+FIXTURE_HARNESS_BOUNDARY_ANCHOR = (
+    'if type(_G.ApplicantScoutFixtureHarness) == "table" then'
 )
 CHECK_SESSION_TRANSITION_ANCHOR = "CheckSessionTransition = function(lfgReadsAllowed)"
 STATUS_HELPER_ANCHOR = "entryCreationKeyState.PrintTroubleshootingStatus = function()"
@@ -252,7 +256,7 @@ def test_slice_between_rejects_stale_function_anchors():
         _slice_between(
             source,
             "local function BuildPayload(entry, applicantIDs, terminalClear)",
-            "local function HashSnapshot(payload)",
+            FIXTURE_HARNESS_BOUNDARY_ANCHOR,
         )
     with pytest.raises(AssertionError):
         _slice_between(
@@ -260,6 +264,23 @@ def test_slice_between_rejects_stale_function_anchors():
             "CheckSessionTransition = function()",
             "-- Single transition logger",
         )
+
+
+def test_snapshot_hash_oracle_is_fixture_only():
+    source = _lua_source()
+    fixture_source = LUA_FIXTURE_ENV.read_text(encoding="utf-8")
+
+    assert "HashSnapshot" not in source
+    assert "local function fixture_hash_snapshot(payload)" in fixture_source
+    assert (
+        "h = ((h * 33) + string.byte(payload, i)) % 4294967296"
+        in fixture_source
+    )
+    chunk_idx = fixture_source.index('    chunk("ApplicantScout", {')
+    oracle_export_idx = fixture_source.index(
+        "ApplicantScoutFixtureHarness.HashSnapshot = fixture_hash_snapshot"
+    )
+    assert chunk_idx < oracle_export_idx
 
 
 def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
@@ -275,7 +296,7 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
     callback_idx = body.index("local function OnQRPaintComplete(paintOK)")
     lease_idx = body.index("local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()", callback_idx)
     screenshot_idx = body.index("local screenshotOK = pcall(Screenshot)")
-    paint_idx = body.index("if not PaintQR(")
+    paint_idx = body.index("PaintQR(")
     build_idx = body.index(
         "BuildQRMatrix(\n        payload,\n        reliableHexOnly and not overflowInUse,"
     )
@@ -283,7 +304,8 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
     assert payload_idx < job_idx < callback_idx < lease_idx < screenshot_idx
     assert "local h = HashSnapshot(payload)" not in body
     assert screenshot_idx < paint_idx < build_idx
-    assert "_ReleaseForceVisibleShotLease(forceVisibleShotGen)" in body[screenshot_idx:]
+    assert "_ReleaseForceVisibleShotLease(forceVisibleShotGen)" in body[lease_idx:screenshot_idx]
+    assert "screenshotResultHandler = FinishScreenshotAttempt" in body[lease_idx:screenshot_idx]
 
 
 def test_session_visibility_does_not_keep_qr_on_screen_between_shots():
@@ -291,7 +313,7 @@ def test_session_visibility_does_not_keep_qr_on_screen_between_shots():
     visibility_body = _slice_between(
         source,
         "_RefreshQRVisibility = function()",
-        "_IsQRVisibleForScreenshot = function()",
+        "-- Aggregator: walks events table + tracked info panels",
     )
 
     assert "isSessionActive and not _qrSuppressedByInteraction" not in visibility_body
@@ -493,7 +515,11 @@ def test_dirty_event_during_qr_settle_lease_preserves_pending_and_roster_preflig
         "local screenshotOK = pcall(Screenshot)",
         gen_compare_idx,
     )
-    clear_guard_idx = screenshot_body.index("if not dirtySincePayload then", screenshot_idx)
+    finish_idx = screenshot_body.index(
+        "local function FinishScreenshotAttempt(",
+        gen_compare_idx,
+    )
+    clear_guard_idx = screenshot_body.index("if not dirtySincePayload then", finish_idx)
     clear_idx = screenshot_body.index(
         "entryCreationKeyState.ClearRosterCompositionChanged()",
         clear_guard_idx,
@@ -501,8 +527,8 @@ def test_dirty_event_during_qr_settle_lease_preserves_pending_and_roster_preflig
     pending_guard_idx = screenshot_body.index("elseif dirtySincePayload then", clear_idx)
     pending_idx = screenshot_body.index("pendingShotDirty = true", pending_guard_idx)
     assert payload_idx < payload_gen_idx < schedule_idx < dirty_since_idx
-    assert dirty_since_idx < gen_compare_idx < screenshot_idx < clear_guard_idx < clear_idx
-    assert clear_idx < pending_guard_idx < pending_idx
+    assert dirty_since_idx < gen_compare_idx < finish_idx < clear_guard_idx < clear_idx
+    assert clear_idx < pending_guard_idx < pending_idx < screenshot_idx
 
 
 def test_dirty_snapshot_during_qr_paint_preserves_roster_preflight_state():
@@ -570,7 +596,6 @@ def test_qr_capture_waits_for_render_settle_after_every_paint():
     )
 
     assert "wasVisible and 0 or QR_RENDER_SETTLE_S" not in lease_body
-    assert "return nil, QR_RENDER_SETTLE_S" in lease_body
     assert "return forceVisibleShotGen, QR_RENDER_SETTLE_S" in lease_body
 
 
@@ -583,6 +608,8 @@ def test_qr_library_resolution_is_nil_safe_before_missing_lib_diagnostic():
     init_line = source[qr_init_idx : source.index("\n", qr_init_idx)]
 
     assert qr_init_idx < build_idx
+    assert "local _, _addonNS = ..." not in source
+    assert "local _addonNS = select(2, ...)" in source
     assert "_addonNS.QR and _addonNS.QR.qrcode" in init_line
     assert "_addonNS and" not in init_line
 
@@ -808,7 +835,7 @@ def test_roster_composition_change_waits_for_inspect_until_fallback_deadline():
         callback_idx,
     )
     commit_idx = screenshot_body.index("lastSnapshotHash = h", clear_idx)
-    paint_idx = screenshot_body.index("if not PaintQR(")
+    paint_idx = screenshot_body.index("PaintQR(")
     assert callback_idx < clear_idx < commit_idx < paint_idx
 
 
@@ -986,7 +1013,7 @@ def test_default_playstyle_checks_secret_activity_before_nil_comparison():
     body = _slice_between(
         source,
         "_MaybeAutoSelectDefaultPlaystyle = function(panel, reason)",
-        "_SetupLFGDefaultPlaystyle = function()",
+        "if type(_addonNS) == \"table\"",
     )
 
     activity_read_idx = body.index("local activityID = panel.selectedActivity")
@@ -1043,13 +1070,19 @@ def test_payload_still_includes_raiderio_completion_summary():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
+    )
+    summary_writer = _slice_between(
+        source,
+        "entryCreationKeyState.AppendRaiderIOMPlusSummary = function(out, summary)",
+        "local function _IsPlaceholderCleanUnitName(name)",
     )
 
     assert "applicantsIncomplete and 0x0B or 0x09" in payload_body
     assert "_GetRaiderIOMPlusSummaryForCleanName(" in source
-    assert "rioSummary.hasProfile" in payload_body
-    assert "rioSummary.bestDungeonKey" in payload_body
+    assert "AppendRaiderIOMPlusSummary(memberOut, rioSummary)" in payload_body
+    assert "summary.hasProfile" in summary_writer
+    assert "summary.bestDungeonKey" in summary_writer
 
 
 def test_payload_v6_appends_current_group_roster_after_applicants():
@@ -1057,7 +1090,7 @@ def test_payload_v6_appends_current_group_roster_after_applicants():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
 
     assert "applicantsIncomplete and 0x0B or 0x09" in payload_body
@@ -1074,7 +1107,7 @@ def test_payload_v7_appends_leader_keystone_before_applicants():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
 
     leader_idx = payload_body.index(
@@ -1323,7 +1356,7 @@ def test_full_party_quiet_signature_requires_empty_resolved_non_raid_roster():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
     roster_body = _slice_between(
         source,
@@ -1410,7 +1443,7 @@ def test_quiet_signature_is_committed_only_after_successful_qr_paint():
         callback_idx,
     )
     pre_paint_quiet_block = screenshot_body[quiet_idx:job_idx]
-    paint_idx = screenshot_body.index("if not PaintQR(")
+    paint_idx = screenshot_body.index("PaintQR(")
 
     assert quiet_idx < job_idx < callback_idx < lease_idx
     assert lease_idx < completed_gen_idx < guard_idx < commit_idx < paint_idx
@@ -1428,7 +1461,7 @@ def test_quiet_full_party_signature_uses_collision_safe_encoding():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
     roster_body = _slice_between(
         source,
@@ -1454,6 +1487,11 @@ def test_quiet_full_party_signature_covers_companion_visible_roster_fields():
     )
     serialize_idx = roster_body.index("for _, row in ipairs(rows) do")
     payload_idx = roster_body.index("local rosterPayload = table.concat(rosterOut)")
+    summary_writer = _slice_between(
+        source,
+        "entryCreationKeyState.AppendRaiderIOMPlusSummary = function(out, summary)",
+        "local function _IsPlaceholderCleanUnitName(name)",
+    )
 
     expected_fields = [
         "row.unitIndex",
@@ -1463,21 +1501,25 @@ def test_quiet_full_party_signature_covers_companion_visible_roster_fields():
         "row.specID",
         "row.ilvl",
         "rioSummary.currentScore",
-        "rioSummary.mainScore",
-        "rioSummary.hasProfile",
-        "rioSummary.bestKey",
-        "rioSummary.bestDungeonKey",
-        "rioSummary.timedAtOrAbove",
-        "rioSummary.timedAtOrAboveMinus1",
-        "rioSummary.timedAtOrAboveMinus2",
-        "rioSummary.completedAtOrAboveMinus1",
-        "rioSummary.dungeonCount",
         "row.role",
         "row.name",
     ]
 
     for field in expected_fields:
         assert field in roster_body[serialize_idx:payload_idx]
+    for field in (
+        "summary.mainScore",
+        "summary.hasProfile",
+        "summary.bestKey",
+        "summary.bestDungeonKey",
+        "summary.timedAtOrAbove",
+        "summary.timedAtOrAboveMinus1",
+        "summary.timedAtOrAboveMinus2",
+        "summary.completedAtOrAboveMinus1",
+        "summary.dungeonCount",
+    ):
+        assert field in summary_writer
+    assert "AppendRaiderIOMPlusSummary(rosterOut, rioSummary)" in roster_body
     assert roster_body.count("_GetRaiderIOMPlusSummaryForCleanName(") == 1
     assert roster_body.count("_PackCleanLenStr(rosterOut, row.name)") == 1
     assert "return rosterPayload, emittedCount, rosterPayload" in roster_body
@@ -1488,7 +1530,7 @@ def test_quiet_full_party_signature_covers_leader_keystone_block():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
     leader_idx = payload_body.index("local leaderQuietOut = {}")
     signature_idx = payload_body.index(
@@ -1703,14 +1745,9 @@ def test_single_use_constants_do_not_consume_top_level_lua51_local_slots():
     source = _lua_source()
     cases = (
         (
-            "QR_POSITION_LIMIT",
-            "local function _IsFiniteQRPositionNumber(v)",
+            "POSITION_LIMIT",
+            "local function _IsFinitePositionNumber(v)",
             "local function _NormalizeQRPosition(pos)",
-        ),
-        (
-            "PVE_POSITION_LIMIT",
-            "local function _IsFinitePVEPositionNumber(v)",
-            "local function _NormalizePVEFramePosition(pos)",
         ),
         (
             "ENTRY_CREATION_KEY_CACHE_TTL",
@@ -1802,7 +1839,7 @@ def test_applicant_payload_skips_secret_placeholder_names():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
 
     assert 'local memberName = SafeStr(rawMemberName, "")' in payload_body
@@ -1822,7 +1859,7 @@ def test_terminal_clear_skips_roster_block_but_normal_roster_survives():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
 
     payload_call_idx = screenshot_body.index("local payload, h = BuildPayload(")
@@ -1844,7 +1881,7 @@ def test_payload_v9_header_flags_distinguish_terminal_and_lfg_unavailable():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
 
     assert "applicantsIncomplete and 0x0B or 0x09" in payload_body
@@ -1862,7 +1899,7 @@ def test_payload_v9_can_omit_roster_with_explicit_flag():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
 
     assert "applicantsIncomplete and 0x0B or 0x09" in payload_body
@@ -1870,7 +1907,6 @@ def test_payload_v9_can_omit_roster_with_explicit_flag():
     assert "if rosterUnavailable then" in payload_body
     assert "headerFlags = headerFlags + 0x04" in payload_body
     assert "if not terminalClear and not rosterUnavailable then" in payload_body
-    assert "entryCreationKeyState.lastPayloadRosterUnavailable = rosterUnavailable" in payload_body
 
 
 def test_qr_build_failure_fragments_complete_payload_without_roster_omission():
@@ -1895,7 +1931,7 @@ def test_qr_build_failure_fragments_complete_payload_without_roster_omission():
         overflow_idx,
     )
     paint_idx = screenshot_body.index(
-        "if not PaintQR(",
+        "PaintQR(",
         terminal_failure_idx,
     )
     terminal_failure_block = screenshot_body[terminal_failure_idx:paint_idx]
@@ -1915,7 +1951,7 @@ def test_terminal_clear_payload_suppresses_leader_key_block():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
 
     resolve_idx = payload_body.index(
@@ -1932,7 +1968,7 @@ def test_terminal_clear_payload_forces_empty_listing_and_applicants():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
 
     clean_entry_idx = payload_body.index("local cleanEntry = SafeTable(entry)")
@@ -1972,11 +2008,10 @@ def test_solo_active_listing_poll_runs_during_lockdown_without_lfg_reads():
         "local transportReady = "
         "lfgReadsAllowed or _HasGroupRosterForTransport() or isSessionActive"
     )
-    assert ticker_body.count(transport_ready) >= 2
+    assert ticker_body.count(transport_ready) == 2
     assert (
-        transport_ready
-        + "\n                if transportReady then\n"
-        + "                    MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)"
+        "if isSessionActive then\n"
+        + "                MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)"
     ) in ticker_body
     assert (
         transport_ready
@@ -2000,7 +2035,7 @@ def test_roster_payload_marks_group_snapshot_incomplete_when_expected_rows_are_m
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
     roster_body = _slice_between(
         source,
@@ -2101,7 +2136,11 @@ def test_incomplete_roster_payload_schedules_retry_after_successful_qr_paint():
         "local screenshotOK = pcall(Screenshot)",
         screenshot_schedule_idx,
     )
-    clear_pending_idx = screenshot_body.index("pendingShotDirty = false", screenshot_idx)
+    finish_idx = screenshot_body.index(
+        "local function FinishScreenshotAttempt(",
+        screenshot_schedule_idx,
+    )
+    clear_pending_idx = screenshot_body.index("pendingShotDirty = false", finish_idx)
     incomplete_idx = screenshot_body.index(
         "payloadRosterIncomplete",
         clear_pending_idx,
@@ -2115,9 +2154,10 @@ def test_incomplete_roster_payload_schedules_retry_after_successful_qr_paint():
         "pendingShotDirty = dirtySincePayload or not retryScheduled",
         retry_result_idx,
     )
-    assert paint_success_idx < screenshot_schedule_idx < screenshot_idx < clear_pending_idx
+    assert paint_success_idx < screenshot_schedule_idx < finish_idx < clear_pending_idx
     assert clear_pending_idx < incomplete_idx
     assert incomplete_idx < retry_result_idx < retry_idx < pending_from_retry_idx
+    assert pending_from_retry_idx < screenshot_idx
 
 
 def test_roster_load_retry_callback_requires_current_token_and_session():
@@ -2214,13 +2254,19 @@ def test_roster_payload_rows_include_key_summary_and_group_metadata():
         "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
         "-- CRC32 IEEE-802.3",
     )
+    summary_writer = _slice_between(
+        source,
+        "entryCreationKeyState.AppendRaiderIOMPlusSummary = function(out, summary)",
+        "local function _IsPlaceholderCleanUnitName(name)",
+    )
 
     assert "GetNumGroupMembers()" in roster_body
     assert 'table.insert(rosterOut, string.char(_ClampUInt8(row.unitIndex)))' in roster_body
     assert 'table.insert(rosterOut, string.char(_ClampUInt8(row.flags)))' in roster_body
     assert 'table.insert(rosterOut, string.char(_ClampUInt8(row.subgroup)))' in roster_body
     assert "_GetRaiderIOMPlusSummaryForCleanName(" in roster_body
-    assert "rioSummary.bestDungeonKey" in roster_body
+    assert "AppendRaiderIOMPlusSummary(rosterOut, rioSummary)" in roster_body
+    assert "summary.bestDungeonKey" in summary_writer
     assert "_PackCleanLenStr(rosterOut, row.name)" in roster_body
     assert "emittedCount = emittedCount + 1" in roster_body
 
@@ -2237,11 +2283,18 @@ def test_roster_payload_rows_pack_current_score_separately_from_main_score():
         "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
         "-- CRC32 IEEE-802.3",
     )
+    writer_body = _slice_between(
+        source,
+        "entryCreationKeyState.AppendRaiderIOMPlusSummary = function(out, summary)",
+        "local function _IsPlaceholderCleanUnitName(name)",
+    )
 
     current_idx = roster_body.index("_Uint16BE(rioSummary.currentScore)")
-    main_idx = roster_body.index("_Uint16BE(rioSummary.mainScore)")
-    assert current_idx < main_idx
-    assert roster_body.count("_Uint16BE(rioSummary.mainScore)") == 1
+    writer_idx = roster_body.index(
+        "entryCreationKeyState.AppendRaiderIOMPlusSummary(rosterOut, rioSummary)"
+    )
+    assert current_idx < writer_idx
+    assert writer_body.count("_Uint16BE(summary.mainScore)") == 1
     assert "keystoneProfile.mplusCurrent" in summary_body
     assert "keystoneProfile.currentScore" in summary_body
     assert "keystoneProfile.mplusMainCurrent" in summary_body
@@ -3064,7 +3117,7 @@ def test_successful_snapshot_commits_emitted_applicant_count_for_clear_priority(
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
     screenshot_body = _slice_between(
         source,
@@ -3081,7 +3134,7 @@ def test_successful_snapshot_commits_emitted_applicant_count_for_clear_priority(
         "local screenshotOK = pcall(Screenshot)",
         callback_idx,
     )
-    failure_idx = screenshot_body.index("if not screenshotOK then", shot_idx)
+    failure_idx = screenshot_body.index("if not screenshotSucceeded then", callback_idx)
     commit_idx = screenshot_body.index(
         "entryCreationKeyState.lastEmittedApplicantCount =",
         failure_idx,
@@ -3090,11 +3143,11 @@ def test_successful_snapshot_commits_emitted_applicant_count_for_clear_priority(
         "payloadApplicantCount",
         commit_idx,
     )
-    paint_idx = screenshot_body.index("if not PaintQR(")
+    paint_idx = screenshot_body.index("PaintQR(")
 
     assert emit_count_idx < payload_count_idx
-    assert callback_idx < shot_idx < failure_idx < commit_idx < committed_value_idx
-    assert committed_value_idx < paint_idx
+    assert callback_idx < failure_idx < commit_idx < committed_value_idx < shot_idx
+    assert shot_idx < paint_idx
 
 
 def test_roster_batch_clears_pending_guid_when_unit_leaves():
@@ -3135,6 +3188,7 @@ def test_reset_invalidates_roster_inspect_batch_retry_without_clearing_known_spe
     assert clear_idx < failure_idx < dirty_idx
     assert "rosterInspectSpecByGUID = {}" not in reset_body
     assert "rosterInspectBatchRetryToken" not in reset_body
+    assert "entryCreationKeyState.ResetInteractionSlotsForWorldTransition()" in reset_body
 
 
 def test_status_reports_roster_inspect_batch_diagnostics_without_raw_ids():
@@ -3207,7 +3261,7 @@ def test_applicant_member_reads_share_one_guarded_adapter():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
     taint_body = _slice_between(
         source,
@@ -3233,7 +3287,7 @@ def test_applicant_transport_avoids_per_row_record_tables():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
 
     assert "return true, name, class, ilvl, role, score, specID" in adapter_body
@@ -3399,7 +3453,7 @@ def test_qr_capture_settle_window_is_locked_and_watchdog_recoverable():
         "local screenshotOK = pcall(Screenshot)",
         settle_idx,
     )
-    failure_idx = screenshot_body.index("if not screenshotOK then", screenshot_idx)
+    failure_idx = screenshot_body.index("if not screenshotSucceeded then", settle_idx)
     commit_idx = screenshot_body.index("lastSnapshotHash = h", failure_idx)
     success_clear_idx = screenshot_body.index(
         "entryCreationKeyState.ClearQRTransportJob(jobGen)",
@@ -3407,12 +3461,17 @@ def test_qr_capture_settle_window_is_locked_and_watchdog_recoverable():
     )
     failure_block = screenshot_body[failure_idx:commit_idx]
 
-    assert capture_guard_idx < capture_start_idx < settle_idx < screenshot_idx
-    assert screenshot_idx < failure_idx < commit_idx < success_clear_idx
+    assert capture_guard_idx < capture_start_idx < settle_idx < failure_idx
+    assert failure_idx < commit_idx < success_clear_idx < screenshot_idx
     assert "pendingShotDirty = terminalClearSessionGen" in failure_block
     assert "and false or (dirtySincePayload or retryBudgetRemaining)" in failure_block
     assert "entryCreationKeyState.ClearQRTransportJob(jobGen)" in failure_block
     assert "_ReleaseForceVisibleShotLease(forceVisibleShotGen)" in failure_block
+    assert "screenshotResultHandler = FinishScreenshotAttempt" in screenshot_body[
+        success_clear_idx:screenshot_idx
+    ]
+    assert 'handler(true, "succeeded event")' in source
+    assert 'handler(false, "failed event")' in source
     assert "SCREENSHOT_FAILURE_MAX_ATTEMPTS = 2" in source
     assert "snapshot paused until data changes or /apscout shotnow" in failure_block
     assert "QR_TRANSPORT_JOB_TIMEOUT_S = 8.0" in source
@@ -3553,6 +3612,18 @@ def test_world_transition_clears_stale_interaction_suppression(pytestconfig):
     )
 
 
+def test_interaction_manager_repairs_missed_close_without_reload(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "interaction-manager-recovery",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=interaction-manager-recovery shots=2 attempts=2"
+    )
+
+
 def test_roster_only_snapshot_gets_one_bounded_redundant_capture(pytestconfig):
     output = _run_lua_script(
         pytestconfig,
@@ -3588,6 +3659,30 @@ def test_persistent_screenshot_exceptions_exhaust_bounded_attempts(pytestconfig)
     )
 
 
+def test_screenshot_failed_event_does_not_commit_delivery(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "screenshot-event-failure",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=screenshot-event-failure shots=2 attempts=3"
+    )
+
+
+def test_missing_screenshot_result_event_times_out_and_stops_boundedly(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "screenshot-event-timeout",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=screenshot-event-timeout shots=0 attempts=2"
+    )
+
+
 def test_terminal_clear_screenshot_failure_retries_serially_and_commits_success(
     pytestconfig,
 ):
@@ -3597,7 +3692,7 @@ def test_terminal_clear_screenshot_failure_retries_serially_and_commits_success(
         "terminal-clear-failure",
     ).strip()
 
-    assert "Screenshot() failed during forced capture" in output
+    assert "screenshot capture failed during forced capture" in output
     assert output.splitlines()[-1] == (
         "ok qr-capture-lifecycle mode=terminal-clear-failure shots=3 attempts=4"
     )
@@ -3612,7 +3707,7 @@ def test_persistent_terminal_clear_failures_stop_after_two_serial_dispatches(
         "terminal-clear-always-fail",
     ).strip()
 
-    assert output.count("Screenshot() failed during forced capture") == 2
+    assert output.count("screenshot capture failed during forced capture") == 2
     assert output.splitlines()[-1] == (
         "ok qr-capture-lifecycle mode=terminal-clear-always-fail shots=2 attempts=4"
     )
@@ -4203,7 +4298,7 @@ def test_listing_key_level_uses_owned_keystone_only_after_listing_match_guard():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
     status_body = _status_helper_body(source)
 
@@ -4233,7 +4328,7 @@ def test_owned_keystone_fallback_is_disabled_for_non_leader_party_context():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
     status_body = _status_helper_body(source)
 
@@ -4292,7 +4387,7 @@ def test_listing_key_level_uses_active_creation_form_cache():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
     creation_body = source[
         source.index("local function _RememberEntryCreationKeystoneLevel(panel, reason)") :
@@ -4304,7 +4399,7 @@ def test_listing_key_level_uses_active_creation_form_cache():
     )
 
     assert "entryCreationKeyLevelCache" in source
-    assert "_SetupLFGEntryCreationKeyCapture = function()" in source
+    assert "_SetupLFGEntryCreationHooks = function()" in source
     assert ':HookScript("OnClick", function()' in creation_body
     assert "panel.Name" in creation_body
     assert "panel.Description" in creation_body
@@ -4331,35 +4426,38 @@ def test_entry_creation_cache_clears_when_posted_key_cannot_be_read():
     )
 
 
-def test_lfg_key_capture_setup_is_independent_from_default_playstyle_internal():
+def test_lfg_entry_creation_setup_avoids_internal_playstyle_hook():
     source = _lua_source()
-    key_capture_body = _slice_between(
+    hook_body = _slice_between(
         source,
-        "_SetupLFGEntryCreationKeyCapture = function()",
-        "_SetupLFGDefaultPlaystyle = function()",
-    )
-    playstyle_body = _slice_between(
-        source,
-        "_SetupLFGDefaultPlaystyle = function()",
+        "_SetupLFGEntryCreationHooks = function()",
         "local EVENT_HANDLERS = {",
     )
 
-    assert "LFGListEntryCreation_OnPlayStyleSelectedInternal" not in key_capture_body
-    assert "entryCreationKeyState.QueueLFGEntryCreationDeferredWork" in key_capture_body
-    assert "LFGListEntryCreation_OnPlayStyleSelectedInternal" in playstyle_body
-    assert "_HookEntryCreationKeyCapture" not in playstyle_body
+    assert "LFGListEntryCreation_OnPlayStyleSelectedInternal" not in hook_body
+    assert "entryCreationKeyState.QueueLFGEntryCreationDeferredWork" in hook_body
+    assert hook_body.count("QueueLFGEntryCreationDeferredWork(true, true)") == 5
+    for hooked_name in (
+        "LFGListEntryCreation_Select",
+        "LFGListEntryCreation_Show",
+        "LFGListEntryCreation_SetEditMode",
+    ):
+        assert hook_body.count(f'hook("{hooked_name}"') == 1
+    auto_select_body = _slice_between(
+        source,
+        "_MaybeAutoSelectDefaultPlaystyle = function(panel, reason)",
+        "if type(_addonNS) == \"table\"",
+    )
+    assert "securecallfunction" in auto_select_body
+    assert "LFGListEntryCreation_OnPlayStyleSelectedInternal" in auto_select_body
+    assert "_HookEntryCreationKeyCapture" not in hook_body
 
 
 def test_lfg_entry_creation_hooks_defer_addon_work_off_blizzard_stack():
     source = _lua_source()
-    key_capture_body = _slice_between(
+    hook_body = _slice_between(
         source,
-        "_SetupLFGEntryCreationKeyCapture = function()",
-        "_SetupLFGDefaultPlaystyle = function()",
-    )
-    playstyle_body = _slice_between(
-        source,
-        "_SetupLFGDefaultPlaystyle = function()",
+        "_SetupLFGEntryCreationHooks = function()",
         "local EVENT_HANDLERS = {",
     )
     deferred_body = _slice_between(
@@ -4372,24 +4470,21 @@ def test_lfg_entry_creation_hooks_defer_addon_work_off_blizzard_stack():
         "C_Timer.NewTicker(0.25, function()",
         "-- Settings panel:",
     )
-    hook_bodies = key_capture_body + playstyle_body
-
-    assert "entryCreationKeyState.QueueLFGEntryCreationDeferredWork" in key_capture_body
-    assert "entryCreationKeyState.QueueLFGEntryCreationDeferredWork" in playstyle_body
-    assert "function(panel" not in hook_bodies
-    assert "_HookEntryCreationKeyCapture(panel)" not in hook_bodies
-    assert "_MaybeAutoSelectDefaultPlaystyle(panel" not in hook_bodies
+    assert "entryCreationKeyState.QueueLFGEntryCreationDeferredWork" in hook_body
+    assert "function(panel" not in hook_body
+    assert "_HookEntryCreationKeyCapture(panel)" not in hook_body
+    assert "_MaybeAutoSelectDefaultPlaystyle(panel" not in hook_body
     assert "_HookEntryCreationKeyCapture(frame.EntryCreation)" not in source
     assert "_MaybeAutoSelectDefaultPlaystyle(frame.EntryCreation" not in source
     assert "entryCreationKeyState.ProcessLFGEntryCreationDeferredWork = function()" in deferred_body
     assert "entryCreationKeyState.ProcessLFGEntryCreationDeferredWork()" in ticker_body
 
 
-def test_lfg_default_playstyle_user_touch_state_is_not_panel_keyed_from_hook_stack():
+def test_lfg_default_playstyle_preserves_nonempty_selection_without_internal_hook():
     source = _lua_source()
-    playstyle_body = _slice_between(
+    hook_body = _slice_between(
         source,
-        "_SetupLFGDefaultPlaystyle = function()",
+        "_SetupLFGEntryCreationHooks = function()",
         "local EVENT_HANDLERS = {",
     )
     auto_select_body = _slice_between(
@@ -4399,19 +4494,13 @@ def test_lfg_default_playstyle_user_touch_state_is_not_panel_keyed_from_hook_sta
     )
 
     assert "lfgDefaultPlaystyleTouchedPanels" not in source
-    show_hook = _slice_between(
-        playstyle_body,
-        'hook("LFGListEntryCreation_Show", function()',
-        'hook("LFGListEntryCreation_SetEditMode", function()',
-    )
-    assert "entryCreationKeyState.lfgDefaultPlaystyleUserTouched = false" in show_hook
-    assert show_hook.index("lfgDefaultPlaystyleUserTouched = false") < show_hook.index(
-        "QueueLFGEntryCreationDeferredWork"
-    )
-    assert "entryCreationKeyState.lfgDefaultPlaystyleUserTouched = true" in playstyle_body
-    assert "entryCreationKeyState.lfgDefaultPlaystyleUserTouched" in auto_select_body
-    assert "lfgDefaultPlaystyleResetTouched" not in source
-    assert "lfgDefaultPlaystyleResetTouchGeneration" not in source
+    assert 'hook("LFGListEntryCreation_OnPlayStyleSelectedInternal"' not in hook_body
+    assert "lfgDefaultPlaystyleUserTouched" not in source
+    assert "currentPlaystyle ~= nil" in auto_select_body
+    assert "currentPlaystyle ~= emptyPlaystyle" in auto_select_body
+    assert "securecallfunction" in auto_select_body
+    assert "panel.generalPlaystyle = configuredPlaystyle" not in auto_select_body
+    assert "LFGListEntryCreation_UpdateValidState" not in auto_select_body
 
 
 def test_lfg_default_playstyle_deferred_reset_preserves_later_manual_touch(
@@ -4434,8 +4523,8 @@ def test_status_reports_key_capture_hooks_and_cache_decision_separately():
     )
 
     assert "entryCreationKeyState.PrintDiagnostics()" in status_body
-    assert "entry key capture hooks:" in diagnostics_body
-    assert "default playstyle hooks:" in status_body
+    assert "entry creation hooks:" in diagnostics_body
+    assert "default playstyle hooks:" not in status_body
     assert "pendingEntryCreationCache.keyLevel" in diagnostics_body
     assert "publishedEntryCreationCache.keyLevel" in diagnostics_body
     assert "listing cache decision:" in diagnostics_body
@@ -4484,6 +4573,11 @@ def test_listing_key_level_short_title_shapes_execute_in_lua(pytestconfig):
 
 def test_listing_key_level_can_read_clean_application_viewer_text():
     source = _lua_source()
+    candidates_body = _slice_between(
+        source,
+        "local function _ApplicationViewerTextCandidates(viewer)",
+        "local function _GetVisibleApplicationViewerKeystoneLevel()",
+    )
     visible_body = _slice_between(
         source,
         "local function _GetVisibleApplicationViewerKeystoneLevel()",
@@ -4499,13 +4593,13 @@ def test_listing_key_level_can_read_clean_application_viewer_text():
     assert "LFGListFrame" in visible_body
     assert "ApplicationViewer" in visible_body
     assert "viewer:IsShown()" in visible_body
-    assert "EntryName" in visible_body
-    assert "DescriptionFrame.Text" in visible_body
+    assert "EntryName" in candidates_body
+    assert "DescriptionFrame.Text" in candidates_body
     assert "IsSecretValue(text)" in visible_body
-    assert "fontString = viewer.EntryName" in visible_body
+    assert "fontString = viewer.EntryName" in candidates_body
     assert (
         "fontString = viewer.DescriptionFrame and viewer.DescriptionFrame.Text"
-        in visible_body
+        in candidates_body
     )
     assert "_GetVisibleApplicationViewerKeystoneLevel()" in helper_body
     assert "visibleFrame.keyLevel" in status_body
@@ -4519,7 +4613,7 @@ def test_listing_key_level_is_derived_before_owned_keystone_activity_fallback():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
 
     key_idx = payload_body.index("keyLevel = _GetListingKeystoneLevel(")
@@ -4533,7 +4627,7 @@ def test_payload_does_not_pack_raiderio_dungeon_rows_into_qr():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
 
     assert "_PackRaiderIODungeonRows" not in source
@@ -4552,7 +4646,7 @@ def test_raiderio_summary_reuses_one_profile_lookup_per_member():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
 
     assert summary_body.count("pcall(rio.GetProfile") == 1
@@ -4591,7 +4685,7 @@ def test_raiderio_lookup_qualifies_same_realm_bare_applicant_names():
     payload_body = _slice_between(
         source,
         BUILD_PAYLOAD_ANCHOR,
-        "local function HashSnapshot(payload)",
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
     )
 
     assert 'memberName:find("-", 1, true)' in helper_body

@@ -1,25 +1,8 @@
 local scenario = arg and arg[1] or "apply-default"
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
-
-local function fail(message)
-    io.stderr:write(message .. "\n")
-    os.exit(1)
-end
-
-local function assert_equal(name, actual, expected)
-    if actual ~= expected then
-        fail(name .. " expected " .. tostring(expected)
-             .. " (" .. type(expected) .. ") but got "
-             .. tostring(actual) .. " (" .. type(actual) .. ")")
-    end
-end
-
-local function assert_nil(name, actual)
-    if actual ~= nil then
-        fail(name .. " expected nil but got " .. tostring(actual)
-             .. " (" .. type(actual) .. ")")
-    end
-end
+local fail = env.fail
+local assert_equal = env.assert_equal
+local assert_nil = env.assert_nil
 
 if scenario == "disabled-token" then
     ApplicantScoutDB = {
@@ -47,6 +30,7 @@ end
 
 Enum = {
     LFGEntryGeneralPlaystyle = {
+        None = 0,
         Learning = 101,
         FunRelaxed = 102,
         FunSerious = 103,
@@ -59,6 +43,15 @@ end
 local validStateUpdates = 0
 LFGListEntryCreation_UpdateValidState = function()
     validStateUpdates = validStateUpdates + 1
+end
+LFGListEntryCreation_OnPlayStyleSelectedInternal = function(panel, playstyle)
+    panel.generalPlaystyle = playstyle
+    LFGListEntryCreation_UpdateValidState(panel)
+end
+local secureCallCount = 0
+securecallfunction = function(callable, ...)
+    secureCallCount = secureCallCount + 1
+    return callable(...)
 end
 C_LFGList.GetActivityInfoTable = function(activityID)
     if activityID == 100 then
@@ -83,6 +76,8 @@ elseif scenario == "non-mplus" then
     panel.selectedActivity = 200
 elseif scenario == "missing-enum" then
     Enum = nil
+elseif scenario == "existing-selection" then
+    panel.generalPlaystyle = 102
 end
 
 local applied = harness.MaybeAutoSelectDefaultPlaystyle(panel, "fixture")
@@ -91,7 +86,8 @@ if scenario == "apply-default" then
     assert_equal("applied", applied, true)
     assert_equal("generalPlaystyle", panel.generalPlaystyle, 103)
     assert_equal("validStateUpdates", validStateUpdates, 1)
-    assert_equal("menuGenerated", menuGenerated, true)
+    assert_equal("menuGenerated", menuGenerated, false)
+    assert_equal("secureCallCount", secureCallCount, 1)
 elseif scenario == "disabled-token" then
     assert_equal("applied", applied, false)
     assert_nil("generalPlaystyle", panel.generalPlaystyle)
@@ -104,6 +100,10 @@ elseif scenario == "non-mplus" then
 elseif scenario == "missing-enum" then
     assert_equal("applied", applied, false)
     assert_nil("generalPlaystyle", panel.generalPlaystyle)
+elseif scenario == "existing-selection" then
+    assert_equal("applied", applied, false)
+    assert_equal("generalPlaystyle", panel.generalPlaystyle, 102)
+    assert_equal("secureCallCount", secureCallCount, 0)
 else
     fail("unsupported scenario: " .. tostring(scenario))
 end

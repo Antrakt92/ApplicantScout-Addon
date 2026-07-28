@@ -24,12 +24,14 @@ if __package__:
         ReleaseMetadataError,
         _toc_field,
         parse_toc_interfaces,
+        retail_patch_from_interface,
     )
 else:
     from create_release_metadata import (  # type: ignore[no-redef]
         ReleaseMetadataError,
         _toc_field,
         parse_toc_interfaces,
+        retail_patch_from_interface,
     )
 
 
@@ -110,23 +112,14 @@ def _strict_slug(slug: str) -> str:
     return slug
 
 
-def _retail_patch(interface: int) -> str:
-    digits = str(interface)
-    if len(digits) != 6 or not digits.isascii() or not digits.isdigit():
-        raise MarketplaceVerificationError(
-            f"mainline TOC Interface must be a six-digit integer, got {interface!r}"
-        )
-    return ".".join(
-        str(int(component)) for component in (digits[:2], digits[2:4], digits[4:6])
-    )
-
-
 def toc_wago_contract(toc_path: Path) -> tuple[str, frozenset[str]]:
     try:
         toc = toc_path.read_text(encoding="utf-8")
         project_id = _strict_project_id(_toc_field(toc, "X-Wago-ID"))
         interfaces = parse_toc_interfaces(toc)
-        patches = frozenset(_retail_patch(interface) for interface in interfaces)
+        patches = frozenset(
+            retail_patch_from_interface(interface) for interface in interfaces
+        )
     except (OSError, UnicodeError, ReleaseMetadataError) as exc:
         raise MarketplaceVerificationError(
             f"could not derive Wago contract from {toc_path}: {exc}"

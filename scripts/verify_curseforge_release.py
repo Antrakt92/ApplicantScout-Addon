@@ -13,9 +13,17 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 if __package__:
-    from .create_release_metadata import ReleaseMetadataError, parse_toc_interfaces
+    from .create_release_metadata import (
+        ReleaseMetadataError,
+        parse_toc_interfaces,
+        retail_patch_from_interface,
+    )
 else:
-    from create_release_metadata import ReleaseMetadataError, parse_toc_interfaces
+    from create_release_metadata import (  # type: ignore[no-redef]
+        ReleaseMetadataError,
+        parse_toc_interfaces,
+        retail_patch_from_interface,
+    )
 
 
 PUBLIC_FILES_URL = "https://www.curseforge.com/api/v1/mods/{project_id}/files"
@@ -46,15 +54,10 @@ def expected_file_name(tag: str) -> str:
 
 
 def curseforge_game_version_from_interface(interface: int) -> str:
-    digits = str(interface)
-    if len(digits) != 6 or not digits.isascii() or not digits.isdigit():
-        raise MarketplaceVerificationError(
-            f"mainline TOC Interface must be a six-digit integer, got {interface!r}"
-        )
-    return ".".join(
-        str(int(component))
-        for component in (digits[:2], digits[2:4], digits[4:6])
-    )
+    try:
+        return retail_patch_from_interface(interface)
+    except ReleaseMetadataError as exc:
+        raise MarketplaceVerificationError(str(exc)) from exc
 
 
 def required_game_versions_from_toc(toc_path: Path) -> frozenset[str]:

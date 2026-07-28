@@ -1,17 +1,6 @@
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
-
-local function fail(message)
-    io.stderr:write(message .. "\n")
-    os.exit(1)
-end
-
-local function assert_equal(name, actual, expected)
-    if actual ~= expected then
-        fail(name .. " expected " .. tostring(expected)
-             .. " (" .. type(expected) .. ") but got "
-             .. tostring(actual) .. " (" .. type(actual) .. ")")
-    end
-end
+local fail = env.fail
+local assert_equal = env.assert_equal
 
 local timers = {}
 local sends = {}

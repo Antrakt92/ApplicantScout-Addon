@@ -241,6 +241,34 @@ local env = {
     secret_applicant_token = nil,
 }
 
+env.fail = function(message)
+    io.stderr:write(message .. "\n")
+    os.exit(1)
+end
+
+env.assert_equal = function(name, actual, expected)
+    if actual ~= expected then
+        env.fail(name .. " expected " .. tostring(expected)
+                 .. " (" .. type(expected) .. ") but got "
+                 .. tostring(actual) .. " (" .. type(actual) .. ")")
+    end
+end
+
+env.assert_nil = function(name, actual)
+    if actual ~= nil then
+        env.fail(name .. " expected nil but got " .. tostring(actual)
+                 .. " (" .. type(actual) .. ")")
+    end
+end
+
+local function fixture_hash_snapshot(payload)
+    local h = 5381
+    for i = 1, #payload do
+        h = ((h * 33) + string.byte(payload, i)) % 4294967296
+    end
+    return h
+end
+
 env.install_raid_roster = function(count)
     local archetypes = {
         { class = "WARRIOR", classID = 1, specID = 73, role = "TANK" },
@@ -323,6 +351,7 @@ env.load_addon = function(qr)
         QR = qr or {},
         ApplicantScoutFixtureHarness = ApplicantScoutFixtureHarness,
     })
+    ApplicantScoutFixtureHarness.HashSnapshot = fixture_hash_snapshot
     return ApplicantScoutFixtureHarness
 end
 

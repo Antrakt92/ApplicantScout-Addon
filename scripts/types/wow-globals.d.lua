@@ -10,6 +10,9 @@ ApplicantScoutFixtureHarness = nil
 ---@type table
 Enum = {}
 
+---@type any
+C_PlayerInteractionManager = nil
+
 ---@overload fun(functionName: string, hook: function)
 ---@param target any
 ---@param method string
@@ -58,6 +61,9 @@ function PVEFrame_ToggleFrame(sidePanelName, selection) end
 
 ---@type any
 RaiderIO = nil
+
+---@type any
+securecallfunction = nil
 
 ---@type string
 UNKNOWN = ""

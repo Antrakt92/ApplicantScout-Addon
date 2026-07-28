@@ -21,6 +21,7 @@ end
 
 Enum = {
     LFGEntryGeneralPlaystyle = {
+        None = 0,
         Learning = 101,
         FunRelaxed = 102,
         FunSerious = 103,
@@ -40,6 +41,9 @@ LFGListEntryCreation_Select = function() end
 LFGListEntryCreation_SetEditMode = function() end
 LFGListEntryCreation_OnPlayStyleSelectedInternal = function(target, playstyle)
     target.generalPlaystyle = playstyle
+end
+securecallfunction = function(callable, ...)
+    return callable(...)
 end
 LFGListEntryCreation_Show = function(target)
     LFGListEntryCreation_OnPlayStyleSelectedInternal(target, 101)
@@ -68,11 +72,12 @@ drain()
 assert(panel.generalPlaystyle == 102,
     "deferred Show reset overwrote the later manual playstyle")
 
--- With no later manual touch, the same internal-Show initialization is reset
--- and the configured default is still applied.
+-- A non-empty value established by Blizzard is also authoritative. The addon
+-- can no longer distinguish it safely from user input without hooking the
+-- protected internal selector, so it must never overwrite either source.
 LFGListEntryCreation_Show(panel)
 drain()
-assert(panel.generalPlaystyle == 103,
-    "internal Show initialization prevented the configured default")
+assert(panel.generalPlaystyle == 101,
+    "deferred default overwrote Blizzard's non-empty playstyle")
 
 io.write("default-playstyle-deferred-touch-ok\n")

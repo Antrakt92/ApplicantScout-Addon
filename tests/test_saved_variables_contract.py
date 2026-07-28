@@ -82,3 +82,4 @@ def test_mplus_default_playstyle_leaves_ineligible_forms_unchanged(pytestconfig)
     assert _run_default_playstyle_check(pytestconfig, "edit-mode") == "ok edit-mode"
     assert _run_default_playstyle_check(pytestconfig, "non-mplus") == "ok non-mplus"
     assert _run_default_playstyle_check(pytestconfig, "missing-enum") == "ok missing-enum"
+    assert _run_default_playstyle_check(pytestconfig, "existing-selection") == "ok existing-selection"
