@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+## 0.9.1 - 28-Jul-2026 - Companion 0.13.1 transport recovery
+
+This paired addon + companion patch keeps screenshot transport moving after
+transient asynchronous failures instead of requiring `/reload` to restart the
+capture pipeline.
+
+### Fixed
+
+- Stalled QR encode, paint, and screenshot jobs now release their exact
+  generation safely and rearm pending transport work without allowing an older
+  callback to overwrite the active capture.
+- Screenshot visibility leases and transport recovery remain owned by the
+  active session, preventing delayed callbacks from leaving capture hidden or
+  permanently busy.
+- Group Finder entry hooks queue key capture and default-playstyle work through
+  one deferred path, keeping protected Blizzard callbacks lightweight while
+  avoiding duplicate hook state.
+
+### Improved
+
+- Transport fixtures now provide their hashing oracle outside production Lua,
+  and shared release metadata helpers keep GitHub, CurseForge, and Wago Retail
+  patch validation aligned.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.13.1`.
+- APS1 payload compatibility is unchanged.
+
 ## 0.9.0 - 25-Jul-2026 - Companion 0.13.0 state-bound reliability
 
 This paired addon + companion release keeps temporary unknown WoW state from
