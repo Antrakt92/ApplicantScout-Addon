@@ -157,6 +157,52 @@ drain_timers()
 assert_equal("shim unlocked retry sends", #sends, 1)
 assert_equal("shim unlocked retry payload", sends[1].payload, "17,503,3333")
 
+lockdown = true
+reset_observed()
+reset_timers()
+shim_harness.FireEvent("CHAT_MSG_ADDON", "LibKS", "R", "PARTY", "Friend-Realm")
+assert_equal("late-provider pending shim sends", #sends, 0)
+assert_equal("late-provider pending shim retry", #timers, 1)
+
+external_registers = 0
+external_callback = nil
+LibStub = function(name, silent)
+    assert_equal("late external library name", name, "LibKeystone")
+    assert_equal("late external library silent lookup", silent, true)
+    return external_lib
+end
+lockdown = false
+shim_harness.FireEvent("ADDON_LOADED", "LateLibKeystone")
+assert_equal("late external callback registrations", external_registers, 1)
+if type(external_callback) ~= "function" then
+    fail("late external provider callback was not registered")
+end
+shim_harness.FireEvent("ADDON_LOADED", "AnotherLateAddon")
+assert_equal("stable late external callback registrations", external_registers, 1)
+
+reset_observed()
+drain_timers()
+assert_equal("retired shim retry sends", #sends, 0)
+assert_equal("retired shim retry owned-key reads", owned_key_reads, 0)
+assert_equal("retired shim retry rating reads", rating_reads, 0)
+
+shim_harness.FireEvent("CHAT_MSG_ADDON", "LibKS", "R", "PARTY", "Friend-Realm")
+assert_equal("late external responder sends", #sends, 0)
+assert_equal("late external responder owned-key reads", owned_key_reads, 0)
+assert_equal("late external responder rating reads", rating_reads, 0)
+
+external_callback(18, 504, 2999, "Host-Realm", "PARTY")
+local late_external_key = shim_harness.ResolveLeaderKeystoneContext()
+if not late_external_key then fail("late external callback did not update leader key") end
+assert_equal("late external callback level", late_external_key.level, 18)
+assert_equal("late external callback map", late_external_key.challengeMapID, 504)
+
+shim_harness.FireEvent("CHAT_MSG_ADDON", "LibKS", "19,505,3000", "PARTY", "Host-Realm")
+late_external_key = shim_harness.ResolveLeaderKeystoneContext()
+if not late_external_key then fail("late external key disappeared after shim data") end
+assert_equal("retired shim callback level", late_external_key.level, 18)
+assert_equal("retired shim callback map", late_external_key.challengeMapID, 504)
+
 ApplicantScoutDB.enabled = false
 reset_observed()
 reset_timers()

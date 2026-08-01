@@ -709,7 +709,6 @@ StartSession = function()
     entryCreationKeyState.ClearRosterInspectFailureState()
     entryCreationKeyState.ResetRosterInspectDataCache()
     entryCreationKeyState.ReconcileRosterInspectMembership()
-    entryCreationKeyState.ClearRosterLoadRetryState()
     entryCreationKeyState.RequestLeaderKeystone(true)
 
     -- QR is no longer shown for the entire session. The first changed snapshot
@@ -3993,11 +3992,14 @@ entryCreationKeyState.OnLeaderKeystoneData = function(keyLevel, challengeMapID, 
 end
 
 entryCreationKeyState.RegisterLeaderKeystoneCallback = function()
-    if entryCreationKeyState.leaderKeystoneCallbackRegistered then
-        return entryCreationKeyState.leaderKeystoneLib or entryCreationKeyState.GetLibKeystone()
-    end
     local lib = entryCreationKeyState.GetLibKeystone()
     if not lib then return nil end
+    -- WHY: an optional external provider can load after the built-in shim was
+    -- selected. Re-register only when the currently resolved provider changes.
+    if entryCreationKeyState.leaderKeystoneCallbackRegistered
+       and entryCreationKeyState.leaderKeystoneLib == lib then
+        return lib
+    end
     local ok = pcall(function()
         lib.Register(
             entryCreationKeyState.leaderKeystoneCallbackOwner,
@@ -4005,6 +4007,12 @@ entryCreationKeyState.RegisterLeaderKeystoneCallback = function()
         )
     end)
     if not ok then return nil end
+    if lib ~= entryCreationKeyState.libKeystoneShim then
+        entryCreationKeyState.libKeystoneShimCallbacks[
+            entryCreationKeyState.leaderKeystoneCallbackOwner
+        ] = nil
+        entryCreationKeyState.CancelLibKeystoneResponseRetry()
+    end
     entryCreationKeyState.leaderKeystoneCallbackRegistered = true
     entryCreationKeyState.leaderKeystoneLib = lib
     return lib
@@ -7213,7 +7221,6 @@ SlashCmdList.APSCOUT = function(msg)
         entryCreationKeyState.MarkRosterCompositionChanged()
         entryCreationKeyState.ClearRosterInspectBatchState()
         entryCreationKeyState.ClearRosterInspectFailureState()
-        entryCreationKeyState.ClearRosterLoadRetryState()
         entryCreationKeyState.ResetInteractionSlotsForWorldTransition()
         scanDirty = true
         APSPrint("resync queued — emits when transport is active and QR is available")

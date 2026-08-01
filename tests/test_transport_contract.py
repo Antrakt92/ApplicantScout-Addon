@@ -866,6 +866,33 @@ def test_roster_composition_change_waits_for_inspect_until_fallback_deadline():
     assert callback_idx < clear_idx < commit_idx < paint_idx
 
 
+def test_roster_composition_change_owns_single_load_retry_invalidation():
+    source = _lua_source()
+    start_body = _slice_between(
+        source,
+        "StartSession = function()",
+        "EndSession = function()",
+    )
+    mark_body = _slice_between(
+        source,
+        "entryCreationKeyState.MarkRosterCompositionChanged = function()",
+        "entryCreationKeyState.ShouldDeferRosterChangeForPreflight = function()",
+    )
+    reset_body = _slice_between(
+        source,
+        'elseif msg == "reset" then',
+        'elseif msg == "shotnow" then',
+    )
+
+    clear_retry = "entryCreationKeyState.ClearRosterLoadRetryState()"
+    mark_changed = "entryCreationKeyState.MarkRosterCompositionChanged()"
+    assert mark_body.count(clear_retry) == 1
+    assert start_body.count(mark_changed) == 1
+    assert reset_body.count(mark_changed) == 1
+    assert clear_retry not in start_body
+    assert clear_retry not in reset_body
+
+
 def test_transport_poll_does_not_force_unchanged_snapshots():
     source = _lua_source()
     ticker_body = _slice_between(
@@ -1163,10 +1190,7 @@ def test_leader_keystone_soft_dep_uses_libkeystone_party_protocol():
     assert 'type(lib.Request) == "function"' in leader_body
     assert "leaderKeystoneLib = nil" in source
     assert "entryCreationKeyState.leaderKeystoneLib = lib" in leader_body
-    assert (
-        "return entryCreationKeyState.leaderKeystoneLib or entryCreationKeyState.GetLibKeystone()"
-        in leader_body
-    )
+    assert "entryCreationKeyState.leaderKeystoneLib == lib" in leader_body
     assert '"PARTY"' in leader_body
     assert "string.lower" not in leader_body
     assert "GROUP_ROSTER_UPDATE" in events_body
@@ -1260,6 +1284,44 @@ def test_libkeystone_shim_response_is_owned_only_by_selected_shim_provider():
         "entryCreationKeyState.CancelLibKeystoneResponseRetry = function()",
     )
     assert retry_body.count("IsLibKeystoneShimResponderOwner()") == 2
+
+
+def test_libkeystone_callback_registration_reselects_late_external_provider():
+    source = _lua_source()
+    register_body = _slice_between(
+        source,
+        "entryCreationKeyState.RegisterLeaderKeystoneCallback = function()",
+        "entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry = function(",
+    )
+
+    resolve_idx = register_body.index(
+        "local lib = entryCreationKeyState.GetLibKeystone()"
+    )
+    same_provider_idx = register_body.index(
+        "entryCreationKeyState.leaderKeystoneLib == lib"
+    )
+    register_idx = register_body.index("lib.Register(", same_provider_idx)
+    success_idx = register_body.index("if not ok then return nil end", register_idx)
+    retire_shim_idx = register_body.index(
+        "lib ~= entryCreationKeyState.libKeystoneShim",
+        success_idx,
+    )
+    remove_owner_idx = register_body.index(
+        "entryCreationKeyState.leaderKeystoneCallbackOwner",
+        retire_shim_idx,
+    )
+    cancel_retry_idx = register_body.index(
+        "entryCreationKeyState.CancelLibKeystoneResponseRetry()",
+        remove_owner_idx,
+    )
+    select_idx = register_body.index(
+        "entryCreationKeyState.leaderKeystoneLib = lib",
+        cancel_retry_idx,
+    )
+
+    assert resolve_idx < same_provider_idx < register_idx < success_idx
+    assert success_idx < retire_shim_idx < remove_owner_idx < cancel_retry_idx
+    assert cancel_retry_idx < select_idx
 
 
 def test_libkeystone_provider_ownership_in_lua51(pytestconfig):
