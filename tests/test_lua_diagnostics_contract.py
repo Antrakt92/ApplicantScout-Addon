@@ -35,6 +35,7 @@ def test_luals_gate_is_version_locked_and_fails_closed():
     assert '"--check=$WorkspacePath"' in script
     assert '"--checklevel=Warning"' in script
     assert '"--configpath=$ConfigPath"' in script
+    assert '"--metapath=$(Join-Path $LogRoot \'meta\')"' in script
     assert '"types\\wow-globals.d.lua"' in script
     assert "Copy-Item -LiteralPath $LuaPath" in script
     assert "Copy-Item -LiteralPath $TypesPath" in script

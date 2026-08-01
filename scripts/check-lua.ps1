@@ -123,6 +123,7 @@ try {
         "--check_format=pretty",
         "--checklevel=Warning",
         "--configpath=$ConfigPath",
+        "--metapath=$(Join-Path $LogRoot 'meta')",
         "--logpath=$(Join-Path $LogRoot 'clean')"
     )
     Assert-LuaDiagnosticsClean -Result $CleanResult
@@ -140,6 +141,7 @@ try {
         "--check_format=pretty",
         "--checklevel=Warning",
         "--configpath=$ConfigPath",
+        "--metapath=$(Join-Path $LogRoot 'meta')",
         "--logpath=$(Join-Path $LogRoot 'sensitivity')"
     )
     Assert-LuaDiagnosticsSensitive `
@@ -153,6 +155,7 @@ try {
         "--check_format=pretty",
         "--checklevel=Warning",
         "--configpath=$ConfigPath",
+        "--metapath=$(Join-Path $LogRoot 'meta')",
         "--logpath=$(Join-Path $LogRoot 'final')"
     )
     Assert-LuaDiagnosticsClean -Result $FinalResult
