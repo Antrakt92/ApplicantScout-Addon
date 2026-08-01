@@ -19,6 +19,19 @@ assert_equal(harness.SafeNumber(-math.huge, 9), 9, "negative infinity fallback")
 assert_equal(harness.SafeNumber("1e309", 9), 9, "overflow string fallback")
 assert_equal(harness.SafeNumber("42.5", 0), 42.5, "numeric string")
 
+local probeFailure = {}
+local originalIsSecretValue = issecretvalue
+issecretvalue = function(value)
+    if value == probeFailure then error("secret probe failed") end
+    return originalIsSecretValue(value)
+end
+assert_equal(
+    harness.SafeNumber(probeFailure, 9),
+    9,
+    "failed secret probe fallback"
+)
+issecretvalue = originalIsSecretValue
+
 assert_equal(harness.ClampUInt8(math.huge), 0, "uint8 positive infinity")
 assert_equal(harness.ClampUInt8("255.9"), 255, "uint8 numeric string")
 assert_equal(harness.ClampUInt8("256"), 255, "uint8 upper clamp")

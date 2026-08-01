@@ -360,7 +360,11 @@ end
 
 local function IsSecretValue(v)
     local issv = _G.issecretvalue
-    return issv and issv(v) or false
+    if issv == nil then return false end
+    if type(issv) ~= "function" then return true end
+    local ok, isSecret = pcall(issv, v)
+    if not ok then return true end
+    return isSecret == true
 end
 
 entryCreationKeyState.CleanUnitAPIBoolean = function(api, ...)
@@ -387,6 +391,14 @@ entryCreationKeyState.NoteRosterIdentityReadUnknown = function(reason)
     end
 end
 
+entryCreationKeyState.CleanRosterGUIDValue = function(guid)
+    local okSecret, isSecret = pcall(IsSecretValue, guid)
+    if not okSecret or isSecret then return "", true end
+    if guid == nil or guid == "" then return "", false end
+    if type(guid) ~= "string" then return "", true end
+    return guid, false
+end
+
 entryCreationKeyState.UnitGUIDForRoster = function(unit)
     if not UnitGUID then
         entryCreationKeyState.NoteRosterIdentityReadUnknown("unit-guid-unknown")
@@ -397,17 +409,11 @@ entryCreationKeyState.UnitGUIDForRoster = function(unit)
         entryCreationKeyState.NoteRosterIdentityReadUnknown("unit-guid-unknown")
         return ""
     end
-    local okSecret, isSecret = pcall(IsSecretValue, guid)
-    if not okSecret or isSecret then
+    local cleanGUID, blocked = entryCreationKeyState.CleanRosterGUIDValue(guid)
+    if blocked then
         entryCreationKeyState.NoteRosterIdentityReadUnknown("unit-guid-unknown")
-        return ""
     end
-    if guid == nil or guid == "" then return "" end
-    if type(guid) ~= "string" then
-        entryCreationKeyState.NoteRosterIdentityReadUnknown("unit-guid-unknown")
-        return ""
-    end
-    return guid
+    return cleanGUID
 end
 
 SafeStr = function(v, secretFallback)
@@ -691,14 +697,7 @@ StartSession = function()
     lastQREncodeBytes = 0
     lastQREncodeError = nil
     entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
-    entryCreationKeyState.qrPaintInProgress = false
-    entryCreationKeyState.qrCaptureInProgress = false
-    entryCreationKeyState.qrPaintDirtyDuringPaint = false
-    entryCreationKeyState.qrTransportJobStartedAt = nil
-    entryCreationKeyState.qrTransportJobTerminalClear = false
-    entryCreationKeyState.screenshotAwaitingResult = false
-    entryCreationKeyState.screenshotAwaitingJobGen = nil
-    entryCreationKeyState.screenshotResultHandler = nil
+    entryCreationKeyState.ClearQRTransportJob()
     qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
     qrForceVisibleForShot = false
     if qrFrame then qrFrame:SetFrameStrata("DIALOG") end
@@ -741,14 +740,7 @@ EndSession = function()
     entryCreationKeyState.ClearRosterLoadRetryState()
     entryCreationKeyState.ClearRosterCompositionChanged()
     entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
-    entryCreationKeyState.qrPaintInProgress = false
-    entryCreationKeyState.qrCaptureInProgress = false
-    entryCreationKeyState.qrPaintDirtyDuringPaint = false
-    entryCreationKeyState.qrTransportJobStartedAt = nil
-    entryCreationKeyState.qrTransportJobTerminalClear = false
-    entryCreationKeyState.screenshotAwaitingResult = false
-    entryCreationKeyState.screenshotAwaitingJobGen = nil
-    entryCreationKeyState.screenshotResultHandler = nil
+    entryCreationKeyState.ClearQRTransportJob()
     qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
     qrForceVisibleForShot = false
     if qrFrame then
@@ -869,22 +861,12 @@ end
 
 entryCreationKeyState.ClearAutoHiRuntimeState = function()
     entryCreationKeyState.ClearAutoHiSendRetry("group")
-    entryCreationKeyState.ClearAutoHiSendRetry("new-party")
     entryCreationKeyState.autoHiGroupGen =
         entryCreationKeyState.autoHiGroupGen + 1
-    entryCreationKeyState.autoHiNewPartyMemberGen =
-        entryCreationKeyState.autoHiNewPartyMemberGen + 1
     entryCreationKeyState.autoHiGroupStateKnown = false
     entryCreationKeyState.autoHiWasInGroup = false
     entryCreationKeyState.autoHiWasInSoloGroup = false
-    entryCreationKeyState.autoHiKnownPartyGUIDs = {}
-    entryCreationKeyState.autoHiKnownPartyMembersPrimed = false
-    entryCreationKeyState.autoHiPendingNewPartyGUIDs = {}
-    entryCreationKeyState.autoHiNewPartyGreetingScheduledGeneration = nil
-    entryCreationKeyState.autoHiPartySampleRetryToken =
-        entryCreationKeyState.autoHiPartySampleRetryToken + 1
-    entryCreationKeyState.autoHiPartySampleRetryScheduled = false
-    entryCreationKeyState.autoHiPartySamplePending = false
+    entryCreationKeyState.ResetAutoHiPartyMembers()
 end
 
 entryCreationKeyState.AutoHiContextReady = function(kind, generation)
@@ -2594,10 +2576,6 @@ local function _GetVisibleApplicationViewerKeystoneDiagnostics()
     end
     return lines
 end
-_G.ApplicantScout_VisibleApplicationViewerKeystoneDiagnostics =
-    _GetVisibleApplicationViewerKeystoneDiagnostics
-_G.ApplicantScout_VisibleApplicationViewerKeystoneLevel =
-    _GetVisibleApplicationViewerKeystoneLevel
 
 local function _GetActivityInfoForListing(activityID, questID)
     if not (C_LFGList and C_LFGList.GetActivityInfoTable) then return nil end
@@ -2670,7 +2648,6 @@ local function _GetListingKeystoneLevel(activityID, questID, listingName, listin
     end
     return keyLevel
 end
-_G.ApplicantScout_GetListingKeystoneLevel = _GetListingKeystoneLevel
 
 local function _RaiderIODungeonMatchesActivity(dungeon, listingActivityID)
     dungeon = SafeTable(dungeon)
@@ -3490,10 +3467,12 @@ entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot = function()
 end
 
 local function _OnRosterInspectReady(guid)
-    local ownedGUID = SafeStr(rosterInspectPendingGUID, "")
+    local ownedGUID = entryCreationKeyState.CleanRosterGUIDValue(
+        rosterInspectPendingGUID
+    )
     if ownedGUID == "" then return false end
-    guid = SafeStr(guid, "")
-    if guid == "" then guid = ownedGUID end
+    guid = entryCreationKeyState.CleanRosterGUIDValue(guid)
+    if guid == "" then return false end
     if guid ~= ownedGUID then return false end
 
     if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then
@@ -4764,6 +4743,8 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
     _G.ApplicantScoutFixtureHarness.BuildRosterPayloadRows = BuildRosterPayloadRows
     _G.ApplicantScoutFixtureHarness.GetRaiderIOMPlusSummaryForCleanName =
         _GetRaiderIOMPlusSummaryForCleanName
+    _G.ApplicantScoutFixtureHarness.GetListingKeystoneLevel =
+        _GetListingKeystoneLevel
     _G.ApplicantScoutFixtureHarness.StartQROverflowTransport =
         entryCreationKeyState.StartQROverflowTransport
     _G.ApplicantScoutFixtureHarness.BuildQROverflowFragment =
@@ -5790,8 +5771,10 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 local retryBudgetRemaining =
                     entryCreationKeyState.screenshotFailureAttemptCount
                     < entryCreationKeyState.SCREENSHOT_FAILURE_MAX_ATTEMPTS
-                pendingShotDirty = terminalClearSessionGen
-                    and false or (dirtySincePayload or retryBudgetRemaining)
+                pendingShotDirty = false
+                if not terminalClearSessionGen then
+                    pendingShotDirty = dirtySincePayload or retryBudgetRemaining
+                end
                 entryCreationKeyState.ClearQRTransportJob(jobGen)
                 _ReleaseForceVisibleShotLease(forceVisibleShotGen)
                 if terminalClearSessionGen then
@@ -6266,7 +6249,6 @@ local EVENT_HANDLERS = {
         entryCreationKeyState.MarkRosterCompositionChanged()
         MarkDirty("groupleft")
         entryCreationKeyState.ScheduleAutoHiIfGroupJoined()
-        entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()
     end,
     CHAT_MSG_ADDON                  = function(_, prefix, msg, channel, sender)
         entryCreationKeyState.LibKeystoneShimHandleAddonMessage(prefix, msg, channel, sender)
@@ -7030,13 +7012,9 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
         end
         print("  entry.name: " .. SafeDiag(entry.name))
         print("  entry.comment: " .. SafeDiag(entry.comment))
-        local visibleKeyLevel =
-            _G.ApplicantScout_VisibleApplicationViewerKeystoneLevel
         print("  visibleFrame.keyLevel: "
-              .. tostring(visibleKeyLevel and visibleKeyLevel() or 0))
-        local visibleDiagnostics =
-            _G.ApplicantScout_VisibleApplicationViewerKeystoneDiagnostics
-        visibleDiagnostics = visibleDiagnostics and visibleDiagnostics() or {}
+              .. tostring(_GetVisibleApplicationViewerKeystoneLevel()))
+        local visibleDiagnostics = _GetVisibleApplicationViewerKeystoneDiagnostics()
         for _, line in ipairs(visibleDiagnostics) do
             print(line)
         end
@@ -7060,14 +7038,12 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
                 or statusDungeonName == "Mythic+"
                 or statusDungeonName == "?")
         print("  ownedKeystone.usedForListing: " .. tostring(statusUseOwned))
-        local listingKeyLevel =
-            _G.ApplicantScout_GetListingKeystoneLevel
-        local statusDerivedKeyLevel = listingKeyLevel and listingKeyLevel(
+        local statusDerivedKeyLevel = _GetListingKeystoneLevel(
             cleanActivityID,
             cleanQuestID,
             statusListingName,
             statusListingComment,
-            statusActivityInfo) or 0
+            statusActivityInfo)
         if statusDerivedKeyLevel == 0 and statusUseOwned then
             statusDerivedKeyLevel = ownedLevel
         end

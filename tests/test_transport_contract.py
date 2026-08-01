@@ -12,7 +12,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_COMPANION_ROOT = REPO_ROOT.parent / "ApplicantScout-Companion"
-LUA_FIXTURE_GENERATOR = REPO_ROOT / "tests" / "lua" / "generate_aps1_v8_fixture.lua"
+LUA_FIXTURE_GENERATOR = REPO_ROOT / "tests" / "lua" / "generate_aps1_v9_fixture.lua"
 LUA_FIXTURE_ENV = REPO_ROOT / "tests" / "lua" / "appscout_fixture_env.lua"
 LUA_LIBKEYSTONE_DISABLED_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_libkeystone_disabled_transport.lua"
@@ -38,6 +38,9 @@ LUA_SETTINGS_ATTACH_WATCHER_CHECK = (
 )
 LUA_ROSTER_INSPECT_EXHAUSTION_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_inspect_exhaustion.lua"
+)
+LUA_ROSTER_INSPECT_EVENT_IDENTITY_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_roster_inspect_event_identity.lua"
 )
 LUA_ROSTER_LOAD_RETRY_BACKOFF_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_load_retry_backoff.lua"
@@ -113,8 +116,8 @@ LUA_LISTING_KEY_LEVEL_TITLES_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_listing_key_level_titles.lua"
 )
 LUA_GOLDEN_CASES = (
-    (None, "aps1_v8_lua_golden.hex"),
-    ("leader-key", "aps1_v8_lua_leader_key_golden.hex"),
+    (None, "aps1_v9_lua_golden.hex"),
+    ("leader-key", "aps1_v9_lua_leader_key_golden.hex"),
 )
 MAYBE_TRIGGER_SCREENSHOT_ANCHOR = (
     "MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllowed)"
@@ -570,6 +573,30 @@ def test_end_session_cancels_stale_qr_paint_before_terminal_clear_shot():
 
     assert cancel_idx < first_clear_idx
     assert "entryCreationKeyState.qrPaintJobGen =" not in cleanup_after_first_clear
+
+
+def test_session_transitions_share_qr_transport_job_cleanup():
+    source = _lua_source()
+    start_body = _slice_between(
+        source,
+        "StartSession = function()",
+        "EndSession = function()",
+    )
+    end_body = _slice_between(
+        source,
+        "EndSession = function()",
+        "local function _HasGroupRosterForTransport()",
+    )
+
+    for body in (start_body, end_body):
+        generation_idx = body.index(
+            "entryCreationKeyState.qrPaintJobGen = "
+            "(entryCreationKeyState.qrPaintJobGen or 0) + 1"
+        )
+        cleanup_idx = body.index("entryCreationKeyState.ClearQRTransportJob()")
+        assert generation_idx < cleanup_idx
+        assert "entryCreationKeyState.qrPaintInProgress = false" not in body
+        assert "entryCreationKeyState.screenshotResultHandler = nil" not in body
 
 
 def test_qr_shot_lease_shows_hidden_qr_and_releases_after_capture():
@@ -1814,11 +1841,9 @@ def test_disable_cleanup_invalidates_pending_auto_hi_generations_and_retries():
 
     assert "entryCreationKeyState.ClearAutoHiRuntimeState = function()" in auto_hi_body
     assert 'entryCreationKeyState.ClearAutoHiSendRetry("group")' in auto_hi_body
-    assert 'entryCreationKeyState.ClearAutoHiSendRetry("new-party")' in auto_hi_body
     assert "entryCreationKeyState.autoHiGroupGen + 1" in auto_hi_body
-    assert "entryCreationKeyState.autoHiNewPartyMemberGen + 1" in auto_hi_body
     assert "entryCreationKeyState.autoHiGroupStateKnown = false" in auto_hi_body
-    assert "entryCreationKeyState.autoHiKnownPartyGUIDs = {}" in auto_hi_body
+    assert "entryCreationKeyState.ResetAutoHiPartyMembers()" in auto_hi_body
     assert "entryCreationKeyState.ClearAutoHiRuntimeState()" in cleanup_body
 
 
@@ -2607,6 +2632,12 @@ def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():
     assert "GROUP_ROSTER_UPDATE              = function()" in events_body
     assert "entryCreationKeyState.ScheduleAutoHiIfGroupJoined()" in events_body
     assert "GROUP_LEFT                       = function()" in events_body
+    group_left_body = _slice_between(
+        events_body,
+        "GROUP_LEFT                       = function()",
+        "CHAT_MSG_ADDON",
+    )
+    assert "entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()" not in group_left_body
 
 
 def test_auto_hi_group_send_retries_bounded_when_lockdown_blocks_send():
@@ -2787,11 +2818,27 @@ def test_unit_api_clean_adapters_reject_secret_values_without_coercion():
     assert "pcall(function() return value == false end)" in helper_body
     assert "entryCreationKeyState.UnitGUIDForRoster = function(unit)" in helper_body
     assert "pcall(UnitGUID, unit)" in helper_body
+    assert "entryCreationKeyState.CleanRosterGUIDValue = function(guid)" in helper_body
     assert "pcall(IsSecretValue, guid)" in helper_body
     assert 'type(guid) ~= "string"' in helper_body
+    assert "entryCreationKeyState.CleanRosterGUIDValue(guid)" in helper_body
     assert "SafeStr(guid" not in helper_body
     assert "entryCreationKeyState.CleanUnitIsGroupLeader = function(unit)" in helper_body
     assert "entryCreationKeyState.CleanUnitAPIBoolean(UnitIsGroupLeader, unit)" in helper_body
+
+
+def test_secret_value_probe_is_fail_closed_for_direct_sanitizers():
+    source = _lua_source()
+    helper_body = _slice_between(
+        source,
+        "local function IsSecretValue(v)",
+        "entryCreationKeyState.CleanUnitAPIBoolean = function(api, ...)",
+    )
+
+    assert "if issv == nil then return false end" in helper_body
+    assert 'if type(issv) ~= "function" then return true end' in helper_body
+    assert "local ok, isSecret = pcall(issv, v)" in helper_body
+    assert "if not ok then return true end" in helper_body
 
 
 def test_roster_and_auto_hi_unit_apis_do_not_branch_on_raw_secret_results():
@@ -3168,7 +3215,10 @@ def test_roster_batch_clears_pending_guid_when_unit_leaves():
     timeout_idx = batch_body.index("local timeoutLeft = ROSTER_INSPECT_TIMEOUT_S", missing_idx)
 
     assert missing_idx < skip_idx < timeout_idx
-    assert 'local ownedGUID = SafeStr(rosterInspectPendingGUID, "")' in inspect_body
+    assert "entryCreationKeyState.CleanRosterGUIDValue(" in inspect_body
+    assert 'guid = entryCreationKeyState.CleanRosterGUIDValue(guid)' in inspect_body
+    assert 'if guid == "" then return false end' in inspect_body
+    assert "SafeStr(guid" not in inspect_body
     assert "if guid ~= ownedGUID then return false end" in inspect_body
     assert "entryCreationKeyState.ReleaseOwnedRosterInspect()" in inspect_body
 
@@ -3463,8 +3513,13 @@ def test_qr_capture_settle_window_is_locked_and_watchdog_recoverable():
 
     assert capture_guard_idx < capture_start_idx < settle_idx < failure_idx
     assert failure_idx < commit_idx < success_clear_idx < screenshot_idx
-    assert "pendingShotDirty = terminalClearSessionGen" in failure_block
-    assert "and false or (dirtySincePayload or retryBudgetRemaining)" in failure_block
+    clear_pending_idx = failure_block.index("pendingShotDirty = false")
+    ordinary_guard_idx = failure_block.index("if not terminalClearSessionGen then")
+    ordinary_pending_idx = failure_block.index(
+        "pendingShotDirty = dirtySincePayload or retryBudgetRemaining"
+    )
+    assert clear_pending_idx < ordinary_guard_idx < ordinary_pending_idx
+    assert "terminalClearSessionGen and false" not in failure_block
     assert "entryCreationKeyState.ClearQRTransportJob(jobGen)" in failure_block
     assert "_ReleaseForceVisibleShotLease(forceVisibleShotGen)" in failure_block
     assert "screenshotResultHandler = FinishScreenshotAttempt" in screenshot_body[
@@ -3742,6 +3797,15 @@ def test_roster_inspect_timeout_is_bounded_per_guid_and_session(pytestconfig):
     output = _run_lua_script(pytestconfig, LUA_ROSTER_INSPECT_EXHAUSTION_CHECK).strip()
 
     assert output == "ok roster-inspect-exhaustion requests=4"
+
+
+def test_roster_inspect_ready_rejects_secret_or_unprobeable_event_guid(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_ROSTER_INSPECT_EVENT_IDENTITY_CHECK,
+    ).strip()
+
+    assert output == "ok roster-inspect-event-identity"
 
 
 def test_disabled_addon_ignores_late_or_unowned_inspect_ready(pytestconfig):
@@ -4117,7 +4181,7 @@ def test_lua_v10_fragments_reconstruct_exact_v9_snapshot_in_companion(pytestconf
     LUA_GOLDEN_CASES,
     ids=["base", "leader-key"],
 )
-def test_lua_producer_generates_committed_aps1_v8_golden_fixture(
+def test_lua_producer_generates_committed_aps1_v9_golden_fixture(
     pytestconfig, mode, fixture_name
 ):
     raw_companion_root = pytestconfig.getoption("--companion-root")
@@ -4604,8 +4668,23 @@ def test_listing_key_level_can_read_clean_application_viewer_text():
     assert "_GetVisibleApplicationViewerKeystoneLevel()" in helper_body
     assert "visibleFrame.keyLevel" in status_body
     assert "visibleFrame.viewerShown" in source
-    assert "ApplicantScout_VisibleApplicationViewerKeystoneDiagnostics" in status_body
+    assert "_GetVisibleApplicationViewerKeystoneDiagnostics()" in status_body
     assert "entryCreationCache.keyLevel" in status_body
+
+
+def test_listing_key_diagnostics_do_not_publish_mutable_debug_globals():
+    source = _lua_source()
+    status_body = _status_helper_body(source)
+
+    assert "_G.ApplicantScout_VisibleApplicationViewerKeystoneLevel" not in source
+    assert "_G.ApplicantScout_VisibleApplicationViewerKeystoneDiagnostics" not in source
+    assert "_G.ApplicantScout_GetListingKeystoneLevel" not in source
+    assert "_GetVisibleApplicationViewerKeystoneLevel()" in status_body
+    assert "_GetListingKeystoneLevel(" in status_body
+    assert (
+        "_G.ApplicantScoutFixtureHarness.GetListingKeystoneLevel ="
+        in source
+    )
 
 
 def test_listing_key_level_is_derived_before_owned_keystone_activity_fallback():
