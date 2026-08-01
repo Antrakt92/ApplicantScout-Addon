@@ -3683,14 +3683,21 @@ end
 
 entryCreationKeyState.ReadOwnLibKeystoneInfo = function()
     local keyLevel, challengeMapID, playerRating = 0, 0, 0
+    local keyLevelAvailable, challengeMapIDAvailable = false, false
     if C_MythicPlus then
         if type(C_MythicPlus.GetOwnedKeystoneLevel) == "function" then
             local ok, value = pcall(C_MythicPlus.GetOwnedKeystoneLevel)
-            if ok then keyLevel = math.floor(SafeNumber(value, 0)) end
+            if ok and not IsSecretValue(value) and type(value) == "number" then
+                keyLevel = math.floor(SafeNumber(value, 0))
+                keyLevelAvailable = true
+            end
         end
         if type(C_MythicPlus.GetOwnedKeystoneChallengeMapID) == "function" then
             local ok, value = pcall(C_MythicPlus.GetOwnedKeystoneChallengeMapID)
-            if ok then challengeMapID = math.floor(SafeNumber(value, 0)) end
+            if ok and not IsSecretValue(value) and type(value) == "number" then
+                challengeMapID = math.floor(SafeNumber(value, 0))
+                challengeMapIDAvailable = true
+            end
         end
     end
     if C_PlayerInfo and type(C_PlayerInfo.GetPlayerMythicPlusRatingSummary) == "function" then
@@ -3698,7 +3705,8 @@ entryCreationKeyState.ReadOwnLibKeystoneInfo = function()
         summary = ok and SafeTable(summary) or nil
         playerRating = math.floor(SafeNumber(summary and summary.currentSeasonScore, 0))
     end
-    return keyLevel, challengeMapID, playerRating
+    return keyLevel, challengeMapID, playerRating,
+        keyLevelAvailable and challengeMapIDAvailable
 end
 
 entryCreationKeyState.NotifyLibKeystoneShimCallbacks = function(keyLevel, challengeMapID, playerRating, playerName, channel)
@@ -3832,23 +3840,6 @@ entryCreationKeyState.GetLibKeystoneShim = function()
         Register = function(owner, callback)
             if type(owner) ~= "table" or type(callback) ~= "function" then return end
             entryCreationKeyState.libKeystoneShimCallbacks[owner] = callback
-        end,
-        Request = function(channel)
-            if channel ~= "PARTY" then return end
-            if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then
-                return false, "disabled"
-            end
-            local keyLevel, challengeMapID, playerRating =
-                entryCreationKeyState.ReadOwnLibKeystoneInfo()
-            local playerName = SafeStr(UnitNameUnmodified and UnitNameUnmodified("player"), "")
-            entryCreationKeyState.NotifyLibKeystoneShimCallbacks(
-                keyLevel,
-                challengeMapID,
-                playerRating,
-                playerName,
-                channel
-            )
-            return entryCreationKeyState.SendLibKeystoneAddonMessage("R", channel)
         end,
     }
     return entryCreationKeyState.libKeystoneShim
@@ -4082,6 +4073,21 @@ entryCreationKeyState.RequestLeaderKeystone = function(force, attempt)
        and (now - SafeNumber(entryCreationKeyState.leaderKeystoneLastRequestAt, 0))
            < entryCreationKeyState.LEADER_KEY_REQUEST_THROTTLE_S then
         return
+    end
+    -- LibKeystone.Request reports the caller's own key before broadcasting.
+    -- Preserve that local leader context while retaining checked wire delivery.
+    if entryCreationKeyState.CleanUnitIsGroupLeader("player") == true then
+        local keyLevel, challengeMapID, playerRating, ownInfoAvailable =
+            entryCreationKeyState.ReadOwnLibKeystoneInfo()
+        if ownInfoAvailable then
+            entryCreationKeyState.OnLeaderKeystoneData(
+                keyLevel,
+                challengeMapID,
+                playerRating,
+                _UnitFullNameForTransport("player"),
+                "PARTY"
+            )
+        end
     end
     -- WHY: external LibKeystone.Request() does not expose addon-message
     -- delivery status, so route the wire request through our checked sender.

@@ -124,17 +124,7 @@ ApplicantScoutDB.enabled = true
 reset_observed()
 local shim = harness.GetLibKeystoneShim()
 if type(shim) ~= "table" then fail("missing LibKeystone shim") end
-local shim_callback_count = 0
-shim.Register({}, function()
-    shim_callback_count = shim_callback_count + 1
-end)
-reset_observed()
-ApplicantScoutDB.enabled = false
-shim.Request("PARTY")
-assert_equal("disabled shim request callbacks", shim_callback_count, 0)
-assert_equal("disabled shim request sends", #sends, 0)
-assert_equal("disabled shim request owned reads", owned_key_reads, 0)
-assert_equal("disabled shim request rating reads", rating_reads, 0)
+assert_equal("shim has no unused request surface", shim.Request, nil)
 
 ApplicantScoutDB.enabled = false
 harness.OnLeaderKeystoneData(18, 504, 2999, "Host-Realm", "PARTY")
@@ -180,6 +170,12 @@ reset_timers()
 reset_observed()
 harness.RequestLeaderKeystone(true)
 assert_equal("enabled locked leader request schedules retry", #timers, 1)
+assert_equal("enabled locked leader request owned reads", owned_key_reads, 2)
+assert_equal("enabled locked leader request rating reads", rating_reads, 1)
+local locked_local_key = harness.ResolveLeaderKeystoneContext()
+if not locked_local_key then fail("locked request lost local leader key") end
+assert_equal("locked local leader key level", locked_local_key.level, 17)
+assert_equal("locked local leader key map", locked_local_key.challengeMapID, 503)
 reset_observed()
 ApplicantScoutDB.enabled = false
 lockdown = false

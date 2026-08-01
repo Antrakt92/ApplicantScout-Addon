@@ -1210,7 +1210,7 @@ def test_leader_keystone_fallback_shim_speaks_libks_party_protocol():
 
     assert 'entryCreationKeyState.GetLibKeystoneShim()' in leader_body
     assert 'C_ChatInfo.RegisterAddonMessagePrefix("LibKS")' in leader_body
-    assert 'entryCreationKeyState.SendLibKeystoneAddonMessage("R", channel)' in leader_body
+    assert 'entryCreationKeyState.SendLibKeystoneAddonMessage("R", "PARTY")' in leader_body
     assert "entryCreationKeyState.SendLibKeystoneAddonMessage(payload, channel)" in leader_body
     assert 'msg == "R"' in leader_body
     assert 'msg:match("^(%d+),(%d+),(%d+)$")' in leader_body
@@ -1221,24 +1221,30 @@ def test_leader_keystone_fallback_shim_speaks_libks_party_protocol():
     assert 'CHAT_MSG_ADDON                  = function(_, prefix, msg, channel, sender)' in events_body
 
 
-def test_libkeystone_shim_request_uses_checked_send_path():
+def test_leader_keystone_request_owns_checked_send_and_local_callback():
     source = _lua_source()
     leader_body = _slice_between(
         source,
         "entryCreationKeyState.GetLibKeystone = function()",
         "local function _RaidSubgroupForRoster(index)",
     )
+    shim_body = _slice_between(
+        leader_body,
+        "entryCreationKeyState.GetLibKeystoneShim = function()",
+        "entryCreationKeyState.LibKeystoneShimHandleAddonMessage = function(",
+    )
     request_body = _slice_between(
         leader_body,
-        "Request = function(channel)",
-        "    }\n    return entryCreationKeyState.libKeystoneShim",
+        "entryCreationKeyState.RequestLeaderKeystone = function(force",
+        "entryCreationKeyState.ResolveLeaderKeystoneContext = function()",
     )
 
-    assert "entryCreationKeyState.SendLibKeystoneAddonMessage = function(payload, channel)" in leader_body
-    assert "pcall(function()" in leader_body
-    assert "C_ChatInfo.SendAddonMessage(\"LibKS\", payload, channel)" in leader_body
-    assert 'return entryCreationKeyState.SendLibKeystoneAddonMessage("R", channel)' in request_body
-    assert 'C_ChatInfo.SendAddonMessage("LibKS", "R", channel)' not in request_body
+    callback_idx = request_body.index("entryCreationKeyState.OnLeaderKeystoneData(")
+    send_idx = request_body.index(
+        'entryCreationKeyState.SendLibKeystoneAddonMessage("R", "PARTY")'
+    )
+    assert callback_idx < send_idx
+    assert "Request = function" not in shim_body
 
 
 def test_libkeystone_response_failure_records_or_retries():

@@ -99,6 +99,12 @@ assert_equal("external callback registrations", external_registers, 1)
 assert_equal("external checked request count", #sends, 1)
 assert_equal("external checked request payload", sends[1].payload, "R")
 assert_equal("external checked request channel", sends[1].channel, "PARTY")
+assert_equal("external request own-key reads", owned_key_reads, 2)
+assert_equal("external request rating reads", rating_reads, 1)
+local external_local_key = external_harness.ResolveLeaderKeystoneContext()
+if not external_local_key then fail("external request lost local leader key") end
+assert_equal("external local leader key level", external_local_key.level, 17)
+assert_equal("external local leader key map", external_local_key.challengeMapID, 503)
 if type(external_callback) ~= "function" then
     fail("external provider callback was not registered")
 end
@@ -135,6 +141,12 @@ local shim_harness = env.load_addon()
 shim_harness.RequestLeaderKeystone(true)
 assert_equal("shim checked request count", #sends, 1)
 assert_equal("shim checked request payload", sends[1].payload, "R")
+assert_equal("shim request own-key reads", owned_key_reads, 2)
+assert_equal("shim request rating reads", rating_reads, 1)
+local shim_local_key = shim_harness.ResolveLeaderKeystoneContext()
+if not shim_local_key then fail("shim request lost local leader key") end
+assert_equal("shim local leader key level", shim_local_key.level, 17)
+assert_equal("shim local leader key map", shim_local_key.challengeMapID, 503)
 
 reset_observed()
 reset_timers()
