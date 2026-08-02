@@ -115,6 +115,9 @@ LUA_DEFAULT_PLAYSTYLE_DEFERRED_TOUCH_CHECK = (
 LUA_LISTING_KEY_LEVEL_TITLES_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_listing_key_level_titles.lua"
 )
+LUA_FIXTURE_HARNESS_NAMESPACE_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_fixture_harness_namespace.lua"
+)
 LUA_GOLDEN_CASES = (
     (None, "aps1_v9_lua_golden.hex"),
     ("leader-key", "aps1_v9_lua_leader_key_golden.hex"),
@@ -126,7 +129,7 @@ BUILD_PAYLOAD_ANCHOR = (
     "local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, rosterUnavailable)"
 )
 FIXTURE_HARNESS_BOUNDARY_ANCHOR = (
-    'if type(_G.ApplicantScoutFixtureHarness) == "table" then'
+    'if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then'
 )
 CHECK_SESSION_TRANSITION_ANCHOR = "CheckSessionTransition = function(lfgReadsAllowed)"
 STATUS_HELPER_ANCHOR = "entryCreationKeyState.PrintTroubleshootingStatus = function()"
@@ -281,7 +284,7 @@ def test_snapshot_hash_oracle_is_fixture_only():
     )
     chunk_idx = fixture_source.index('    chunk("ApplicantScout", {')
     oracle_export_idx = fixture_source.index(
-        "ApplicantScoutFixtureHarness.HashSnapshot = fixture_hash_snapshot"
+        "fixtureHarness.HashSnapshot = fixture_hash_snapshot"
     )
     assert chunk_idx < oracle_export_idx
 
@@ -635,7 +638,7 @@ def test_qr_library_resolution_is_nil_safe_before_missing_lib_diagnostic():
     init_line = source[qr_init_idx : source.index("\n", qr_init_idx)]
 
     assert qr_init_idx < build_idx
-    assert "local _, _addonNS = ..." not in source
+    assert "local addonName, _addonNS = ..." not in source
     assert "local _addonNS = select(2, ...)" in source
     assert "_addonNS.QR and _addonNS.QR.qrcode" in init_line
     assert "_addonNS and" not in init_line
@@ -4750,9 +4753,29 @@ def test_listing_key_diagnostics_do_not_publish_mutable_debug_globals():
     assert "_GetVisibleApplicationViewerKeystoneLevel()" in status_body
     assert "_GetListingKeystoneLevel(" in status_body
     assert (
-        "_G.ApplicantScoutFixtureHarness.GetListingKeystoneLevel ="
+        "_addonNS.ApplicantScoutFixtureHarness.GetListingKeystoneLevel ="
         in source
     )
+
+
+def test_fixture_harness_stays_private_to_the_addon_namespace():
+    source = _lua_source()
+    fixture_source = LUA_FIXTURE_ENV.read_text(encoding="utf-8")
+
+    assert "_G.ApplicantScoutFixtureHarness" not in source
+    assert "ClearQROverflowTransport =" not in _slice_between(
+        source,
+        FIXTURE_HARNESS_BOUNDARY_ANCHOR,
+        "-- Resolve QR encoder reference",
+    )
+    assert "ApplicantScoutFixtureHarness = {}" not in fixture_source
+    assert "local fixtureHarness = {}" in fixture_source
+
+
+def test_fixture_harness_namespace_isolated_at_runtime(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_FIXTURE_HARNESS_NAMESPACE_CHECK)
+
+    assert "fixture harness namespace: PASS" in output
 
 
 def test_listing_key_level_is_derived_before_owned_keystone_activity_fallback():

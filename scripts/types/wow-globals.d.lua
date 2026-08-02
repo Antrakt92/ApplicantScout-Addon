@@ -4,9 +4,6 @@
 -- reads through _G. The broader WoW API names used directly by the runtime live
 -- in lua-diagnostics.luarc.json::diagnostics.globals.
 
----@type table?
-ApplicantScoutFixtureHarness = nil
-
 ---@type table
 Enum = {}
 

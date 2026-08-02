@@ -345,14 +345,14 @@ env.install_single_applicant = function()
 end
 
 env.load_addon = function(qr)
-    ApplicantScoutFixtureHarness = {}
+    local fixtureHarness = {}
     local chunk = assert(loadfile("ApplicantScout.lua"))
     chunk("ApplicantScout", {
         QR = qr or {},
-        ApplicantScoutFixtureHarness = ApplicantScoutFixtureHarness,
+        ApplicantScoutFixtureHarness = fixtureHarness,
     })
-    ApplicantScoutFixtureHarness.HashSnapshot = fixture_hash_snapshot
-    return ApplicantScoutFixtureHarness
+    fixtureHarness.HashSnapshot = fixture_hash_snapshot
+    return fixtureHarness
 end
 
 return env

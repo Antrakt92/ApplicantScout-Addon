@@ -4736,48 +4736,47 @@ entryCreationKeyState.AdvanceQROverflowTransport = function(state)
     return completedPass > 0, false
 end
 
-if type(_G.ApplicantScoutFixtureHarness) == "table" then
-    _G.ApplicantScoutFixtureHarness.SafeNumber = SafeNumber
-    _G.ApplicantScoutFixtureHarness.Uint32BE = _Uint32BE
-    _G.ApplicantScoutFixtureHarness.Uint16BE = _Uint16BE
-    _G.ApplicantScoutFixtureHarness.ClampUInt16 = _ClampUInt16
-    _G.ApplicantScoutFixtureHarness.ClampUInt8 = _ClampUInt8
-    _G.ApplicantScoutFixtureHarness.BuildPayload = BuildPayload
-    _G.ApplicantScoutFixtureHarness.AcquireScreenshotCVarLease =
+local _addonNS = select(2, ...)
+if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
+    _addonNS.ApplicantScoutFixtureHarness.SafeNumber = SafeNumber
+    _addonNS.ApplicantScoutFixtureHarness.Uint32BE = _Uint32BE
+    _addonNS.ApplicantScoutFixtureHarness.Uint16BE = _Uint16BE
+    _addonNS.ApplicantScoutFixtureHarness.ClampUInt16 = _ClampUInt16
+    _addonNS.ApplicantScoutFixtureHarness.ClampUInt8 = _ClampUInt8
+    _addonNS.ApplicantScoutFixtureHarness.BuildPayload = BuildPayload
+    _addonNS.ApplicantScoutFixtureHarness.AcquireScreenshotCVarLease =
         AcquireScreenshotCVarLease
-    _G.ApplicantScoutFixtureHarness.ReleaseScreenshotCVarLease =
+    _addonNS.ApplicantScoutFixtureHarness.ReleaseScreenshotCVarLease =
         ReleaseScreenshotCVarLease
-    _G.ApplicantScoutFixtureHarness.SetApplicantTransportAdapters = function(
+    _addonNS.ApplicantScoutFixtureHarness.SetApplicantTransportAdapters = function(
         infoAdapter,
         memberAdapter
     )
         entryCreationKeyState.GetApplicantInfoForTransport = infoAdapter
         entryCreationKeyState.GetApplicantMemberInfoForTransport = memberAdapter
     end
-    _G.ApplicantScoutFixtureHarness.BuildRosterPayloadRows = BuildRosterPayloadRows
-    _G.ApplicantScoutFixtureHarness.GetRaiderIOMPlusSummaryForCleanName =
+    _addonNS.ApplicantScoutFixtureHarness.BuildRosterPayloadRows = BuildRosterPayloadRows
+    _addonNS.ApplicantScoutFixtureHarness.GetRaiderIOMPlusSummaryForCleanName =
         _GetRaiderIOMPlusSummaryForCleanName
-    _G.ApplicantScoutFixtureHarness.GetListingKeystoneLevel =
+    _addonNS.ApplicantScoutFixtureHarness.GetListingKeystoneLevel =
         _GetListingKeystoneLevel
-    _G.ApplicantScoutFixtureHarness.StartQROverflowTransport =
+    _addonNS.ApplicantScoutFixtureHarness.StartQROverflowTransport =
         entryCreationKeyState.StartQROverflowTransport
-    _G.ApplicantScoutFixtureHarness.BuildQROverflowFragment =
+    _addonNS.ApplicantScoutFixtureHarness.BuildQROverflowFragment =
         entryCreationKeyState.BuildQROverflowFragment
-    _G.ApplicantScoutFixtureHarness.AdvanceQROverflowTransport =
+    _addonNS.ApplicantScoutFixtureHarness.AdvanceQROverflowTransport =
         entryCreationKeyState.AdvanceQROverflowTransport
-    _G.ApplicantScoutFixtureHarness.ClearQROverflowTransport =
-        entryCreationKeyState.ClearQROverflowTransport
-    _G.ApplicantScoutFixtureHarness.StartSession = StartSession
-    _G.ApplicantScoutFixtureHarness.EndSession = EndSession
-    _G.ApplicantScoutFixtureHarness.EnsureRosterInspectBatchBeforeSnapshot =
+    _addonNS.ApplicantScoutFixtureHarness.StartSession = StartSession
+    _addonNS.ApplicantScoutFixtureHarness.EndSession = EndSession
+    _addonNS.ApplicantScoutFixtureHarness.EnsureRosterInspectBatchBeforeSnapshot =
         entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot
-    _G.ApplicantScoutFixtureHarness.ScheduleRosterLoadRetry =
+    _addonNS.ApplicantScoutFixtureHarness.ScheduleRosterLoadRetry =
         entryCreationKeyState.ScheduleRosterLoadRetry
-    _G.ApplicantScoutFixtureHarness.ShouldAttemptRosterLoad =
+    _addonNS.ApplicantScoutFixtureHarness.ShouldAttemptRosterLoad =
         entryCreationKeyState.ShouldAttemptRosterLoad
-    _G.ApplicantScoutFixtureHarness.ClearRosterLoadRetryState =
+    _addonNS.ApplicantScoutFixtureHarness.ClearRosterLoadRetryState =
         entryCreationKeyState.ClearRosterLoadRetryState
-    _G.ApplicantScoutFixtureHarness.RosterLoadRetryState = function()
+    _addonNS.ApplicantScoutFixtureHarness.RosterLoadRetryState = function()
         return {
             attempt = entryCreationKeyState.rosterLoadRetryAttempt or 0,
             deadline = entryCreationKeyState.rosterLoadRetryDeadline,
@@ -4788,7 +4787,7 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
             blockReason = entryCreationKeyState.rosterInspectBatchLastBlockReason,
         }
     end
-    _G.ApplicantScoutFixtureHarness.RosterInspectFailureState = function(guid)
+    _addonNS.ApplicantScoutFixtureHarness.RosterInspectFailureState = function(guid)
         guid = SafeStr(guid, "")
         return {
             failures = entryCreationKeyState.rosterInspectFailuresByGUID[guid] or 0,
@@ -4796,48 +4795,48 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
             exhausted = entryCreationKeyState.rosterInspectExhaustedGUIDs[guid] == true,
         }
     end
-    _G.ApplicantScoutFixtureHarness.OnRosterInspectReady = _OnRosterInspectReady
-    _G.ApplicantScoutFixtureHarness.LastPayloadRosterCount = function()
+    _addonNS.ApplicantScoutFixtureHarness.OnRosterInspectReady = _OnRosterInspectReady
+    _addonNS.ApplicantScoutFixtureHarness.LastPayloadRosterCount = function()
         return entryCreationKeyState.lastPayloadRosterCount
     end
-    _G.ApplicantScoutFixtureHarness.OnLeaderKeystoneData =
+    _addonNS.ApplicantScoutFixtureHarness.OnLeaderKeystoneData =
         entryCreationKeyState.OnLeaderKeystoneData
-    _G.ApplicantScoutFixtureHarness.SendLibKeystoneAddonMessage =
+    _addonNS.ApplicantScoutFixtureHarness.SendLibKeystoneAddonMessage =
         entryCreationKeyState.SendLibKeystoneAddonMessage
-    _G.ApplicantScoutFixtureHarness.RequestLeaderKeystone =
+    _addonNS.ApplicantScoutFixtureHarness.RequestLeaderKeystone =
         entryCreationKeyState.RequestLeaderKeystone
-    _G.ApplicantScoutFixtureHarness.GetLibKeystoneShim =
+    _addonNS.ApplicantScoutFixtureHarness.GetLibKeystoneShim =
         entryCreationKeyState.GetLibKeystoneShim
-    _G.ApplicantScoutFixtureHarness.LibKeystoneShimHandleAddonMessage =
+    _addonNS.ApplicantScoutFixtureHarness.LibKeystoneShimHandleAddonMessage =
         entryCreationKeyState.LibKeystoneShimHandleAddonMessage
-    _G.ApplicantScoutFixtureHarness.ScheduleLibKeystoneResponseRetry =
+    _addonNS.ApplicantScoutFixtureHarness.ScheduleLibKeystoneResponseRetry =
         entryCreationKeyState.ScheduleLibKeystoneResponseRetry
-    _G.ApplicantScoutFixtureHarness.ScheduleLeaderKeystoneRequestRetry =
+    _addonNS.ApplicantScoutFixtureHarness.ScheduleLeaderKeystoneRequestRetry =
         entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry
-    _G.ApplicantScoutFixtureHarness.ResolveLeaderKeystoneContext =
+    _addonNS.ApplicantScoutFixtureHarness.ResolveLeaderKeystoneContext =
         entryCreationKeyState.ResolveLeaderKeystoneContext
-    _G.ApplicantScoutFixtureHarness.LeaderKeystoneRecoveryState = function()
+    _addonNS.ApplicantScoutFixtureHarness.LeaderKeystoneRecoveryState = function()
         return {
             combatDeferred =
                 entryCreationKeyState.leaderKeystoneContextCombatDeferred == true,
         }
     end
-    _G.ApplicantScoutFixtureHarness.LastPayloadRosterIncomplete = function()
+    _addonNS.ApplicantScoutFixtureHarness.LastPayloadRosterIncomplete = function()
         return entryCreationKeyState.lastPayloadRosterIncomplete == true
     end
-    _G.ApplicantScoutFixtureHarness.PrimeAutoHiPartyMembers =
+    _addonNS.ApplicantScoutFixtureHarness.PrimeAutoHiPartyMembers =
         entryCreationKeyState.PrimeAutoHiPartyMembers
-    _G.ApplicantScoutFixtureHarness.ResetAutoHiPartyMembers =
+    _addonNS.ApplicantScoutFixtureHarness.ResetAutoHiPartyMembers =
         entryCreationKeyState.ResetAutoHiPartyMembers
-    _G.ApplicantScoutFixtureHarness.ScheduleAutoHiForNewPartyMembers =
+    _addonNS.ApplicantScoutFixtureHarness.ScheduleAutoHiForNewPartyMembers =
         entryCreationKeyState.ScheduleAutoHiForNewPartyMembers
-    _G.ApplicantScoutFixtureHarness.SyncAutoHiInitialGroupState =
+    _addonNS.ApplicantScoutFixtureHarness.SyncAutoHiInitialGroupState =
         entryCreationKeyState.SyncAutoHiInitialGroupState
-    _G.ApplicantScoutFixtureHarness.NormalizeAutoHiMessage =
+    _addonNS.ApplicantScoutFixtureHarness.NormalizeAutoHiMessage =
         entryCreationKeyState.NormalizeAutoHiMessage
-    _G.ApplicantScoutFixtureHarness.AutoHiChatChannel =
+    _addonNS.ApplicantScoutFixtureHarness.AutoHiChatChannel =
         entryCreationKeyState.AutoHiChatChannel
-    _G.ApplicantScoutFixtureHarness.AutoHiMaxBytes = function()
+    _addonNS.ApplicantScoutFixtureHarness.AutoHiMaxBytes = function()
         return entryCreationKeyState.AUTO_HI_MAX_BYTES
     end
 end
@@ -4845,7 +4844,6 @@ end
 -- Resolve QR encoder reference (set by libs/qrencode.lua via addon namespace).
 -- Nil-safe so BuildQRMatrix can show its missing-library diagnostic instead of
 -- crashing at file load if the embedded QR library failed to populate ns.QR.
-local _addonNS = select(2, ...)
 local _qrencode = _addonNS.QR and _addonNS.QR.qrcode
 
 -- Acquire (or reuse from pool) a black-rectangle texture and position+size it.
@@ -4978,14 +4976,14 @@ local function _BuildQRBlackRunsAsync(
     C_Timer.After(0, ContinueBuild)
 end
 
-if type(_G.ApplicantScoutFixtureHarness) == "table" then
-    _G.ApplicantScoutFixtureHarness.BuildQRBlackRunsAsync = _BuildQRBlackRunsAsync
-    _G.ApplicantScoutFixtureHarness.GetQRModuleUISize =
+if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
+    _addonNS.ApplicantScoutFixtureHarness.BuildQRBlackRunsAsync = _BuildQRBlackRunsAsync
+    _addonNS.ApplicantScoutFixtureHarness.GetQRModuleUISize =
         entryCreationKeyState.GetQRModuleUISize
-    _G.ApplicantScoutFixtureHarness.SetQRPaintJobGeneration = function(value)
+    _addonNS.ApplicantScoutFixtureHarness.SetQRPaintJobGeneration = function(value)
         entryCreationKeyState.qrPaintJobGen = value
     end
-    _G.ApplicantScoutFixtureHarness.SetQRFrameForTests = function(value)
+    _addonNS.ApplicantScoutFixtureHarness.SetQRFrameForTests = function(value)
         qrFrame = value
     end
 end
@@ -5252,8 +5250,8 @@ local function BuildQRMatrix(
     end)
 end
 
-if type(_G.ApplicantScoutFixtureHarness) == "table" then
-    _G.ApplicantScoutFixtureHarness.BuildQRMatrixAsync = BuildQRMatrix
+if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
+    _addonNS.ApplicantScoutFixtureHarness.BuildQRMatrixAsync = BuildQRMatrix
 end
 
 -- State for trigger throttling + dedup
@@ -5978,8 +5976,8 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     )
 end
 
-if type(_G.ApplicantScoutFixtureHarness) == "table" then
-    _G.ApplicantScoutFixtureHarness.QRTransportState = function()
+if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
+    _addonNS.ApplicantScoutFixtureHarness.QRTransportState = function()
         return {
             pendingShotDirty = pendingShotDirty == true,
             lastSnapshotHash = lastSnapshotHash,
@@ -6013,7 +6011,7 @@ if type(_G.ApplicantScoutFixtureHarness) == "table" then
             suppressedByInteraction = _qrSuppressedByInteraction == true,
         }
     end
-    _G.ApplicantScoutFixtureHarness.SettingsAttachState = function()
+    _addonNS.ApplicantScoutFixtureHarness.SettingsAttachState = function()
         return {
             attached = settingsFrameAttached == true,
             watcher = entryCreationKeyState.settingsFrameAttachWatcher,
@@ -6299,8 +6297,8 @@ local EVENT_HANDLERS = {
     end,
 }
 
-if type(_G.ApplicantScoutFixtureHarness) == "table" then
-    _G.ApplicantScoutFixtureHarness.FireEvent = function(event, ...)
+if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
+    _addonNS.ApplicantScoutFixtureHarness.FireEvent = function(event, ...)
         local handler = EVENT_HANDLERS[event]
         if handler then return handler(event, ...) end
     end
@@ -6467,8 +6465,8 @@ _SetEnabled = function(flag)
     end
 end
 
-if type(_G.ApplicantScoutFixtureHarness) == "table" then
-    _G.ApplicantScoutFixtureHarness.SetEnabled = _SetEnabled
+if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
+    _addonNS.ApplicantScoutFixtureHarness.SetEnabled = _SetEnabled
 end
 
 -- Apply ApplicantScoutDB.debug + emit feedback for both slash and settings UI.
