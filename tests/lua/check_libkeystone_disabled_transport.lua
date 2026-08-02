@@ -98,8 +98,6 @@ local required_exports = {
     "RequestLeaderKeystone",
     "GetLibKeystoneShim",
     "LibKeystoneShimHandleAddonMessage",
-    "ScheduleLibKeystoneResponseRetry",
-    "ScheduleLeaderKeystoneRequestRetry",
     "ResolveLeaderKeystoneContext",
 }
 for _, name in ipairs(required_exports) do

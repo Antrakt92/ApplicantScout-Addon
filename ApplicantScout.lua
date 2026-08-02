@@ -4874,10 +4874,6 @@ if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
         entryCreationKeyState.GetLibKeystoneShim
     _addonNS.ApplicantScoutFixtureHarness.LibKeystoneShimHandleAddonMessage =
         entryCreationKeyState.LibKeystoneShimHandleAddonMessage
-    _addonNS.ApplicantScoutFixtureHarness.ScheduleLibKeystoneResponseRetry =
-        entryCreationKeyState.ScheduleLibKeystoneResponseRetry
-    _addonNS.ApplicantScoutFixtureHarness.ScheduleLeaderKeystoneRequestRetry =
-        entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry
     _addonNS.ApplicantScoutFixtureHarness.ResolveLeaderKeystoneContext =
         entryCreationKeyState.ResolveLeaderKeystoneContext
     _addonNS.ApplicantScoutFixtureHarness.LeaderKeystoneRecoveryState = function()
@@ -5336,8 +5332,8 @@ lastQREncodeBytes = 0
 lastQREncodeError = nil
 qrForceVisibleForShot = false
 qrForceVisibleShotGen = 0
-local SHOT_THROTTLE_S = 0.5
-local TRANSPORT_POLL_S = 0.5
+entryCreationKeyState.SHOT_THROTTLE_S = 0.5
+entryCreationKeyState.TRANSPORT_POLL_S = 0.5
 local lastTransportPollTime = 0
 
 local function _ReleaseForceVisibleShotLease(forceVisibleShotGen)
@@ -5565,7 +5561,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     local now = GetTime()
     local minShotInterval = entryCreationKeyState.qrOverflowState
         and entryCreationKeyState.QR_OVERFLOW_SHOT_INTERVAL_S
-        or SHOT_THROTTLE_S
+        or entryCreationKeyState.SHOT_THROTTLE_S
     if not force and now - lastShotTime < minShotInterval then
         pendingShotDirty = true
         return
@@ -6462,14 +6458,16 @@ C_Timer.NewTicker(0.25, function()
         -- Drain pending throttled shot: data was changed during throttle
         -- window (pendingShotDirty=true), but no new events fired since.
         -- Without this drain: shot never goes out for sustained state.
-        if pendingShotDirty and (now - lastShotTime) >= SHOT_THROTTLE_S then
+        if pendingShotDirty
+           and (now - lastShotTime) >= entryCreationKeyState.SHOT_THROTTLE_S then
             local transportReady = lfgReadsAllowed or _HasGroupRosterForTransport() or isSessionActive
             if transportReady then
                 MaybeTriggerScreenshot(false, nil, nil, lfgReadsAllowed)
             end
         end
         if ApplicantScoutDB and ApplicantScoutDB.enabled
-           and (now - lastTransportPollTime) >= TRANSPORT_POLL_S then
+           and (now - lastTransportPollTime)
+               >= entryCreationKeyState.TRANSPORT_POLL_S then
             lastTransportPollTime = now
             local entry = CheckSessionTransition(lfgReadsAllowed)
             if isSessionActive then
@@ -6544,10 +6542,9 @@ local function _RunDisabledCleanup()
     qrMoveMode = false
     _RefreshQRMouse()
 
-    -- If no session was active, EndSession didn't schedule deferred Hide; sync
-    -- Hide here. Active-session case is handled by EndSession's deferred
-    -- _RefreshQRVisibility after the final clear-shot frame.
-    if qrFrame and not wasSessionActive then qrFrame:Hide() end
+    -- Re-enter the visibility coordinator even on an idempotent disable. A
+    -- terminal screenshot lease must keep the QR visible until capture ends.
+    _RefreshQRVisibility()
 
     RestoreScreenshotCVarsWhenSafe(
         wasSessionActive

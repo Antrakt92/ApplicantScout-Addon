@@ -13,6 +13,7 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "terminal-shotnow-priority"
        or fixture_mode == "terminal-clear-failure"
        or fixture_mode == "terminal-clear-always-fail"
+       or fixture_mode == "terminal-repeat-disable"
        or fixture_mode == "interaction-during-paint"
        or fixture_mode == "interaction-during-settle"
        or fixture_mode == "info-panel-during-settle"
@@ -46,6 +47,7 @@ local terminal_shotnow_priority = fixture_mode == "terminal-shotnow-priority"
 local terminal_clear_failure = fixture_mode == "terminal-clear-failure"
 local terminal_clear_always_fail = fixture_mode == "terminal-clear-always-fail"
 local terminal_clear_mode = terminal_clear_failure or terminal_clear_always_fail
+local terminal_repeat_disable = fixture_mode == "terminal-repeat-disable"
 local interaction_during_paint = fixture_mode == "interaction-during-paint"
 local interaction_during_settle = fixture_mode == "interaction-during-settle"
 local info_panel_during_settle = fixture_mode == "info-panel-during-settle"
@@ -137,6 +139,9 @@ local screenshot_shotnow_result_checked = false
 local terminal_shotnow_started = false
 local terminal_shotnow_await_checked = false
 local terminal_shotnow_retry_checked = false
+local terminal_repeat_disable_started = false
+local terminal_repeat_disable_visibility_checks = 0
+local harness = nil
 
 Enum = Enum or {}
 Enum.PlayerInteractionType = {
@@ -173,6 +178,19 @@ Screenshot = function()
         format = cvars.screenshotFormat,
         quality = cvars.screenshotQuality,
     }
+    local transport_state = harness and harness.QRTransportState()
+    if terminal_repeat_disable
+       and transport_state
+       and transport_state.terminalClearDispatchCount > 0 then
+        SlashCmdList.APSCOUT("off")
+        transport_state = harness.QRTransportState()
+        terminal_repeat_disable_visibility_checks =
+            terminal_repeat_disable_visibility_checks + 1
+        assert(transport_state.captureInProgress
+               and transport_state.forceVisible
+               and transport_state.qrFrameShown,
+            "repeated disable hid the QR during a terminal capture lease")
+    end
     local fail_terminal = terminal_failure_started
        and (terminal_clear_always_fail
             or (terminal_clear_failure and terminal_failure_count == 0))
@@ -344,7 +362,7 @@ qr_namespace.QR.qrcode = function(...)
     if ok then qr_encode_successes = qr_encode_successes + 1 end
     return ok, result
 end
-local harness = env.load_addon(qr_namespace.QR)
+harness = env.load_addon(qr_namespace.QR)
 
 for _, frame in ipairs(frames) do
     if frame.events.PLAYER_ENTERING_WORLD and frame.scripts.OnEvent then
@@ -852,6 +870,16 @@ for _ = 1, overflow_mode and 2500 or screenshot_event_timeout and 650 or 360 do
         C_LFGList.GetActiveEntryInfo = function() return nil end
         harness.EndSession()
     end
+    if terminal_repeat_disable
+       and not terminal_repeat_disable_started
+       and #screenshot_times == 2 then
+        terminal_repeat_disable_started = true
+        applicant_ids = {}
+        GetNumGroupMembers = function() return 0 end
+        C_LFGList.HasActiveEntryInfo = function() return false end
+        C_LFGList.GetActiveEntryInfo = function() return nil end
+        harness.EndSession()
+    end
 
     if terminal_shotnow_priority
        and not terminal_shotnow_started
@@ -941,6 +969,22 @@ elseif screenshot_event_timeout then
     assert(state.screenshotFailureHash ~= nil
            and state.screenshotFailureAttemptCount == 2,
         "missing result events did not exhaust the bounded retry budget")
+elseif terminal_repeat_disable then
+    local state = harness.QRTransportState()
+    assert(terminal_repeat_disable_started,
+        "terminal repeated-disable checkpoint did not start")
+    assert(terminal_repeat_disable_visibility_checks == 2,
+        "repeated disable did not cover both terminal captures")
+    assert(#screenshot_times == 4 and screenshot_attempts == 4,
+        string.format("repeated disable produced shots=%d attempts=%d, expected 4/4",
+            #screenshot_times, screenshot_attempts))
+    assert(not state.sessionActive
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown
+           and state.terminalClearDispatchCount == 2,
+        "terminal repeated-disable transport did not settle cleanly")
 elseif terminal_clear_failure then
     local state = harness.QRTransportState()
     assert(terminal_failure_started, "terminal-clear failure phase did not start")

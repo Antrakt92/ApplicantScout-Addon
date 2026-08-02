@@ -13,6 +13,14 @@ assert(
     "unused QR overflow clear helper must not remain exported"
 )
 assert(
+    first.ScheduleLibKeystoneResponseRetry == nil,
+    "unused LibKeystone response scheduler must not remain exported"
+)
+assert(
+    first.ScheduleLeaderKeystoneRequestRetry == nil,
+    "unused leader keystone request scheduler must not remain exported"
+)
+assert(
     ApplicantScoutFixtureHarness.sentinel == true
         and ApplicantScoutFixtureHarness.BuildPayload == nil,
     "addon load must not mutate the shared WoW global namespace"

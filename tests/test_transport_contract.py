@@ -1860,6 +1860,10 @@ def test_single_use_constants_do_not_consume_top_level_lua51_local_slots():
         assert f"local {name}" not in prefix
         assert f"local {name} =" in body
 
+    for name in ("SHOT_THROTTLE_S", "TRANSPORT_POLL_S"):
+        assert f"local {name}" not in source
+        assert f"entryCreationKeyState.{name} = 0.5" in source
+
 
 def test_screenshot_cvars_are_leased_only_around_capture():
     source = _lua_source()
@@ -3874,6 +3878,18 @@ def test_persistent_terminal_clear_failures_stop_after_two_serial_dispatches(
     assert output.count("screenshot capture failed during forced capture") == 2
     assert output.splitlines()[-1] == (
         "ok qr-capture-lifecycle mode=terminal-clear-always-fail shots=2 attempts=4"
+    )
+
+
+def test_repeated_disable_keeps_each_terminal_capture_visible(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "terminal-repeat-disable",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=terminal-repeat-disable shots=4 attempts=4"
     )
 
 
