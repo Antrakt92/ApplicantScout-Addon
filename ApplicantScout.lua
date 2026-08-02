@@ -4970,17 +4970,12 @@ entryCreationKeyState.GetQRModuleUISize = function()
 end
 
 local function _AcquireQRTexture(x, y, w, h)
-    local QR_TEXTURE_HARD_CAP = 10000 -- safety against runaway texture creation
     if qrTextureUsed >= entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then
         return nil
     end
     qrTextureUsed = qrTextureUsed + 1
     local t = qrTexturePool[qrTextureUsed]
     if not t then
-        if qrTextureUsed > QR_TEXTURE_HARD_CAP then
-            qrTextureUsed = qrTextureUsed - 1  -- roll back; don't track unused
-            return nil
-        end
         t = qrFrame:CreateTexture(nil, "BORDER")
         t:SetColorTexture(0, 0, 0, 1)
         qrTexturePool[qrTextureUsed] = t

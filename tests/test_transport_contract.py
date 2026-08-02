@@ -1852,11 +1852,6 @@ def test_single_use_constants_do_not_consume_top_level_lua51_local_slots():
             "local function _EntryCreationCacheFresh(cache)",
             "local function _EntryCreationCacheMatchesListing(cache, listingContext)",
         ),
-        (
-            "QR_TEXTURE_HARD_CAP",
-            "local function _AcquireQRTexture(x, y, w, h)",
-            "local function _BuildQRBlackRunsAsync(",
-        ),
     )
 
     for name, start, end in cases:
@@ -3479,7 +3474,7 @@ def test_pveframe_position_restore_does_not_hook_groupfinder_show_stack():
     assert "entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker()" in ticker_body
 
 
-def test_qr_render_uses_script_safe_budget_before_texture_hard_cap():
+def test_qr_render_uses_script_safe_texture_budget():
     source = _lua_source()
     qr_body = _slice_between(
         source,
@@ -3490,7 +3485,6 @@ def test_qr_render_uses_script_safe_budget_before_texture_hard_cap():
     budget_idx = qr_body.index("entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET = 6000")
     chunk_idx = qr_body.index("entryCreationKeyState.QR_TEXTURE_PAINT_CHUNK = 450")
     scan_chunk_idx = qr_body.index("entryCreationKeyState.QR_RUN_SCAN_ROWS_PER_FRAME = 12")
-    hard_cap_idx = qr_body.index("local QR_TEXTURE_HARD_CAP = 10000")
     async_builder_idx = qr_body.index("local function _BuildQRBlackRunsAsync(")
     scan_timer_idx = qr_body.index("C_Timer.After(0, ContinueBuild)", async_builder_idx)
     build_call_idx = qr_body.index("_BuildQRBlackRunsAsync(\n                matrix,")
@@ -3499,7 +3493,8 @@ def test_qr_render_uses_script_safe_budget_before_texture_hard_cap():
     )
     finish_failure_idx = qr_body.index("FinishPaint(false)", paint_budget_idx)
 
-    assert budget_idx < chunk_idx < scan_chunk_idx < hard_cap_idx
+    assert budget_idx < chunk_idx < scan_chunk_idx < async_builder_idx
+    assert "QR_TEXTURE_HARD_CAP" not in qr_body
     assert async_builder_idx < scan_timer_idx < build_call_idx
     assert "_CountQRBlackRuns" not in qr_body
     assert "entryCreationKeyState.QR_RUN_STRIDE = 4" in qr_body
