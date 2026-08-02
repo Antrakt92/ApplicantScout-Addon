@@ -3809,6 +3809,49 @@ def test_missing_screenshot_result_event_times_out_and_stops_boundedly(pytestcon
     )
 
 
+@pytest.mark.parametrize(
+    "mode",
+    ["screenshot-overlap-terminal", "screenshot-overlap-restart"],
+)
+def test_unresolved_screenshot_is_serialized_before_terminal_or_restart(
+    pytestconfig,
+    mode,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        mode,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode={mode} shots=3 attempts=3"
+    )
+
+
+@pytest.mark.parametrize(
+    ("mode", "shots", "attempts"),
+    [
+        ("screenshot-overlap-shotnow", 2, 2),
+        ("terminal-shotnow-priority", 4, 4),
+    ],
+)
+def test_manual_force_preserves_current_screenshot_and_terminal_priority(
+    pytestconfig,
+    mode,
+    shots,
+    attempts,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        mode,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode={mode} shots={shots} attempts={attempts}"
+    )
+
+
 def test_terminal_clear_screenshot_failure_retries_serially_and_commits_success(
     pytestconfig,
 ):

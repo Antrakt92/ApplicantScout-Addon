@@ -280,7 +280,12 @@ local entryCreationKeyState = {
     screenshotFailureAttemptCount = 0,
     screenshotAwaitingResult = false,
     screenshotAwaitingJobGen = nil,
+    screenshotAwaitingSuperseded = false,
     screenshotResultHandler = nil,
+    screenshotPendingForce = false,
+    screenshotPendingTerminalClear = false,
+    screenshotPendingSessionGen = nil,
+    screenshotPendingLFGReadsAllowed = true,
     screenshotLastResult = "never",
     QR_TRANSPORT_JOB_TIMEOUT_S = 8.0,
     QR_RECOVERY_NOTICE_COOLDOWN_S = 30,
@@ -365,6 +370,70 @@ local function IsSecretValue(v)
     local ok, isSecret = pcall(issv, v)
     if not ok then return true end
     return isSecret == true
+end
+
+entryCreationKeyState.ClearPendingForcedScreenshot = function()
+    entryCreationKeyState.screenshotPendingForce = false
+    entryCreationKeyState.screenshotPendingTerminalClear = false
+    entryCreationKeyState.screenshotPendingSessionGen = nil
+    entryCreationKeyState.screenshotPendingLFGReadsAllowed = true
+end
+
+entryCreationKeyState.QueuePendingForcedScreenshot = function(
+    terminalClear,
+    lfgReadsAllowed
+)
+    entryCreationKeyState.screenshotPendingForce = true
+    if terminalClear then
+        entryCreationKeyState.screenshotPendingTerminalClear = true
+    end
+    entryCreationKeyState.screenshotPendingSessionGen = sessionGen
+    entryCreationKeyState.screenshotPendingLFGReadsAllowed =
+        lfgReadsAllowed ~= false
+end
+
+entryCreationKeyState.TakePendingForcedScreenshot = function()
+    local pending = entryCreationKeyState.screenshotPendingForce == true
+    local terminalClear =
+        entryCreationKeyState.screenshotPendingTerminalClear == true
+    local pendingSessionGen = entryCreationKeyState.screenshotPendingSessionGen
+    local lfgReadsAllowed =
+        entryCreationKeyState.screenshotPendingLFGReadsAllowed ~= false
+    entryCreationKeyState.ClearPendingForcedScreenshot()
+    return pending, terminalClear, pendingSessionGen, lfgReadsAllowed
+end
+
+entryCreationKeyState.TerminalClearOwnsTransport = function()
+    if isSessionActive
+       or entryCreationKeyState.terminalClearSessionGen ~= sessionGen then
+        return false
+    end
+    return entryCreationKeyState.screenshotPendingTerminalClear == true
+        or entryCreationKeyState.qrTransportJobTerminalClear == true
+        or entryCreationKeyState.terminalClearRetryScheduled == true
+end
+
+entryCreationKeyState.DispatchPendingForcedScreenshot = function()
+    local pendingForce, pendingTerminalClear,
+          pendingSessionGen, pendingLFGReadsAllowed =
+        entryCreationKeyState.TakePendingForcedScreenshot()
+    if not pendingForce or pendingSessionGen ~= sessionGen then
+        return false
+    end
+    if pendingTerminalClear then
+        if not isSessionActive
+           and entryCreationKeyState.terminalClearSessionGen
+               == pendingSessionGen then
+            MaybeTriggerScreenshot(true, nil, true)
+            return true
+        end
+        return false
+    end
+    if entryCreationKeyState.TerminalClearOwnsTransport() then
+        return false
+    end
+    MaybeTriggerScreenshot(true, nil, nil, pendingLFGReadsAllowed)
+    return true
 end
 
 entryCreationKeyState.CleanUnitAPIBoolean = function(api, ...)
@@ -677,6 +746,7 @@ StartSession = function()
     if isSessionActive then return end
     isSessionActive = true
     sessionGen = sessionGen + 1
+    entryCreationKeyState.ClearPendingForcedScreenshot()
 
     -- QR transport state reset: force fresh full snapshot at session start.
     -- BuildPayload emits VERSION on every shot so companion-launched-mid-session
@@ -696,8 +766,15 @@ StartSession = function()
     lastQREncodeMode = "never"
     lastQREncodeBytes = 0
     lastQREncodeError = nil
-    entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
-    entryCreationKeyState.ClearQRTransportJob()
+    if entryCreationKeyState.screenshotAwaitingResult then
+        -- SCREENSHOT_* has no request identity. Keep the old handler armed so
+        -- its eventual event/timeout can be consumed without resolving a new
+        -- session capture.
+        entryCreationKeyState.screenshotAwaitingSuperseded = true
+    else
+        entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
+        entryCreationKeyState.ClearQRTransportJob()
+    end
     qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
     qrForceVisibleForShot = false
     if qrFrame then qrFrame:SetFrameStrata("DIALOG") end
@@ -738,8 +815,14 @@ EndSession = function()
     entryCreationKeyState.ClearRosterInspectFailureState()
     entryCreationKeyState.ClearRosterLoadRetryState()
     entryCreationKeyState.ClearRosterCompositionChanged()
-    entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
-    entryCreationKeyState.ClearQRTransportJob()
+    if entryCreationKeyState.screenshotAwaitingResult then
+        -- Do not orphan an identity-free SCREENSHOT_* result. The terminal
+        -- request below is queued behind this physical capture.
+        entryCreationKeyState.screenshotAwaitingSuperseded = true
+    else
+        entryCreationKeyState.qrPaintJobGen = (entryCreationKeyState.qrPaintJobGen or 0) + 1
+        entryCreationKeyState.ClearQRTransportJob()
+    end
     qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
     qrForceVisibleForShot = false
     if qrFrame then
@@ -5306,6 +5389,7 @@ entryCreationKeyState.ClearQRTransportJob = function(jobGen)
     if not jobGen or entryCreationKeyState.screenshotAwaitingJobGen == jobGen then
         entryCreationKeyState.screenshotAwaitingResult = false
         entryCreationKeyState.screenshotAwaitingJobGen = nil
+        entryCreationKeyState.screenshotAwaitingSuperseded = false
         entryCreationKeyState.screenshotResultHandler = nil
     end
     return true
@@ -5452,6 +5536,31 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     -- explicit support commands.
     if not force and _qrSuppressedByInteraction then
         pendingShotDirty = true
+        return
+    end
+
+    -- A terminal clear owns the transport through both bounded dispatches.
+    -- Manual support shots are redundant after the session ended and must not
+    -- replace its build, physical result waiter, or scheduled retry.
+    if force
+       and not terminalClear
+       and entryCreationKeyState.TerminalClearOwnsTransport() then
+        return
+    end
+
+    -- SCREENSHOT_* events carry no request identity. Never invoke Screenshot()
+    -- twice concurrently: a forced/manual or terminal request waits until the
+    -- old event (or watchdog timeout) is consumed, then rebuilds current state.
+    if entryCreationKeyState.screenshotAwaitingResult then
+        if force then
+            entryCreationKeyState.QueuePendingForcedScreenshot(
+                terminalClear,
+                lfgReadsAllowed
+            )
+        else
+            pendingShotDirty = true
+            entryCreationKeyState.qrPaintDirtyDuringPaint = true
+        end
         return
     end
 
@@ -5767,6 +5876,18 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 return false
             end
             screenshotResolved = true
+            if entryCreationKeyState.screenshotAwaitingSuperseded then
+                entryCreationKeyState.screenshotLastResult = "superseded " ..
+                    (failureReason or (screenshotSucceeded and "success" or "failure"))
+                entryCreationKeyState.ClearQRTransportJob(jobGen)
+                _ReleaseForceVisibleShotLease(forceVisibleShotGen)
+                if not entryCreationKeyState.DispatchPendingForcedScreenshot()
+                   and isSessionActive then
+                    pendingShotDirty = true
+                    MarkDirty("screenshotsuperseded")
+                end
+                return true
+            end
             entryCreationKeyState.screenshotLastResult = failureReason
                 or (screenshotSucceeded and "succeeded" or "failed")
             if not screenshotSucceeded then
@@ -5790,9 +5911,12 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 entryCreationKeyState.ClearQRTransportJob(jobGen)
                 _ReleaseForceVisibleShotLease(forceVisibleShotGen)
                 if terminalClearSessionGen then
+                    entryCreationKeyState.TakePendingForcedScreenshot()
                     entryCreationKeyState.ScheduleTerminalClearRetry(
                         terminalClearSessionGen
                     )
+                else
+                    entryCreationKeyState.DispatchPendingForcedScreenshot()
                 end
                 if force then
                     APSPrint("WARN: screenshot capture failed during forced capture")
@@ -5877,9 +6001,12 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             end
             entryCreationKeyState.ClearQRTransportJob(jobGen)
             if terminalClearSessionGen then
+                entryCreationKeyState.TakePendingForcedScreenshot()
                 entryCreationKeyState.ScheduleTerminalClearRetry(
                     terminalClearSessionGen
                 )
+            else
+                entryCreationKeyState.DispatchPendingForcedScreenshot()
             end
             if forceVisibleShotGen then
                 C_Timer.After(0.05, function()
@@ -5994,6 +6121,12 @@ if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
                 entryCreationKeyState.screenshotFailureAttemptCount or 0,
             screenshotAwaitingResult =
                 entryCreationKeyState.screenshotAwaitingResult == true,
+            screenshotAwaitingSuperseded =
+                entryCreationKeyState.screenshotAwaitingSuperseded == true,
+            screenshotPendingForce =
+                entryCreationKeyState.screenshotPendingForce == true,
+            screenshotPendingTerminalClear =
+                entryCreationKeyState.screenshotPendingTerminalClear == true,
             screenshotLastResult = entryCreationKeyState.screenshotLastResult,
             qrFrameStrata = qrFrame and qrFrame.GetFrameStrata
                 and qrFrame:GetFrameStrata() or nil,

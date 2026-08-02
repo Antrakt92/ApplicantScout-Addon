@@ -7,6 +7,10 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "screenshot-always-fail"
        or fixture_mode == "screenshot-event-failure"
        or fixture_mode == "screenshot-event-timeout"
+       or fixture_mode == "screenshot-overlap-terminal"
+       or fixture_mode == "screenshot-overlap-restart"
+       or fixture_mode == "screenshot-overlap-shotnow"
+       or fixture_mode == "terminal-shotnow-priority"
        or fixture_mode == "terminal-clear-failure"
        or fixture_mode == "terminal-clear-always-fail"
        or fixture_mode == "interaction-during-paint"
@@ -34,6 +38,11 @@ local transient_screenshot_failure = fixture_mode == "screenshot-failure"
 local persistent_screenshot_failure = fixture_mode == "screenshot-always-fail"
 local screenshot_event_failure = fixture_mode == "screenshot-event-failure"
 local screenshot_event_timeout = fixture_mode == "screenshot-event-timeout"
+local screenshot_overlap_terminal = fixture_mode == "screenshot-overlap-terminal"
+local screenshot_overlap_restart = fixture_mode == "screenshot-overlap-restart"
+local screenshot_overlap = screenshot_overlap_terminal or screenshot_overlap_restart
+local screenshot_overlap_shotnow = fixture_mode == "screenshot-overlap-shotnow"
+local terminal_shotnow_priority = fixture_mode == "terminal-shotnow-priority"
 local terminal_clear_failure = fixture_mode == "terminal-clear-failure"
 local terminal_clear_always_fail = fixture_mode == "terminal-clear-always-fail"
 local terminal_clear_mode = terminal_clear_failure or terminal_clear_always_fail
@@ -119,6 +128,15 @@ local qr_mutation_count = 0
 local qr_frame_set_size_count = 0
 local event_frame = nil
 local interaction_manager_active = {}
+local delayed_screenshot_result = false
+local screenshot_overlap_started = false
+local screenshot_overlap_old_result_checked = false
+local screenshot_overlap_new_result_checked = false
+local screenshot_shotnow_started = false
+local screenshot_shotnow_result_checked = false
+local terminal_shotnow_started = false
+local terminal_shotnow_await_checked = false
+local terminal_shotnow_retry_checked = false
 
 Enum = Enum or {}
 Enum.PlayerInteractionType = {
@@ -170,6 +188,15 @@ Screenshot = function()
         "screenshot lifecycle events were not registered")
     event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_STARTED")
     if screenshot_event_timeout then return end
+    if (screenshot_overlap or screenshot_overlap_shotnow)
+       and screenshot_attempts == 1 then
+        delayed_screenshot_result = true
+        return
+    end
+    if terminal_shotnow_priority and screenshot_attempts == 3 then
+        delayed_screenshot_result = true
+        return
+    end
     if screenshot_event_failure and screenshot_attempts == 1 then
         event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_FAILED")
         return
@@ -435,6 +462,9 @@ local transport_state_fields = {
     "screenshotFailureHash",
     "screenshotFailureAttemptCount",
     "screenshotAwaitingResult",
+    "screenshotAwaitingSuperseded",
+    "screenshotPendingForce",
+    "screenshotPendingTerminalClear",
     "screenshotLastResult",
     "qrFrameStrata",
     "terminalClearDispatchCount",
@@ -590,6 +620,123 @@ for _ = 1, overflow_mode and 2500 or screenshot_event_timeout and 650 or 360 do
         end
     end
 
+    if screenshot_overlap
+       and not screenshot_overlap_started
+       and screenshot_attempts == 1
+       and harness.QRTransportState().screenshotAwaitingResult then
+        screenshot_overlap_started = true
+        applicant_ids = {}
+        GetNumGroupMembers = function() return 0 end
+        C_LFGList.HasActiveEntryInfo = function() return false end
+        C_LFGList.GetActiveEntryInfo = function() return nil end
+        harness.EndSession()
+        local queued = harness.QRTransportState()
+        assert(screenshot_attempts == 1,
+            "terminal capture overlapped the unresolved screenshot")
+        assert(queued.screenshotAwaitingResult
+               and queued.screenshotAwaitingSuperseded
+               and queued.screenshotPendingForce
+               and queued.screenshotPendingTerminalClear,
+            "terminal capture was not queued behind the unresolved screenshot")
+        if screenshot_overlap_restart then
+            applicant_ids = { 91, 92 }
+            GetNumGroupMembers = function() return 2 end
+            C_LFGList.HasActiveEntryInfo = function() return true end
+            C_LFGList.GetActiveEntryInfo = function()
+                return {
+                    activityIDs = { 401 },
+                    questID = 0,
+                    name = "Replacement capture lifecycle fixture",
+                    comment = "fresh session after queued terminal",
+                }
+            end
+            harness.StartSession()
+            local restarted = harness.QRTransportState()
+            assert(restarted.sessionActive
+                   and not restarted.screenshotPendingForce
+                   and not restarted.screenshotPendingTerminalClear,
+                "fresh session did not cancel the queued terminal capture")
+        end
+        assert(delayed_screenshot_result, "fixture lost the delayed screenshot result")
+        screenshot_times[#screenshot_times + 1] = now
+        event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_SUCCEEDED")
+        local after_old = harness.QRTransportState()
+        assert(screenshot_attempts == 1,
+            "old screenshot result synchronously launched a second Screenshot()")
+        assert(after_old.lastSnapshotHash == nil
+               and after_old.deliverySnapshotHash == nil
+               and after_old.deliverySnapshotSendCount == 0,
+            "old screenshot result committed replacement delivery state")
+        if screenshot_overlap_terminal then
+            assert(not after_old.sessionActive
+                   and after_old.paintInProgress
+                   and after_old.terminalClearDispatchCount == 1,
+                "old result did not start exactly one queued terminal job")
+        else
+            assert(after_old.sessionActive
+                   and after_old.terminalClearDispatchCount == 0,
+                "old result revived terminal work after a fresh session")
+        end
+        screenshot_overlap_old_result_checked = true
+    end
+
+    if screenshot_overlap_old_result_checked
+       and not screenshot_overlap_new_result_checked
+       and screenshot_attempts >= 2 then
+        local after_new = harness.QRTransportState()
+        assert(after_new.lastSnapshotHash ~= nil,
+            "replacement screenshot result did not commit its own delivery")
+        if screenshot_overlap_terminal then
+            assert(after_new.deliverySnapshotHash == nil
+                   and after_new.deliverySnapshotSendCount == 0,
+                "terminal screenshot result committed nonterminal delivery state")
+        else
+            assert(after_new.deliverySnapshotHash == after_new.lastSnapshotHash,
+                "fresh-session screenshot did not commit fresh delivery state")
+        end
+        screenshot_overlap_new_result_checked = true
+    end
+
+    if screenshot_overlap_shotnow
+       and not screenshot_shotnow_started
+       and screenshot_attempts == 1
+       and harness.QRTransportState().screenshotAwaitingResult then
+        screenshot_shotnow_started = true
+        SlashCmdList.APSCOUT("shotnow")
+        local queued = harness.QRTransportState()
+        assert(screenshot_attempts == 1,
+            "manual force overlapped the unresolved screenshot")
+        assert(queued.screenshotAwaitingResult
+               and not queued.screenshotAwaitingSuperseded
+               and queued.screenshotPendingForce
+               and not queued.screenshotPendingTerminalClear,
+            "manual force did not queue behind the valid screenshot")
+        assert(delayed_screenshot_result,
+            "fixture lost the delayed ordinary screenshot result")
+        screenshot_times[#screenshot_times + 1] = now
+        event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_SUCCEEDED")
+        local after_old = harness.QRTransportState()
+        assert(screenshot_attempts == 1,
+            "old ordinary result synchronously launched another Screenshot()")
+        assert(after_old.lastSnapshotHash ~= nil
+               and after_old.deliverySnapshotHash == after_old.lastSnapshotHash
+               and after_old.deliverySnapshotSendCount == 1,
+            "valid ordinary result was discarded by queued shotnow")
+        assert(after_old.paintInProgress
+               and not after_old.screenshotPendingForce,
+            "queued shotnow did not start after the ordinary result")
+    end
+
+    if screenshot_shotnow_started
+       and not screenshot_shotnow_result_checked
+       and screenshot_attempts >= 2 then
+        local after_manual = harness.QRTransportState()
+        assert(after_manual.deliverySnapshotHash == after_manual.lastSnapshotHash
+               and after_manual.deliverySnapshotSendCount == 2,
+            "queued shotnow did not commit the second valid delivery")
+        screenshot_shotnow_result_checked = true
+    end
+
     if (interaction_during_paint or interaction_during_settle or info_panel_during_settle)
        and not interaction_opened then
         local state = harness.QRTransportState()
@@ -705,6 +852,58 @@ for _ = 1, overflow_mode and 2500 or screenshot_event_timeout and 650 or 360 do
         C_LFGList.GetActiveEntryInfo = function() return nil end
         harness.EndSession()
     end
+
+    if terminal_shotnow_priority
+       and not terminal_shotnow_started
+       and #screenshot_times == 2 then
+        terminal_shotnow_started = true
+        pre_terminal_hash = harness.QRTransportState().lastSnapshotHash
+        assert(pre_terminal_hash ~= nil,
+            "terminal shotnow fixture lacks a delivered pre-terminal snapshot")
+        applicant_ids = {}
+        GetNumGroupMembers = function() return 0 end
+        C_LFGList.HasActiveEntryInfo = function() return false end
+        C_LFGList.GetActiveEntryInfo = function() return nil end
+        harness.EndSession()
+        local building = harness.QRTransportState()
+        assert(building.paintInProgress
+               and building.terminalClearDispatchCount == 1,
+            "terminal shotnow fixture did not start the first clear")
+        SlashCmdList.APSCOUT("shotnow")
+        local after_build_shotnow = harness.QRTransportState()
+        assert(after_build_shotnow.paintInProgress
+               and after_build_shotnow.terminalClearDispatchCount == 1
+               and not after_build_shotnow.screenshotPendingForce,
+            "shotnow replaced terminal work during build/paint")
+    end
+
+    if terminal_shotnow_started
+       and not terminal_shotnow_await_checked
+       and screenshot_attempts == 3
+       and harness.QRTransportState().screenshotAwaitingResult then
+        SlashCmdList.APSCOUT("shotnow")
+        local awaiting = harness.QRTransportState()
+        assert(screenshot_attempts == 3
+               and awaiting.screenshotAwaitingResult
+               and not awaiting.screenshotAwaitingSuperseded
+               and not awaiting.screenshotPendingForce,
+            "shotnow replaced the terminal physical result waiter")
+        screenshot_times[#screenshot_times + 1] = now
+        event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_SUCCEEDED")
+        local retrying = harness.QRTransportState()
+        assert(retrying.deliverySnapshotHash == nil
+               and retrying.deliverySnapshotSendCount == 0
+               and retrying.terminalClearRetryScheduled,
+            "terminal result did not commit clear state and schedule its retry")
+        terminal_shotnow_await_checked = true
+        SlashCmdList.APSCOUT("shotnow")
+        local after_retry_shotnow = harness.QRTransportState()
+        assert(screenshot_attempts == 3
+               and after_retry_shotnow.terminalClearRetryScheduled
+               and not after_retry_shotnow.screenshotPendingForce,
+            "shotnow displaced the scheduled terminal retry")
+        terminal_shotnow_retry_checked = true
+    end
 end
 
 if transient_screenshot_failure or screenshot_event_failure then
@@ -781,6 +980,69 @@ elseif terminal_clear_always_fail then
         "persistent terminal clear exceeded or missed its dispatch budget")
     assert(state.lastSnapshotHash == pre_terminal_hash,
         "failed terminal captures committed a false delivery hash")
+elseif screenshot_overlap_terminal then
+    local state = harness.QRTransportState()
+    assert(screenshot_overlap_started
+           and screenshot_overlap_old_result_checked
+           and screenshot_overlap_new_result_checked,
+        "screenshot/terminal overlap checkpoints did not complete")
+    assert(#screenshot_times == 3 and screenshot_attempts == 3,
+        string.format("serialized overlap produced shots=%d attempts=%d, expected 3/3",
+            #screenshot_times, screenshot_attempts))
+    assert(not state.sessionActive
+           and not state.screenshotAwaitingResult
+           and not state.screenshotPendingForce
+           and not state.screenshotPendingTerminalClear
+           and state.terminalClearDispatchCount == 2,
+        "serialized terminal capture did not settle after the old result")
+elseif screenshot_overlap_restart then
+    local state = harness.QRTransportState()
+    assert(screenshot_overlap_started
+           and screenshot_overlap_old_result_checked
+           and screenshot_overlap_new_result_checked,
+        "screenshot/restart overlap checkpoints did not complete")
+    assert(#screenshot_times == 3 and screenshot_attempts == 3,
+        string.format("restart overlap produced shots=%d attempts=%d, expected 3/3",
+            #screenshot_times, screenshot_attempts))
+    assert(state.sessionActive
+           and not state.screenshotAwaitingResult
+           and not state.screenshotPendingForce
+           and not state.screenshotPendingTerminalClear
+           and state.terminalClearDispatchCount == 0
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2,
+        "fresh session did not retire the queued terminal and deliver normally")
+elseif screenshot_overlap_shotnow then
+    local state = harness.QRTransportState()
+    assert(screenshot_shotnow_started and screenshot_shotnow_result_checked,
+        "ordinary screenshot/shotnow checkpoints did not complete")
+    assert(#screenshot_times == 2 and screenshot_attempts == 2,
+        string.format("shotnow serialization produced shots=%d attempts=%d, expected 2/2",
+            #screenshot_times, screenshot_attempts))
+    assert(state.sessionActive
+           and not state.screenshotAwaitingResult
+           and not state.screenshotPendingForce
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2,
+        "queued shotnow did not settle after the valid ordinary result")
+elseif terminal_shotnow_priority then
+    local state = harness.QRTransportState()
+    assert(terminal_shotnow_started
+           and terminal_shotnow_await_checked
+           and terminal_shotnow_retry_checked,
+        "terminal shotnow priority checkpoints did not complete")
+    assert(#screenshot_times == 4 and screenshot_attempts == 4,
+        string.format("terminal shotnow produced shots=%d attempts=%d, expected 4/4",
+            #screenshot_times, screenshot_attempts))
+    assert(not state.sessionActive
+           and not state.screenshotAwaitingResult
+           and not state.screenshotPendingForce
+           and not state.screenshotPendingTerminalClear
+           and not state.terminalClearRetryScheduled
+           and state.terminalClearDispatchCount == 2
+           and state.deliverySnapshotHash == nil
+           and state.deliverySnapshotSendCount == 0,
+        "manual force displaced or duplicated terminal clear delivery")
 elseif restart_race then
     local state = harness.QRTransportState()
     assert(restart_started and stale_callback_replayed,
@@ -905,7 +1167,10 @@ else
     assert(#screenshot_times >= 2,
         "polling during the render-settle window starved QR screenshots")
 end
-if #screenshot_times >= 2 then
+if #screenshot_times >= 2
+   and not screenshot_overlap
+   and not screenshot_overlap_shotnow
+   and not terminal_shotnow_priority then
     assert(screenshot_times[2] - screenshot_times[1] >= 0.5,
         string.format("redundant resend interval %.3fs ignored the screenshot throttle",
             screenshot_times[2] - screenshot_times[1]))
