@@ -31,6 +31,18 @@ ApplicantScoutDB = {
 
 local harness = env.load_addon()
 if mode == "logout" then
+    UIParent.GetWidth = function() return 1280 end
+    UIParent.GetHeight = function() return 1080 end
+    UIParent.GetLeft = function() return 0 end
+    UIParent.GetTop = function() return 1080 end
+    harness.SetQRFrameForTests({
+        GetLeft = function() return 321 end,
+        GetTop = function() return 654 end,
+        GetWidth = function() return 64 end,
+        ClearAllPoints = function() end,
+        SetPoint = function() end,
+    })
+
     local function run_logout_case(userChanged)
         cvars.screenshotQuality = "3"
         cvars.screenshotFormat = "png"
@@ -55,6 +67,9 @@ if mode == "logout" then
         end
         local writesBeforeLogout = #writes
         harness.FireEvent("PLAYER_LOGOUT")
+        assert(ApplicantScoutDB.qrFramePosition.x == 321
+               and ApplicantScoutDB.qrFramePosition.y == -426,
+            "logout did not persist the current QR frame position")
 
         if userChanged then
             assert(#writes == writesBeforeLogout,

@@ -6362,6 +6362,7 @@ local EVENT_HANDLERS = {
         if PVEFrame and PVEFrame:IsUserPlaced() and ApplicantScoutDB then
             _SavePVEFramePositionFromFrame(PVEFrame)
         end
+        _SaveQRFramePositionFromFrame()
     end,
     PARTY_LEADER_CHANGED             = function()
         entryCreationKeyState.ClearLeaderKeystone()
