@@ -33,6 +33,7 @@ assert(type(harness.ResetAutoHiPartyMembers) == "function")
 assert(type(harness.ScheduleAutoHiForNewPartyMembers) == "function")
 assert(type(harness.SyncAutoHiInitialGroupState) == "function")
 assert(type(harness.SetEnabled) == "function")
+assert(type(harness.AutoHiRetryState) == "function")
 
 local function timer_count(delay)
     local count = 0
@@ -172,6 +173,47 @@ assert(timer_count(10) == 1, "new generation did not retain a greeting")
 run_timer(1.0)
 run_timer(10)
 assert(sent == 1, "stale chat retry erased the newer pending generation")
+
+-- A retry whose setting becomes inactive must invalidate both its token and
+-- pending membership state instead of leaving a half-cleared attempt behind.
+reset_case()
+harness.PrimeAutoHiPartyMembers()
+member_count = 3
+party_guids.party2 = "Party-B"
+harness.ScheduleAutoHiForNewPartyMembers()
+lockdown = true
+run_timer(10)
+local inactiveBefore = harness.AutoHiRetryState("new-party")
+assert(inactiveBefore.deadline ~= nil and inactiveBefore.generation ~= nil
+       and inactiveBefore.pendingNewPartyMembers,
+    "lockdown retry state was not fully scheduled")
+ApplicantScoutDB.autoHiGreetNewPartyMembers = false
+run_timer(1.0)
+local inactiveAfter = harness.AutoHiRetryState("new-party")
+assert(inactiveAfter.token ~= inactiveBefore.token
+       and inactiveAfter.deadline == nil and inactiveAfter.generation == nil
+       and not inactiveAfter.pendingNewPartyMembers,
+    "inactive retry callback left partial attempt state")
+ApplicantScoutDB.autoHiGreetNewPartyMembers = true
+
+-- If the timer API disappears after the greeting delay was queued, a blocked
+-- send still terminates the whole attempt instead of retaining a stale token.
+reset_case()
+harness.PrimeAutoHiPartyMembers()
+member_count = 3
+party_guids.party2 = "Party-B"
+harness.ScheduleAutoHiForNewPartyMembers()
+lockdown = true
+local unavailableBefore = harness.AutoHiRetryState("new-party")
+local timerAfter = C_Timer.After
+C_Timer.After = nil
+run_timer(10)
+C_Timer.After = timerAfter
+local unavailableAfter = harness.AutoHiRetryState("new-party")
+assert(unavailableAfter.token ~= unavailableBefore.token
+       and unavailableAfter.deadline == nil and unavailableAfter.generation == nil
+       and not unavailableAfter.pendingNewPartyMembers,
+    "retry-unavailable path left partial attempt state")
 
 -- Re-entering the world with the same group state must reconcile rather than
 -- re-prime away a join whose greeting is already delayed.

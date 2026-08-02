@@ -1906,7 +1906,7 @@ def test_disable_cleanup_invalidates_pending_auto_hi_generations_and_retries():
     )
 
     assert "entryCreationKeyState.ClearAutoHiRuntimeState = function()" in auto_hi_body
-    assert 'entryCreationKeyState.ClearAutoHiSendRetry("group")' in auto_hi_body
+    assert 'entryCreationKeyState.ClearAutoHiAttemptState("group")' in auto_hi_body
     assert "entryCreationKeyState.autoHiGroupGen + 1" in auto_hi_body
     assert "entryCreationKeyState.autoHiGroupStateKnown = false" in auto_hi_body
     assert "entryCreationKeyState.ResetAutoHiPartyMembers()" in auto_hi_body
