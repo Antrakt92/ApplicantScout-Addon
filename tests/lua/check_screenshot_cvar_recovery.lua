@@ -35,9 +35,11 @@ if mode == "logout" then
     UIParent.GetHeight = function() return 1080 end
     UIParent.GetLeft = function() return 0 end
     UIParent.GetTop = function() return 1080 end
+    local qrLeft = 321
+    local qrTop = 654
     harness.SetQRFrameForTests({
-        GetLeft = function() return 321 end,
-        GetTop = function() return 654 end,
+        GetLeft = function() return qrLeft end,
+        GetTop = function() return qrTop end,
         GetWidth = function() return 64 end,
         ClearAllPoints = function() end,
         SetPoint = function() end,
@@ -98,6 +100,20 @@ if mode == "logout" then
 
     run_logout_case(false)
     run_logout_case(true)
+
+    qrLeft = 0
+    qrTop = 1080
+    ApplicantScoutDB.qrFramePosition = nil
+    harness.FireEvent("PLAYER_LOGOUT")
+    assert(ApplicantScoutDB.qrFramePosition == nil,
+        "logout replaced the untouched default QR sentinel with explicit zeroes")
+
+    ApplicantScoutDB.qrFramePosition = { x = 321, y = -426 }
+    SlashCmdList.APSCOUT("qrreset")
+    harness.FireEvent("PLAYER_LOGOUT")
+    assert(ApplicantScoutDB.qrFramePosition == nil,
+        "logout replaced the reset QR sentinel with explicit zeroes")
+
     io.write("ok screenshot-cvar-recovery mode=" .. mode .. "\n")
     return
 end

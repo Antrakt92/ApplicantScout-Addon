@@ -1468,7 +1468,11 @@ local function _SaveQRFramePositionFromFrame()
     local x = frameLeft - parentLeft
     local y = frameTop - parentTop
     x, y = _ClampQRPosition(x, y, _GetQRFrameSize())
-    ApplicantScoutDB.qrFramePosition = { x = x, y = y }
+    if x == 0 and y == 0 then
+        ApplicantScoutDB.qrFramePosition = nil
+    else
+        ApplicantScoutDB.qrFramePosition = { x = x, y = y }
+    end
     _ApplyQRFramePosition()
     return true
 end
@@ -6535,6 +6539,22 @@ local function _RunDisabledCleanup()
     entryCreationKeyState.ClearLeaderKeystone()
     scanDirty = false
     pendingShotDirty = false
+
+    -- Kill-switch semantics cancel manual force work that has not reached the
+    -- identity-free Screenshot() API yet. Terminal clear owns its own bounded
+    -- dispatches, while an already-requested physical screenshot must keep its
+    -- result handler armed so SCREENSHOT_* cannot resolve a later capture.
+    if not entryCreationKeyState.TerminalClearOwnsTransport() then
+        entryCreationKeyState.ClearPendingForcedScreenshot()
+        if not entryCreationKeyState.screenshotAwaitingResult then
+            entryCreationKeyState.qrPaintJobGen =
+                (entryCreationKeyState.qrPaintJobGen or 0) + 1
+            entryCreationKeyState.ClearQRTransportJob()
+            qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
+            qrForceVisibleForShot = false
+            if qrFrame then qrFrame:SetFrameStrata("DIALOG") end
+        end
+    end
 
     -- Reset before EndSession's deferred Hide closure fires so it respects
     -- "off" semantics even when user had debug visibility/move mode enabled.

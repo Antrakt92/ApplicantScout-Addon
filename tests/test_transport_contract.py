@@ -3893,6 +3893,32 @@ def test_repeated_disable_keeps_each_terminal_capture_visible(pytestconfig):
     )
 
 
+@pytest.mark.parametrize("phase", ["build", "row-scan", "paint", "settle"])
+def test_disable_cancels_idle_manual_force_before_screenshot(pytestconfig, phase):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "disable-idle-force",
+        phase,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=disable-idle-force shots=4 attempts=4"
+    )
+
+
+def test_disable_discards_manual_force_queued_behind_physical_result(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "disable-idle-force-overlap",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=disable-idle-force-overlap shots=5 attempts=5"
+    )
+
+
 @pytest.mark.parametrize("mode", ["idle", "active", "logout"])
 def test_screenshot_cvar_recovery_and_logout_lease_cleanup_in_lua51(
     pytestconfig, mode

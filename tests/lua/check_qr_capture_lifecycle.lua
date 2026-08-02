@@ -1,6 +1,7 @@
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 local fixture_mode = arg and arg[1] or "applicants"
 local restart_phase = fixture_mode == "restart-race" and arg and arg[2] or nil
+local idle_force_phase = fixture_mode == "disable-idle-force" and arg and arg[2] or nil
 assert(fixture_mode == "applicants"
        or fixture_mode == "roster-only"
        or fixture_mode == "screenshot-failure"
@@ -14,6 +15,8 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "terminal-clear-failure"
        or fixture_mode == "terminal-clear-always-fail"
        or fixture_mode == "terminal-repeat-disable"
+       or fixture_mode == "disable-idle-force"
+       or fixture_mode == "disable-idle-force-overlap"
        or fixture_mode == "interaction-during-paint"
        or fixture_mode == "interaction-during-settle"
        or fixture_mode == "info-panel-during-settle"
@@ -34,6 +37,13 @@ if fixture_mode == "restart-race" then
            or restart_phase == "overflow-settle",
         "unsupported restart phase: " .. tostring(restart_phase))
 end
+if fixture_mode == "disable-idle-force" then
+    assert(idle_force_phase == "build"
+           or idle_force_phase == "row-scan"
+           or idle_force_phase == "paint"
+           or idle_force_phase == "settle",
+        "unsupported idle force phase: " .. tostring(idle_force_phase))
+end
 local roster_only = fixture_mode == "roster-only"
 local transient_screenshot_failure = fixture_mode == "screenshot-failure"
 local persistent_screenshot_failure = fixture_mode == "screenshot-always-fail"
@@ -48,6 +58,8 @@ local terminal_clear_failure = fixture_mode == "terminal-clear-failure"
 local terminal_clear_always_fail = fixture_mode == "terminal-clear-always-fail"
 local terminal_clear_mode = terminal_clear_failure or terminal_clear_always_fail
 local terminal_repeat_disable = fixture_mode == "terminal-repeat-disable"
+local disable_idle_force = fixture_mode == "disable-idle-force"
+local disable_idle_force_overlap = fixture_mode == "disable-idle-force-overlap"
 local interaction_during_paint = fixture_mode == "interaction-during-paint"
 local interaction_during_settle = fixture_mode == "interaction-during-settle"
 local info_panel_during_settle = fixture_mode == "info-panel-during-settle"
@@ -141,6 +153,11 @@ local terminal_shotnow_await_checked = false
 local terminal_shotnow_retry_checked = false
 local terminal_repeat_disable_started = false
 local terminal_repeat_disable_visibility_checks = 0
+local idle_force_terminal_started = false
+local idle_force_started = false
+local idle_force_cancel_checked = false
+local idle_force_overlap_checked = false
+local idle_force_attempts_before = nil
 local harness = nil
 
 Enum = Enum or {}
@@ -212,6 +229,12 @@ Screenshot = function()
         return
     end
     if terminal_shotnow_priority and screenshot_attempts == 3 then
+        delayed_screenshot_result = true
+        return
+    end
+    if disable_idle_force_overlap
+       and idle_force_started
+       and screenshot_attempts == 5 then
         delayed_screenshot_result = true
         return
     end
@@ -870,6 +893,16 @@ for _ = 1, overflow_mode and 2500 or screenshot_event_timeout and 650 or 360 do
         C_LFGList.GetActiveEntryInfo = function() return nil end
         harness.EndSession()
     end
+    if (disable_idle_force or disable_idle_force_overlap)
+       and not idle_force_terminal_started
+       and #screenshot_times == 2 then
+        idle_force_terminal_started = true
+        applicant_ids = {}
+        GetNumGroupMembers = function() return 0 end
+        C_LFGList.HasActiveEntryInfo = function() return false end
+        C_LFGList.GetActiveEntryInfo = function() return nil end
+        harness.EndSession()
+    end
     if terminal_repeat_disable
        and not terminal_repeat_disable_started
        and #screenshot_times == 2 then
@@ -879,6 +912,84 @@ for _ = 1, overflow_mode and 2500 or screenshot_event_timeout and 650 or 360 do
         C_LFGList.HasActiveEntryInfo = function() return false end
         C_LFGList.GetActiveEntryInfo = function() return nil end
         harness.EndSession()
+    end
+
+    if (disable_idle_force or disable_idle_force_overlap)
+       and idle_force_terminal_started
+       and not idle_force_started then
+        local state = harness.QRTransportState()
+        if #screenshot_times == 4
+           and state.terminalClearDispatchCount == 2
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.terminalClearRetryScheduled then
+            idle_force_started = true
+            idle_force_attempts_before = screenshot_attempts
+            local encode_successes_before = qr_encode_successes
+            local frame_sizes_before = qr_frame_set_size_count
+            SlashCmdList.APSCOUT("shotnow")
+
+            if disable_idle_force then
+                if idle_force_phase == "row-scan" then
+                    local safety = 1000
+                    while qr_encode_successes == encode_successes_before do
+                        run_earliest_timer()
+                        safety = safety - 1
+                        assert(safety > 0, "idle force did not reach row-scan staging")
+                    end
+                elseif idle_force_phase == "paint" then
+                    local safety = 1000
+                    while qr_frame_set_size_count == frame_sizes_before do
+                        run_earliest_timer()
+                        safety = safety - 1
+                        assert(safety > 0, "idle force did not reach paint staging")
+                    end
+                elseif idle_force_phase == "settle" then
+                    local staged = harness.QRTransportState()
+                    local safety = 1000
+                    while not staged.captureInProgress do
+                        run_earliest_timer()
+                        staged = harness.QRTransportState()
+                        safety = safety - 1
+                        assert(safety > 0, "idle force did not reach settle staging")
+                    end
+                end
+
+                local staged = harness.QRTransportState()
+                assert(staged.paintInProgress or staged.captureInProgress,
+                    "idle force fixture did not stage async QR work")
+                SlashCmdList.APSCOUT("off")
+                local cancelled = harness.QRTransportState()
+                assert(not cancelled.paintInProgress
+                       and not cancelled.captureInProgress
+                       and not cancelled.forceVisible
+                       and not cancelled.qrFrameShown
+                       and not cancelled.screenshotPendingForce,
+                    "disable did not cancel idle manual force work")
+                idle_force_cancel_checked = true
+            end
+        end
+    end
+
+    if disable_idle_force_overlap
+       and idle_force_started
+       and not idle_force_overlap_checked
+       and screenshot_attempts == 5
+       and harness.QRTransportState().screenshotAwaitingResult then
+        SlashCmdList.APSCOUT("shotnow")
+        local queued = harness.QRTransportState()
+        assert(queued.screenshotPendingForce,
+            "idle overlap fixture did not queue a second manual force")
+        SlashCmdList.APSCOUT("off")
+        local disabled = harness.QRTransportState()
+        assert(disabled.screenshotAwaitingResult
+               and not disabled.screenshotPendingForce,
+            "disable orphaned the physical result or retained queued manual force")
+        assert(delayed_screenshot_result,
+            "idle overlap fixture lost the delayed screenshot result")
+        screenshot_times[#screenshot_times + 1] = now
+        event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_SUCCEEDED")
+        idle_force_overlap_checked = true
     end
 
     if terminal_shotnow_priority
@@ -985,6 +1096,41 @@ elseif terminal_repeat_disable then
            and not state.qrFrameShown
            and state.terminalClearDispatchCount == 2,
         "terminal repeated-disable transport did not settle cleanly")
+elseif disable_idle_force then
+    local state = harness.QRTransportState()
+    assert(idle_force_terminal_started
+           and idle_force_started
+           and idle_force_cancel_checked,
+        "idle manual-force cancellation checkpoints did not complete")
+    assert(#screenshot_times == 4
+           and screenshot_attempts == idle_force_attempts_before,
+        string.format("cancelled idle force produced shots=%d attempts=%d",
+            #screenshot_times, screenshot_attempts))
+    assert(not state.sessionActive
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.screenshotAwaitingResult
+           and not state.screenshotPendingForce
+           and not state.forceVisible
+           and not state.qrFrameShown,
+        "cancelled idle manual force did not settle cleanly")
+elseif disable_idle_force_overlap then
+    local state = harness.QRTransportState()
+    assert(idle_force_terminal_started
+           and idle_force_started
+           and idle_force_overlap_checked,
+        "idle force overlap checkpoints did not complete")
+    assert(#screenshot_times == 5 and screenshot_attempts == 5,
+        string.format("idle force overlap produced shots=%d attempts=%d, expected 5/5",
+            #screenshot_times, screenshot_attempts))
+    assert(not state.sessionActive
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.screenshotAwaitingResult
+           and not state.screenshotPendingForce
+           and not state.forceVisible
+           and not state.qrFrameShown,
+        "idle force overlap retained work after disable")
 elseif terminal_clear_failure then
     local state = harness.QRTransportState()
     assert(terminal_failure_started, "terminal-clear failure phase did not start")
