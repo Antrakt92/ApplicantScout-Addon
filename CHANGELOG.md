@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.9.2 - 03-Aug-2026 - Companion 0.13.2 lifecycle reliability
+## 0.9.3 - 03-Aug-2026 - Companion 0.13.3 lifecycle reliability
 
 This paired addon + companion patch keeps roster, keystone, QR capture, and
 Auto Hi state bound to the current session when client APIs or asynchronous
@@ -31,7 +31,7 @@ callbacks temporarily arrive late or unreadable.
 
 ### Notes
 
-- This addon release is paired with ApplicantScout Companion `0.13.2`.
+- This addon release is paired with ApplicantScout Companion `0.13.3`.
 - APS1 payload compatibility is unchanged.
 
 ## 0.9.1 - 28-Jul-2026 - Companion 0.13.1 transport recovery
