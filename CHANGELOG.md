@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+## 0.9.2 - 03-Aug-2026 - Companion 0.13.2 lifecycle reliability
+
+This paired addon + companion patch keeps roster, keystone, QR capture, and
+Auto Hi state bound to the current session when client APIs or asynchronous
+callbacks temporarily arrive late or unreadable.
+
+### Fixed
+
+- Secret or stale roster identities are rejected before inspect results can be
+  applied, preventing an old `INSPECT_READY` callback from updating the wrong
+  Party member.
+- The local group leader's readable keystone is reported directly, and a late
+  external LibKeystone provider can take ownership from the built-in shim
+  without duplicate callbacks or queued replies.
+- Screenshot completion is serialized across capture sessions so an older
+  callback cannot release or overwrite the active QR generation.
+- Disabling capture cancels idle manual QR work while preserving screenshots
+  already requested from the client, and terminal-clear captures keep their
+  visibility lease until completion.
+- Completed Auto Hi retries now clear their full state, and QR position is
+  saved defensively at logout without losing the default-position sentinel.
+
+### Improved
+
+- QR, Auto Hi, roster, and provider cleanup now use one owner-aware reset path,
+  with expanded regressions for overlapping capture and session races.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.13.2`.
+- APS1 payload compatibility is unchanged.
+
 ## 0.9.1 - 28-Jul-2026 - Companion 0.13.1 transport recovery
 
 This paired addon + companion patch keeps screenshot transport moving after
