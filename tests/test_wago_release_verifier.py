@@ -26,7 +26,7 @@ from scripts.verify_wago_release import (
 PROJECT_ID = "ANzke264"
 SLUG = "applicantscout-addon"
 TAG = "v0.8.1"
-PATCHES = frozenset({"12.0.7", "12.1.0"})
+PATCHES = frozenset({"12.1.0"})
 DOWNLOAD_URL = "https://addons.wago.io/download/ld3Wjqyd?signature=test"
 
 
@@ -55,7 +55,7 @@ def _release(**overrides: object) -> dict[str, object]:
         "stability": "stable",
         "is_processed": True,
         "is_excluded_from_matching": False,
-        "supported_retail_patches": ["12.0.7", "12.1.0"],
+        "supported_retail_patches": ["12.1.0"],
         "download_link": DOWNLOAD_URL,
     }
     release.update(overrides)
@@ -88,7 +88,7 @@ def _evaluate(page: dict[str, Any]):
 def test_toc_contract_derives_project_and_exact_retail_patches(tmp_path: Path):
     toc = tmp_path / "ApplicantScout.toc"
     toc.write_text(
-        "## Interface: 120007, 120100\n## X-Wago-ID: ANzke264\n",
+        "## Interface: 120100\n## X-Wago-ID: ANzke264\n",
         encoding="utf-8",
     )
 

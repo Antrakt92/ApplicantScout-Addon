@@ -161,7 +161,7 @@ through the slash commands below.
 
 ## Compatibility
 
-- WoW Retail Midnight: Interface `120007, 120100`.
+- WoW Retail Midnight: Interface `120100`.
 - Latest ApplicantScout addon release.
 - Latest ApplicantScout Companion release.
 - Wire payload: compact v9 (`APS1`) snapshots with optional RaiderIO, raid/M+

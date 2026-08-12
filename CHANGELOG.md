@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.9.4 - 12-Aug-2026 - Retail 12.1 compatibility
+
+This paired metadata release supports Retail Midnight 12.1.0 only.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.13.4`.
+- APS1 payload compatibility is unchanged.
+
 ## 0.9.3 - 03-Aug-2026 - Companion 0.13.3 lifecycle reliability
 
 This paired addon + companion patch keeps roster, keystone, QR capture, and

@@ -19,7 +19,7 @@ from scripts.verify_curseforge_release import (
 
 PROJECT_ID = 1541576
 EXPECTED_NAME = "ApplicantScout-v0.5.3.zip"
-REQUIRED_VERSIONS = frozenset({"12.0.7", "12.1.0"})
+REQUIRED_VERSIONS = frozenset({"12.1.0"})
 
 
 def _file(
@@ -35,7 +35,7 @@ def _file(
         "projectId": PROJECT_ID,
         "status": status,
         "gameVersions": (
-            versions if versions is not None else ["12.0.7", "12.1.0"]
+            versions if versions is not None else ["12.1.0"]
         ),
     }
 
@@ -81,16 +81,16 @@ def test_curseforge_game_version_rejects_non_mainline_interface(interface: int):
 
 def test_required_game_versions_follow_exact_tag_toc_changes(tmp_path: Path):
     toc = tmp_path / "ApplicantScout.toc"
-    toc.write_text("## Interface: 120007, 120100\n", encoding="utf-8")
+    toc.write_text("## Interface: 120100\n", encoding="utf-8")
 
     assert required_game_versions_from_toc(toc) == frozenset(
-        {"12.0.7", "12.1.0"}
+        {"12.1.0"}
     )
 
-    toc.write_text("## Interface: 120007, 120100, 120101\n", encoding="utf-8")
+    toc.write_text("## Interface: 120100, 120101\n", encoding="utf-8")
 
     assert required_game_versions_from_toc(toc) == frozenset(
-        {"12.0.7", "12.1.0", "12.1.1"}
+        {"12.1.0", "12.1.1"}
     )
 
     toc.write_text("## Interface: 130000\n", encoding="utf-8")

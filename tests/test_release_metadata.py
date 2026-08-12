@@ -11,7 +11,7 @@ from scripts.create_release_metadata import (
 from scripts.verify_curseforge_release import required_game_versions_from_toc
 
 
-def _write_fixture(root: Path, *, version: str = "1.2.3", interface: str = "120007, 120100") -> Path:
+def _write_fixture(root: Path, *, version: str = "1.2.3", interface: str = "120100") -> Path:
     (root / "ApplicantScout.toc").write_text(
         "\n".join(
             (
@@ -40,7 +40,6 @@ def test_release_metadata_matches_packager_contract(tmp_path: Path):
                 "filename": "ApplicantScout-v1.2.3.zip",
                 "nolib": False,
                 "metadata": [
-                    {"flavor": "mainline", "interface": 120007},
                     {"flavor": "mainline", "interface": 120100},
                 ],
             }
