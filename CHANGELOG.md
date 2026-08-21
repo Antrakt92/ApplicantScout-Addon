@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.9.5 - 21-Aug-2026 - Midnight Season 2 data
+
+This paired release updates ApplicantScout's desktop evidence and public
+examples for the current Midnight Season 2 dungeon and raid pool.
+
+### Updated
+
+- Refreshed the public Mythic+ and raid overlay examples for the new season.
+- Updated the paired companion's Warcraft Logs, RaiderIO, localized listing,
+  and party-keystone mappings for all current dungeons and raids.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.13.5`.
+- The addon Lua runtime and APS1 payload compatibility are unchanged.
+
 ## 0.9.4 - 12-Aug-2026 - Retail 12.1 compatibility
 
 This paired metadata release supports Retail Midnight 12.1.0 only.
