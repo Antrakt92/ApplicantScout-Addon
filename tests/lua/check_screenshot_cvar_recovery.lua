@@ -50,6 +50,7 @@ if mode == "logout" then
         cvars.screenshotFormat = "png"
         writes = {}
         timers = {}
+        ApplicantScoutDB.qrFramePosition = { x = 12, y = -34 }
         ApplicantScoutDB.priorScreenshotQuality = nil
         ApplicantScoutDB.priorScreenshotFormat = nil
 
@@ -69,9 +70,9 @@ if mode == "logout" then
         end
         local writesBeforeLogout = #writes
         harness.FireEvent("PLAYER_LOGOUT")
-        assert(ApplicantScoutDB.qrFramePosition.x == 321
-               and ApplicantScoutDB.qrFramePosition.y == -426,
-            "logout did not persist the current QR frame position")
+        assert(ApplicantScoutDB.qrFramePosition.x == 12
+               and ApplicantScoutDB.qrFramePosition.y == -34,
+            "logout rewrote the QR position from mixed-scale frame coordinates")
 
         if userChanged then
             assert(#writes == writesBeforeLogout,

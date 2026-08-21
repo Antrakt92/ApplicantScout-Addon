@@ -6351,10 +6351,10 @@ local EVENT_HANDLERS = {
         _TryHookInfoPanels()
         entryCreationKeyState.RequestLeaderKeystone(false)
     end,
-    -- WHY persist on logout (Phase 2): PLAYER_LOGOUT fires after UI teardown
-    -- begins but BEFORE SavedVariables flush. Drag-stop covers obvious paths;
-    -- this catches positions changed via slash macros / scripted moves /
-    -- third-party UI that bypasses our drag handlers.
+    -- QR position is persisted only by its drag-stop handler. The QR frame
+    -- ignores parent scale for pixel-perfect modules, so deriving its offsets
+    -- from GetLeft/GetTop during logout can convert the default TOPLEFT anchor
+    -- into a lower-screen saved position after a reload.
     PLAYER_LOGOUT                    = function()
         entryCreationKeyState.screenshotCVarLeaseGeneration =
             (entryCreationKeyState.screenshotCVarLeaseGeneration or 0) + 1
@@ -6362,7 +6362,6 @@ local EVENT_HANDLERS = {
         if PVEFrame and PVEFrame:IsUserPlaced() and ApplicantScoutDB then
             _SavePVEFramePositionFromFrame(PVEFrame)
         end
-        _SaveQRFramePositionFromFrame()
     end,
     PARTY_LEADER_CHANGED             = function()
         entryCreationKeyState.ClearLeaderKeystone()

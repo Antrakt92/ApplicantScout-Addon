@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## 0.9.6 - 21-Aug-2026 - Stable applicant review
+
+This paired addon and companion release improves rapid applicant review and
+keeps the QR frame's saved position stable across reloads.
+
+### Fixed
+
+- Logout no longer rewrites the QR frame position from mixed-scale screen
+  coordinates; positions are persisted only after an explicit Alt-drag stop.
+- The paired companion keeps its applicant panel stable while moving between
+  compact contiguous rows, without retaining excess blank height afterward.
+
+### Improved
+
+- Refreshed the public overlay examples with the denser WoW-native window skin,
+  clearer interaction states, and contrast-aware class labels.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.14.0`.
+- APS1 payload compatibility is unchanged.
+
 ## 0.9.5 - 21-Aug-2026 - Midnight Season 2 data
 
 This paired release updates ApplicantScout's desktop evidence and public
