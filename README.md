@@ -96,6 +96,11 @@ ApplicantScout keeps the in-game addon small and uses public UI/screenshot APIs:
 4. The QR frame appears only during the screenshot capture window so it stays
    out of the way between snapshots.
 
+QR transport pauses completely before LFG polling or payload/QR work during
+combat, for the full active Mythic+ run, and during raid boss encounters. It
+remains available out of combat in a raid, so you can keep recruiting between
+pulls.
+
 ApplicantScout temporarily raises screenshot quality and uses JPG format only
 during each QR capture, then restores your prior screenshot settings after the
 screenshot. `/apscout off` and the next `/reload` also restore an interrupted
@@ -150,7 +155,7 @@ through the slash commands below.
 /apscout status         show current state + QR diagnostics
 /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle
 /apscout reset          clear transport cache, queue fresh snapshot
-/apscout shotnow        force snapshot now while enabled (debug / manual sync)
+/apscout shotnow        request snapshot while enabled; defers in combat/M+/boss fights
 /apscout qrvisible      toggle persistent QR always-visible mode; off clears it
 /apscout qrmove         toggle QR move mode (Alt+drag QR frame)
 /apscout qrreset        reset QR frame position to top-left
@@ -177,6 +182,7 @@ through the slash commands below.
   points at the active `_retail_\Screenshots` folder.
 - WoW side looks idle: run `/apscout status` while hosting a listing.
 - Need a manual sync: keep ApplicantScout enabled and run `/apscout shotnow`.
+  The request waits until combat, an active M+ run, or a boss encounter ends.
 - Applicant state looks stale: run `/apscout reset` while transport is active.
 - WCL cells stay empty: open companion Settings and use Test WCL.
 - QR frame is in the way: run `/apscout qrmove`, Alt-drag it, then run the same

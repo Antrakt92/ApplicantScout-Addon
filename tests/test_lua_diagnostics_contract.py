@@ -179,6 +179,8 @@ def test_luals_workspace_owns_exact_wow_global_declarations():
     assert declarations.startswith("---@meta\n")
     for name in (
         "hooksecurefunc",
+        "C_ChallengeMode",
+        "C_InstanceEncounter",
         "LE_PARTY_CATEGORY_HOME",
         "LE_PARTY_CATEGORY_INSTANCE",
         "LFGListFrame",

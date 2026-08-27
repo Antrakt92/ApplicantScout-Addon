@@ -27,6 +27,12 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "partial-debug"
        or fixture_mode == "overflow"
        or fixture_mode == "overflow-terminal"
+       or fixture_mode == "listing-recreate"
+       or fixture_mode == "gameplay-combat"
+       or fixture_mode == "gameplay-combat-during-paint"
+       or fixture_mode == "gameplay-combat-during-settle"
+       or fixture_mode == "gameplay-challenge-reload"
+       or fixture_mode == "gameplay-raid-encounter"
        or fixture_mode == "restart-race",
     "unsupported fixture mode: " .. tostring(fixture_mode))
 if fixture_mode == "restart-race" then
@@ -73,7 +79,13 @@ local overflow_mode = fixture_mode == "overflow"
     or restart_phase == "overflow-settle"
 local overflow_terminal = fixture_mode == "overflow-terminal"
 local restart_race = fixture_mode == "restart-race"
-local wide_applicants = overflow_mode
+local listing_recreate = fixture_mode == "listing-recreate"
+local gameplay_combat = fixture_mode == "gameplay-combat"
+local gameplay_combat_during_paint = fixture_mode == "gameplay-combat-during-paint"
+local gameplay_combat_during_settle = fixture_mode == "gameplay-combat-during-settle"
+local gameplay_challenge_reload = fixture_mode == "gameplay-challenge-reload"
+local gameplay_raid_encounter = fixture_mode == "gameplay-raid-encounter"
+local wide_applicants = overflow_mode or listing_recreate
 
 -- Default mode reproduces the live report: two people and five applicants.
 -- Roster-only mode keeps a full party and removes every applicant.
@@ -84,14 +96,35 @@ if not roster_only then
 end
 GetNumGroupMembers = function() return roster_only and 5 or 2 end
 IsInRaid = function() return false end
+local combat_active = gameplay_combat
+local combat_api_unavailable = false
+local challenge_active = gameplay_challenge_reload
+local encounter_active = false
+local gameplay_lfg_read_calls = 0
+InCombatLockdown = function()
+    if combat_api_unavailable then
+        error("injected unavailable combat state")
+    end
+    return combat_active
+end
+C_ChallengeMode = {
+    IsChallengeModeActive = function() return challenge_active end,
+}
+C_InstanceEncounter = {
+    IsEncounterInProgress = function() return encounter_active end,
+}
 
 local applicant_ids = roster_only and {} or { 42, 43, 44, 45, 46 }
-if overflow_mode then
+if wide_applicants then
     applicant_ids = {}
     for id = 1, 40 do applicant_ids[#applicant_ids + 1] = id end
 end
-C_LFGList.HasActiveEntryInfo = function() return true end
+C_LFGList.HasActiveEntryInfo = function()
+    gameplay_lfg_read_calls = gameplay_lfg_read_calls + 1
+    return true
+end
 C_LFGList.GetActiveEntryInfo = function()
+    gameplay_lfg_read_calls = gameplay_lfg_read_calls + 1
     return {
         activityIDs = { 401 },
         questID = 0,
@@ -100,6 +133,7 @@ C_LFGList.GetActiveEntryInfo = function()
     }
 end
 C_LFGList.GetApplicants = function()
+    gameplay_lfg_read_calls = gameplay_lfg_read_calls + 1
     if partial_debug then error("injected unavailable applicant surface") end
     return applicant_ids
 end
@@ -140,8 +174,11 @@ local qr_encode_calls = 0
 local qr_encode_successes = 0
 local qr_mutation_count = 0
 local qr_frame_set_size_count = 0
+local midflight_combat_lfg_read_calls = 0
+local raid_encounter_lfg_read_calls = 0
 local event_frame = nil
 local interaction_manager_active = {}
+local interaction_manager_query_calls = 0
 local delayed_screenshot_result = false
 local screenshot_overlap_started = false
 local screenshot_overlap_old_result_checked = false
@@ -158,6 +195,7 @@ local idle_force_started = false
 local idle_force_cancel_checked = false
 local idle_force_overlap_checked = false
 local idle_force_attempts_before = nil
+local idle_force_interaction_queries_after_disable = nil
 local harness = nil
 
 Enum = Enum or {}
@@ -178,6 +216,7 @@ Enum.PlayerInteractionType = {
 }
 C_PlayerInteractionManager = {
     IsInteractingWithNpcOfType = function(interactionType)
+        interaction_manager_query_calls = interaction_manager_query_calls + 1
         return interaction_manager_active[interactionType] == true
     end,
 }
@@ -398,6 +437,18 @@ event_frame.scripts.OnEvent(event_frame, "PLAYER_ENTERING_WORLD")
 assert(cvars.screenshotFormat == "png" and cvars.screenshotQuality == "3",
     "PLAYER_ENTERING_WORLD changed screenshot CVars before a capture")
 
+if gameplay_combat or gameplay_challenge_reload then
+    local state = harness.QRTransportState()
+    assert(state.suppressedByGameplay and not state.qrFrameShown,
+        "reload did not recover active gameplay suppression")
+    if gameplay_combat then
+        SlashCmdList.APSCOUT("shotnow")
+        state = harness.QRTransportState()
+        assert(state.screenshotPendingForce and #screenshot_times == 0,
+            "manual force capture was not deferred during combat")
+    end
+end
+
 local function send_interaction_event(event)
     assert(event_frame.events[event], "interaction event was not registered: " .. event)
     if event == "MERCHANT_SHOW" then
@@ -591,7 +642,20 @@ end
 local transient_failure_checked = false
 local transient_restore_checked = false
 local transient_failure_at = nil
-for _ = 1, overflow_mode and 2500 or screenshot_event_timeout and 650 or 360 do
+local listing_recreate_started = false
+local retired_listing_overflow = nil
+local gameplay_released = false
+local gameplay_release_at = now + 1.0
+local raid_encounter_started = false
+local raid_encounter_released = false
+local raid_encounter_release_at = nil
+local raid_encounter_encode_calls = nil
+local midflight_combat_started = false
+local midflight_combat_released = false
+local midflight_combat_release_at = nil
+local midflight_combat_encode_calls = nil
+for _ = 1, (overflow_mode or listing_recreate) and 2500
+        or screenshot_event_timeout and 650 or 360 do
     now = now + frame_step
     drain_due_timers()
     for _, ticker in ipairs(tickers) do
@@ -960,6 +1024,8 @@ for _ = 1, overflow_mode and 2500 or screenshot_event_timeout and 650 or 360 do
                     "idle force fixture did not stage async QR work")
                 SlashCmdList.APSCOUT("off")
                 local cancelled = harness.QRTransportState()
+                idle_force_interaction_queries_after_disable =
+                    interaction_manager_query_calls
                 assert(not cancelled.paintInProgress
                        and not cancelled.captureInProgress
                        and not cancelled.forceVisible
@@ -968,6 +1034,149 @@ for _ = 1, overflow_mode and 2500 or screenshot_event_timeout and 650 or 360 do
                     "disable did not cancel idle manual force work")
                 idle_force_cancel_checked = true
             end
+        end
+    end
+
+    if (gameplay_combat or gameplay_challenge_reload)
+       and not gameplay_released
+       and now >= gameplay_release_at then
+        local state = harness.QRTransportState()
+        assert(#screenshot_times == 0 and screenshot_attempts == 0
+               and qr_encode_calls == 0
+               and gameplay_lfg_read_calls == 0
+               and state.suppressedByGameplay
+               and not state.paintInProgress
+               and not state.captureInProgress
+               and not state.qrFrameShown,
+            "gameplay suppression allowed transport polling before release")
+        if gameplay_combat then
+            combat_active = false
+            assert(event_frame.events.PLAYER_REGEN_ENABLED,
+                "PLAYER_REGEN_ENABLED was not registered")
+            event_frame.scripts.OnEvent(event_frame, "PLAYER_REGEN_ENABLED")
+        else
+            challenge_active = false
+            assert(event_frame.events.CHALLENGE_MODE_COMPLETED,
+                "CHALLENGE_MODE_COMPLETED was not registered")
+            event_frame.scripts.OnEvent(event_frame, "CHALLENGE_MODE_COMPLETED")
+        end
+        gameplay_released = true
+    end
+
+    if (gameplay_combat_during_paint or gameplay_combat_during_settle)
+       and not midflight_combat_started then
+        local state = harness.QRTransportState()
+        local targetReached = gameplay_combat_during_paint
+            and state.paintInProgress
+            and not state.captureInProgress
+            or gameplay_combat_during_settle
+            and state.captureInProgress
+            and state.forceVisible
+        if targetReached then
+            combat_active = true
+            combat_api_unavailable = gameplay_combat_during_paint
+            assert(event_frame.events.PLAYER_REGEN_DISABLED,
+                "PLAYER_REGEN_DISABLED was not registered")
+            event_frame.scripts.OnEvent(event_frame, "PLAYER_REGEN_DISABLED")
+            state = harness.QRTransportState()
+            assert(state.suppressedByGameplay
+                   and state.gameplaySuppressionReason == "combat"
+                   and not state.paintInProgress
+                   and not state.captureInProgress
+                   and not state.forceVisible
+                   and not state.qrFrameShown,
+                "combat did not cancel and hide mid-flight QR work")
+            midflight_combat_encode_calls = qr_encode_calls
+            midflight_combat_lfg_read_calls = gameplay_lfg_read_calls
+            midflight_combat_release_at = now + 1.0
+            midflight_combat_started = true
+        end
+    elseif (gameplay_combat_during_paint or gameplay_combat_during_settle)
+       and midflight_combat_started
+       and not midflight_combat_released
+       and now >= midflight_combat_release_at then
+        assert(#screenshot_times == 0 and screenshot_attempts == 0
+               and qr_encode_calls == midflight_combat_encode_calls
+               and gameplay_lfg_read_calls == midflight_combat_lfg_read_calls,
+            "mid-flight combat suppression allowed later transport polling")
+        combat_active = false
+        combat_api_unavailable = false
+        event_frame.scripts.OnEvent(event_frame, "PLAYER_REGEN_ENABLED")
+        midflight_combat_released = true
+    end
+
+    if gameplay_raid_encounter and not raid_encounter_started then
+        local state = harness.QRTransportState()
+        if #screenshot_times == 2
+           and not state.paintInProgress
+           and not state.captureInProgress then
+            applicant_ids = { 42, 43, 44, 45 }
+            encounter_active = true
+            assert(event_frame.events.ENCOUNTER_START,
+                "ENCOUNTER_START was not registered")
+            event_frame.scripts.OnEvent(event_frame, "ENCOUNTER_START", 9001)
+            state = harness.QRTransportState()
+            assert(state.suppressedByGameplay
+                   and state.gameplaySuppressionReason == "raid-encounter"
+                   and not state.qrFrameShown,
+                "raid encounter did not suppress QR transport")
+            raid_encounter_encode_calls = qr_encode_calls
+            raid_encounter_lfg_read_calls = gameplay_lfg_read_calls
+            raid_encounter_release_at = now + 1.0
+            raid_encounter_started = true
+        end
+    elseif gameplay_raid_encounter
+       and raid_encounter_started
+       and not raid_encounter_released
+       and now >= raid_encounter_release_at then
+        assert(#screenshot_times == 2 and screenshot_attempts == 2
+               and qr_encode_calls == raid_encounter_encode_calls
+               and gameplay_lfg_read_calls == raid_encounter_lfg_read_calls,
+            "raid boss encounter allowed QR build, capture, or LFG polling")
+        -- Simulate a lost ENCOUNTER_END event. The current-state API is the
+        -- authoritative recovery surface and must clear the event fallback.
+        encounter_active = false
+        raid_encounter_released = true
+    end
+
+    if listing_recreate and not listing_recreate_started then
+        local state = harness.QRTransportState()
+        if state.overflowState then
+            assert(#screenshot_times == 0,
+                "old listing captured before recreate boundary was staged")
+            retired_listing_overflow = state.overflowState
+            applicant_ids = {}
+            wide_applicants = false
+            C_LFGList.HasActiveEntryInfo = function() return false end
+            C_LFGList.GetActiveEntryInfo = function() return nil end
+            harness.CheckSessionTransition(true)
+
+            local party_only = harness.QRTransportState()
+            assert(party_only.sessionActive,
+                "group roster did not keep transport alive after delist")
+            assert(party_only.overflowState == nil
+                   and party_only.lastSnapshotHash == nil
+                   and party_only.deliverySnapshotHash == nil
+                   and party_only.deliverySnapshotSendCount == 0,
+                "delist boundary retained stale listing delivery state")
+
+            C_LFGList.HasActiveEntryInfo = function() return true end
+            C_LFGList.GetActiveEntryInfo = function()
+                return {
+                    activityIDs = { 401 },
+                    questID = 0,
+                    name = "Recreated capture lifecycle fixture",
+                    comment = "same group, fresh empty applicant list",
+                }
+            end
+            harness.CheckSessionTransition(true)
+            local recreated = harness.QRTransportState()
+            assert(recreated.sessionActive
+                   and recreated.overflowState == nil
+                   and recreated.lastSnapshotHash == nil
+                   and recreated.deliverySnapshotHash == nil,
+                "recreated listing inherited stale transport state")
+            listing_recreate_started = true
         end
     end
 
@@ -1106,6 +1315,9 @@ elseif disable_idle_force then
            and screenshot_attempts == idle_force_attempts_before,
         string.format("cancelled idle force produced shots=%d attempts=%d",
             #screenshot_times, screenshot_attempts))
+    assert(interaction_manager_query_calls
+               == idle_force_interaction_queries_after_disable,
+        "disabled addon continued polling QR interaction state")
     assert(not state.sessionActive
            and not state.paintInProgress
            and not state.captureInProgress
@@ -1268,6 +1480,76 @@ elseif restart_race then
                and stale_overflow_state.pass == stale_overflow_pass,
             "retired overflow stream advanced after stale callback drain")
     end
+elseif listing_recreate then
+    local state = harness.QRTransportState()
+    assert(listing_recreate_started and retired_listing_overflow,
+        "listing recreate boundary was not exercised")
+    assert(#screenshot_times == 2 and screenshot_attempts == 2,
+        string.format(
+            "recreated listing produced shots=%d attempts=%d instead of 2/2",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+    assert(state.sessionActive
+           and not state.pendingShotDirty
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and state.overflowState == nil
+           and state.lastEmittedApplicantCount == 0
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2,
+        "recreated empty listing did not settle as the current delivery")
+elseif gameplay_combat or gameplay_challenge_reload then
+    local state = harness.QRTransportState()
+    assert(gameplay_released,
+        "gameplay suppression release boundary was not exercised")
+    assert(#screenshot_times == 2 and screenshot_attempts == 2,
+        string.format(
+            "gameplay resume produced shots=%d attempts=%d instead of 2/2",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+    assert(not state.suppressedByGameplay
+           and not state.pendingShotDirty
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.screenshotPendingForce
+           and not state.forceVisible
+           and not state.qrFrameShown,
+        "gameplay-suppressed transport did not settle after release")
+elseif gameplay_combat_during_paint or gameplay_combat_during_settle then
+    local state = harness.QRTransportState()
+    assert(midflight_combat_started and midflight_combat_released,
+        "mid-flight combat suppression boundaries were not exercised")
+    assert(#screenshot_times == 2 and screenshot_attempts == 2,
+        string.format(
+            "mid-flight combat resume produced shots=%d attempts=%d instead of 2/2",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+    assert(not state.suppressedByGameplay
+           and not state.pendingShotDirty
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown,
+        "mid-flight combat transport did not rebuild and settle")
+elseif gameplay_raid_encounter then
+    local state = harness.QRTransportState()
+    assert(raid_encounter_started and raid_encounter_released,
+        "raid encounter suppression boundaries were not exercised")
+    assert(#screenshot_times == 4 and screenshot_attempts == 4,
+        string.format(
+            "raid encounter resume produced shots=%d attempts=%d instead of 4/4",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+    assert(not state.suppressedByGameplay
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown,
+        "raid encounter transport did not resume and settle")
 elseif overflow_terminal then
     local state = harness.QRTransportState()
     assert(interaction_terminal_started,
@@ -1356,6 +1638,13 @@ elseif roster_only then
 else
     assert(#screenshot_times >= 2,
         "polling during the render-settle window starved QR screenshots")
+    if fixture_mode == "applicants" then
+        assert(qr_encode_calls == 1,
+            string.format(
+                "unchanged redundant resend encoded QR %d times instead of once",
+                qr_encode_calls
+            ))
+    end
 end
 if #screenshot_times >= 2
    and not screenshot_overlap

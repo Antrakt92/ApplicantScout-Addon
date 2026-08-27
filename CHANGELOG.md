@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## 0.9.7 - 27-Aug-2026 - Gameplay-safe QR transport
+
+This paired addon and companion patch keeps applicant snapshots current while
+removing avoidable QR work during active gameplay.
+
+### Fixed
+
+- Recreating or relisting a group inside the same party now retires the old
+  listing snapshot and publishes the new state without requiring `/reload`.
+- QR transport pauses completely during combat, active Mythic+ runs, and raid
+  boss encounters, then rebuilds the latest snapshot when gameplay ends.
+- Current combat, challenge, and encounter APIs recover suppression state when
+  an end event is missed or the addon reloads during an active run.
+- Disabling ApplicantScout now stops idle QR interaction and LFG polling after
+  any required final clear has settled.
+
+### Improved
+
+- The bounded redundant snapshot reuses an identical rendered QR instead of
+  encoding and repainting the same payload twice.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.14.1`.
+- APS1 payload compatibility is unchanged.
+
 ## 0.9.6 - 21-Aug-2026 - Stable applicant review
 
 This paired addon and companion release improves rapid applicant review and

@@ -248,6 +248,18 @@ local entryCreationKeyState = {
     qrOverflowState = nil,
     qrOverflowSupersededCount = 0,
     qrOverflowLastFailure = nil,
+    -- Gameplay suppression is separate from interaction suppression. It is a
+    -- hard transport gate: combat, an active Mythic+ challenge, or a raid boss
+    -- encounter must not build, paint, reveal, or capture QR work.
+    qrGameplaySuppressed = false,
+    qrGameplayCombatActive = false,
+    qrGameplayCombatEventActive = false,
+    qrGameplayChallengeActive = false,
+    qrGameplayChallengeEventActive = false,
+    qrGameplayEncounterActive = false,
+    qrGameplayEncounterEventActive = false,
+    qrGameplaySuppressionReason = "none",
+    qrTransportJobForce = false,
     lastPayloadBuildError = nil,
     lastPayloadTotalBytes = 0,
     groupTransportGen = 0,
@@ -293,6 +305,7 @@ local entryCreationKeyState = {
     qrTransportLastRecoveryReason = "never",
     qrTransportLastRecoveryPrintAt = nil,
     qrTextureVisibleHighWater = 0,
+    qrRenderedPayload = nil,
     transportDirtyGeneration = 0,
     LEADER_KEY_TTL_S = 60,
     LEADER_KEY_REQUEST_THROTTLE_S = 3,
@@ -732,7 +745,10 @@ APSPrint = function(msg)
 end
 
 -- ───────────────────────────────────────────────────────────
--- Session lifecycle: tied to the player's own LFG listing.
+-- Transport-session lifecycle: active while either the player's own LFG
+-- listing or a real group roster exists. A listing can end and be recreated
+-- inside one roster-backed transport session; that narrower boundary resets
+-- listing delivery state without emitting a terminal clear for the party.
 --   StartSession: invariant transition false→true. Resets snapshot dedup
 --                 state for fresh full snapshot.
 --   EndSession:   invariant transition true→false. Force-emits final empty
@@ -871,6 +887,50 @@ EndSession = function()
             end
         end)
     end
+end
+
+entryCreationKeyState.ResetListingTransportState = function()
+    if not isSessionActive then return false end
+
+    -- A same-party delist/relist is not a full transport-session restart, but
+    -- every delivery decision owned by the old listing must be retired. In
+    -- particular, never finish a multipart applicant snapshot after Blizzard
+    -- has replaced the listing that produced it.
+    entryCreationKeyState.ClearPendingForcedScreenshot()
+    lastSnapshotHash = nil
+    lastShotTime = 0
+    pendingShotDirty = true
+    entryCreationKeyState.lastEmittedApplicantCount = 0
+    entryCreationKeyState.lastDeliverySnapshotHash = nil
+    entryCreationKeyState.lastDeliverySnapshotSendCount = 0
+    entryCreationKeyState.ClearQROverflowTransport("listing-change")
+    entryCreationKeyState.qrOverflowLastFailure = nil
+    entryCreationKeyState.ClearScreenshotFailureState()
+    lastQREncodeMode = "never"
+    lastQREncodeBytes = 0
+    lastQREncodeError = nil
+
+    if entryCreationKeyState.screenshotAwaitingResult then
+        -- SCREENSHOT_* has no request identity. Consume the physical result,
+        -- but prevent its callback from committing old-listing delivery state.
+        entryCreationKeyState.screenshotAwaitingSuperseded = true
+    else
+        entryCreationKeyState.qrPaintJobGen =
+            (entryCreationKeyState.qrPaintJobGen or 0) + 1
+        entryCreationKeyState.ClearQRTransportJob()
+    end
+    qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
+    qrForceVisibleForShot = false
+    if qrFrame then qrFrame:SetFrameStrata("DIALOG") end
+
+    entryCreationKeyState.rioMPlusSummaryCache = {}
+    entryCreationKeyState.lastQuietFullPartySignature = nil
+    entryCreationKeyState.lastPayloadQuietFullPartySignature = nil
+    entryCreationKeyState.ClearRosterLoadRetryState()
+    suppressShotsUntil = 0
+    _RefreshQRVisibility()
+    MarkDirty("listingchange")
+    return true
 end
 
 local function _HasGroupRosterForTransport()
@@ -1361,6 +1421,7 @@ CheckSessionTransition = function(lfgReadsAllowed)
     local hasRoster = _HasGroupRosterForTransport()
     local entry = nil
     local hosting = false
+    local listingChanged = false
     if lfgReadsAllowed then
         local hasEntry = C_LFGList.HasActiveEntryInfo()
         if hasEntry then
@@ -1368,7 +1429,7 @@ CheckSessionTransition = function(lfgReadsAllowed)
         end
         hosting = entry ~= nil
         local listingContext = entryCreationKeyState.EntryListingCacheContext(entry)
-        entryCreationKeyState.ReconcileEntryCreationKeyCache(listingContext)
+        listingChanged = entryCreationKeyState.ReconcileEntryCreationKeyCache(listingContext)
     end
     local transportActive = hosting or hasRoster
 
@@ -1378,6 +1439,8 @@ CheckSessionTransition = function(lfgReadsAllowed)
         if lfgReadsAllowed or not entryCreationKeyState.activeListingCacheContext then
             EndSession()
         end
+    elseif listingChanged and isSessionActive then
+        entryCreationKeyState.ResetListingTransportState()
     end
     -- Returns the active LFG entry (or nil) so the scan-tick caller can pass
     -- it straight to MaybeTriggerScreenshot — saves a second
@@ -1692,9 +1755,9 @@ end
 --   qrForceVisibleForShot       — auto: changed snapshot is being captured
 --   qrAlwaysVisible             — manual: /apscout qrvisible debug override
 --   qrMoveMode                  — manual: /apscout qrmove drag/debug mode
--- Debug override/move mode wins over normal hidden state (user explicitly said
--- "show me"). Interaction suppression gates non-force dispatch before a lease
--- is acquired.
+-- Debug override/move mode wins over normal idle/interaction-hidden state (user
+-- explicitly said "show me"). Gameplay suppression remains a hard safety gate;
+-- combat and active run/encounter state hide every QR mode, including debug.
 _RefreshQRMouse = function()
     if not qrFrame then return end
     qrFrame:EnableMouse(qrMoveMode and true or false)
@@ -1703,9 +1766,10 @@ end
 _RefreshQRVisibility = function()
     if not qrFrame then return end
     local wasShown = qrFrame:IsShown()
-    local shouldShow = qrAlwaysVisible
-                       or qrMoveMode
-                       or qrForceVisibleForShot
+    local shouldShow = not entryCreationKeyState.qrGameplaySuppressed
+                       and (qrAlwaysVisible
+                            or qrMoveMode
+                            or qrForceVisibleForShot)
     if shouldShow and not wasShown then
         qrFrame:SetAlpha(1)
         qrFrame:Show()
@@ -1719,6 +1783,108 @@ _RefreshQRVisibility = function()
     elseif not shouldShow and wasShown then
         qrFrame:Hide()
     end
+end
+
+entryCreationKeyState.SuspendQRTransportForGameplay = function()
+    local wasForce = entryCreationKeyState.qrTransportJobForce == true
+    local wasTerminalClear =
+        entryCreationKeyState.qrTransportJobTerminalClear == true
+
+    if wasForce then
+        entryCreationKeyState.QueuePendingForcedScreenshot(
+            wasTerminalClear,
+            true
+        )
+    elseif isSessionActive then
+        pendingShotDirty = true
+    end
+
+    -- A multipart snapshot belongs to the state before suppression began. A
+    -- later resume always rebuilds the newest complete logical snapshot.
+    entryCreationKeyState.ClearQROverflowTransport("gameplay-suppressed")
+    if entryCreationKeyState.screenshotAwaitingResult then
+        -- SCREENSHOT_* has no request identity. Consume this physical result,
+        -- but prevent it from committing delivery state after gameplay began.
+        entryCreationKeyState.screenshotAwaitingSuperseded = true
+    elseif entryCreationKeyState.qrPaintInProgress
+       or entryCreationKeyState.qrCaptureInProgress then
+        if wasTerminalClear
+           and (entryCreationKeyState.terminalClearDispatchCount or 0) > 0 then
+            -- Dispatch accounting happens before async build. A gameplay gate
+            -- reached before Screenshot() must not consume one of the two
+            -- terminal delivery attempts.
+            entryCreationKeyState.terminalClearDispatchCount =
+                entryCreationKeyState.terminalClearDispatchCount - 1
+        end
+        entryCreationKeyState.qrPaintJobGen =
+            (entryCreationKeyState.qrPaintJobGen or 0) + 1
+        entryCreationKeyState.ClearQRTransportJob()
+    end
+
+    qrForceVisibleShotGen = (qrForceVisibleShotGen or 0) + 1
+    qrForceVisibleForShot = false
+    if qrFrame then qrFrame:SetFrameStrata("DIALOG") end
+    _RefreshQRVisibility()
+end
+
+entryCreationKeyState.ResolveGameplayActivityState = function(eventActive, api)
+    local current = entryCreationKeyState.CleanUnitAPIBoolean(api)
+    if current ~= nil then
+        -- Current-state APIs recover missed completion/end events and `/reload`.
+        -- Event flags are only a fallback when the API is absent or unreadable.
+        return current
+    end
+    return eventActive == true
+end
+
+entryCreationKeyState.RefreshQRGameplaySuppression = function()
+    local combatActive = entryCreationKeyState.ResolveGameplayActivityState(
+        entryCreationKeyState.qrGameplayCombatEventActive,
+        InCombatLockdown
+    )
+
+    local challengeAPI = _G.C_ChallengeMode
+    local challengeActive = entryCreationKeyState.ResolveGameplayActivityState(
+        entryCreationKeyState.qrGameplayChallengeEventActive,
+        challengeAPI and challengeAPI.IsChallengeModeActive
+    )
+
+    local encounterAPI = _G.C_InstanceEncounter
+    local encounterActive = entryCreationKeyState.ResolveGameplayActivityState(
+        entryCreationKeyState.qrGameplayEncounterEventActive,
+        encounterAPI and encounterAPI.IsEncounterInProgress
+    )
+
+    local suppressed = combatActive or challengeActive or encounterActive
+    local reason = "none"
+    if challengeActive then
+        reason = "mythic-plus"
+    elseif encounterActive then
+        reason = "raid-encounter"
+    elseif combatActive then
+        reason = "combat"
+    end
+
+    local changed = suppressed ~= entryCreationKeyState.qrGameplaySuppressed
+    entryCreationKeyState.qrGameplayCombatActive = combatActive
+    entryCreationKeyState.qrGameplayChallengeActive = challengeActive
+    entryCreationKeyState.qrGameplayEncounterActive = encounterActive
+    entryCreationKeyState.qrGameplaySuppressionReason = reason
+    entryCreationKeyState.qrGameplaySuppressed = suppressed
+
+    if suppressed then
+        if changed
+           or entryCreationKeyState.qrPaintInProgress
+           or entryCreationKeyState.qrCaptureInProgress
+           or qrForceVisibleForShot then
+            entryCreationKeyState.SuspendQRTransportForGameplay()
+        end
+    elseif changed then
+        pendingShotDirty = isSessionActive or pendingShotDirty
+        MarkDirty("gameplay-resume")
+        _RefreshQRVisibility()
+    end
+    return suppressed
 end
 
 -- Aggregator: walks events table + tracked info panels to determine if any
@@ -2471,7 +2637,8 @@ end
 entryCreationKeyState.ReconcileEntryCreationKeyCache = function(listingContext)
     listingContext = SafeTable(listingContext)
     if not listingContext then
-        if entryCreationKeyState.activeListingCacheContext then
+        local listingChanged = entryCreationKeyState.activeListingCacheContext ~= nil
+        if listingChanged then
             entryCreationKeyState.activeListingGeneration = entryCreationKeyState.activeListingGeneration + 1
             _ClearEntryCreationKeyLevelCache("listing-ended")
         else
@@ -2480,15 +2647,23 @@ entryCreationKeyState.ReconcileEntryCreationKeyCache = function(listingContext)
         end
         entryCreationKeyState.activeListingCacheContext = nil
         entryCreationKeyState.activeListingMaybeChanged = false
-        return
+        return listingChanged
     end
 
     if math.floor(SafeNumber(listingContext.activityID, 0)) <= 0 then
+        local listingChanged = entryCreationKeyState.activeListingMaybeChanged
+           or not _SameEntryListingCacheContext(
+               entryCreationKeyState.activeListingCacheContext,
+               listingContext
+           )
         entryCreationKeyState.activeListingCacheContext = listingContext
-        entryCreationKeyState.activeListingGeneration = entryCreationKeyState.activeListingGeneration + 1
+        if listingChanged then
+            entryCreationKeyState.activeListingGeneration =
+                entryCreationKeyState.activeListingGeneration + 1
+        end
         entryCreationKeyState.activeListingMaybeChanged = false
         _ClearEntryCreationKeyLevelCache("ignored: active activity unknown")
-        return
+        return listingChanged
     end
 
     local listingChanged = entryCreationKeyState.activeListingMaybeChanged
@@ -2500,7 +2675,7 @@ entryCreationKeyState.ReconcileEntryCreationKeyCache = function(listingContext)
             _ClearEntryCreationKeyLevelCache("stale-after-entry-update")
         end
         entryCreationKeyState.activeListingMaybeChanged = false
-        return
+        return true
     end
 
     entryCreationKeyState.activeListingCacheContext = listingContext
@@ -2508,9 +2683,14 @@ entryCreationKeyState.ReconcileEntryCreationKeyCache = function(listingContext)
         _PublishPendingEntryCreationKeyLevelCache(listingContext)
     end
     entryCreationKeyState.activeListingMaybeChanged = false
+    return false
 end
 
 local function _RememberEntryCreationKeystoneLevel(panel, reason)
+    -- List Group / Enter is the only safe same-activity epoch signal after the
+    -- taint-prone LFG_LIST_ACTIVE_ENTRY_UPDATE handler was removed. Keep the
+    -- epoch signal primitive; the clean ticker validates the live entry.
+    entryCreationKeyState.activeListingMaybeChanged = true
     if not panel then return false end
 
     local activityID = panel.selectedActivity
@@ -4837,6 +5017,8 @@ if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
         entryCreationKeyState.AdvanceQROverflowTransport
     _addonNS.ApplicantScoutFixtureHarness.StartSession = StartSession
     _addonNS.ApplicantScoutFixtureHarness.EndSession = EndSession
+    _addonNS.ApplicantScoutFixtureHarness.CheckSessionTransition =
+        CheckSessionTransition
     _addonNS.ApplicantScoutFixtureHarness.EnsureRosterInspectBatchBeforeSnapshot =
         entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot
     _addonNS.ApplicantScoutFixtureHarness.ScheduleRosterLoadRetry =
@@ -5374,6 +5556,7 @@ entryCreationKeyState.ClearQRTransportJob = function(jobGen)
     entryCreationKeyState.qrPaintDirtyDuringPaint = false
     entryCreationKeyState.qrTransportJobStartedAt = nil
     entryCreationKeyState.qrTransportJobTerminalClear = false
+    entryCreationKeyState.qrTransportJobForce = false
     if not jobGen or entryCreationKeyState.screenshotAwaitingJobGen == jobGen then
         entryCreationKeyState.screenshotAwaitingResult = false
         entryCreationKeyState.screenshotAwaitingJobGen = nil
@@ -5504,6 +5687,21 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     -- spam wastes CPU on every GROUP_ROSTER_UPDATE.
     if not isSessionActive and not force then
         pendingShotDirty = false
+        return
+    end
+
+    -- Gameplay suppression is a hard gate for every capture path, including
+    -- terminal clears and /apscout shotnow. Queue forced work for the first
+    -- safe ticker after gameplay ends; normal work remains dirty and is rebuilt.
+    if entryCreationKeyState.RefreshQRGameplaySuppression() then
+        if force then
+            entryCreationKeyState.QueuePendingForcedScreenshot(
+                terminalClear,
+                lfgReadsAllowed
+            )
+        else
+            pendingShotDirty = true
+        end
         return
     end
 
@@ -5771,6 +5969,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     entryCreationKeyState.qrPaintDirtyDuringPaint = false
     entryCreationKeyState.qrTransportJobStartedAt = GetTime()
     entryCreationKeyState.qrTransportJobTerminalClear = terminalClear and true or false
+    entryCreationKeyState.qrTransportJobForce = force and true or false
     -- WHY: terminal clears are delayed until the QR paints. If a new session
     -- starts before that callback, the stale clear must not wipe the companion
     -- state for the fresh listing.
@@ -5778,6 +5977,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
 
     local function OnQRPaintComplete(paintOK)
         if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
+        entryCreationKeyState.qrPaintInProgress = false
         local dirtyDuringPaint = entryCreationKeyState.qrPaintDirtyDuringPaint and not force
         entryCreationKeyState.qrPaintDirtyDuringPaint = false
         local dirtySincePaintStarted =
@@ -5798,6 +5998,17 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                     terminalClearSessionGen
                 )
             end
+            return
+        end
+
+        -- The next bounded non-terminal resend carries identical bytes. Keep
+        -- the successfully painted frame so it can take a second physical
+        -- screenshot without repeating the expensive QR encode and texture pass.
+        entryCreationKeyState.qrRenderedPayload = terminalClear and nil or payload
+
+        -- Combat or a run/encounter can begin while encoding and painting yield.
+        -- The refresh cancels this generation and preserves only current work.
+        if entryCreationKeyState.RefreshQRGameplaySuppression() then
             return
         end
 
@@ -5830,6 +6041,9 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             end
             if entryCreationKeyState.qrPaintJobGen ~= completedPaintGen then
                 _ReleaseForceVisibleShotLease(forceVisibleShotGen)
+                return
+            end
+            if entryCreationKeyState.RefreshQRGameplaySuppression() then
                 return
             end
             -- Suppression may also begin during the framebuffer settle delay,
@@ -6072,6 +6286,10 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             end
             return
         end
+        -- PaintQR mutates the live texture pool over several callbacks. The
+        -- previous rendered-payload lease is no longer trustworthy once a new
+        -- paint begins, even if this generation is later cancelled.
+        entryCreationKeyState.qrRenderedPayload = nil
         PaintQR(
             matrix,
             runs,
@@ -6082,13 +6300,21 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         )
     end
 
-    BuildQRMatrix(
-        payload,
-        reliableHexOnly and not overflowInUse,
-        reliableHexOnly,
-        jobGen,
-        OnQRBuildComplete
-    )
+    if resendSameNonterminalSnapshot
+       and entryCreationKeyState.qrRenderedPayload == payload then
+        C_Timer.After(0, function()
+            if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
+            OnQRPaintComplete(true)
+        end)
+    else
+        BuildQRMatrix(
+            payload,
+            reliableHexOnly and not overflowInUse,
+            reliableHexOnly,
+            jobGen,
+            OnQRBuildComplete
+        )
+    end
 end
 
 if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
@@ -6130,6 +6356,16 @@ if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
                 entryCreationKeyState.qrOverflowSupersededCount or 0,
             sessionActive = isSessionActive == true,
             suppressedByInteraction = _qrSuppressedByInteraction == true,
+            suppressedByGameplay =
+                entryCreationKeyState.qrGameplaySuppressed == true,
+            gameplayCombatActive =
+                entryCreationKeyState.qrGameplayCombatActive == true,
+            gameplayChallengeActive =
+                entryCreationKeyState.qrGameplayChallengeActive == true,
+            gameplayEncounterActive =
+                entryCreationKeyState.qrGameplayEncounterActive == true,
+            gameplaySuppressionReason =
+                entryCreationKeyState.qrGameplaySuppressionReason,
         }
     end
     _addonNS.ApplicantScoutFixtureHarness.SettingsAttachState = function()
@@ -6320,8 +6556,12 @@ local EVENT_HANDLERS = {
     end,
     PLAYER_ENTERING_WORLD            = function()
         entryCreationKeyState.ResetInteractionSlotsForWorldTransition()
+        entryCreationKeyState.qrGameplayCombatEventActive = false
+        entryCreationKeyState.qrGameplayChallengeEventActive = false
+        entryCreationKeyState.qrGameplayEncounterEventActive = false
         entryCreationKeyState.ClearRosterLoadRetryState()
         CreateQRFrame()
+        entryCreationKeyState.RefreshQRGameplaySuppression()
         entryCreationKeyState.SyncAutoHiInitialGroupState()
         entryCreationKeyState.RequestLeaderKeystone(true)
         -- Recover a lease interrupted by /reload. The next actual capture
@@ -6391,7 +6631,13 @@ local EVENT_HANDLERS = {
         entryCreationKeyState.ClearRosterLoadRetryState()
         MarkDirty("spec")
     end,
+    PLAYER_REGEN_DISABLED             = function()
+        entryCreationKeyState.qrGameplayCombatEventActive = true
+        entryCreationKeyState.RefreshQRGameplaySuppression()
+    end,
     PLAYER_REGEN_ENABLED              = function()
+        entryCreationKeyState.qrGameplayCombatEventActive = false
+        entryCreationKeyState.RefreshQRGameplaySuppression()
         if entryCreationKeyState.leaderKeystoneContextCombatDeferred then
             entryCreationKeyState.leaderKeystoneContextCombatDeferred = false
             if entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup) == true then
@@ -6410,6 +6656,26 @@ local EVENT_HANDLERS = {
         if entryCreationKeyState.autoHiPartySamplePending then
             entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()
         end
+    end,
+    CHALLENGE_MODE_START              = function()
+        entryCreationKeyState.qrGameplayChallengeEventActive = true
+        entryCreationKeyState.RefreshQRGameplaySuppression()
+    end,
+    CHALLENGE_MODE_COMPLETED          = function()
+        entryCreationKeyState.qrGameplayChallengeEventActive = false
+        entryCreationKeyState.RefreshQRGameplaySuppression()
+    end,
+    CHALLENGE_MODE_RESET              = function()
+        entryCreationKeyState.qrGameplayChallengeEventActive = false
+        entryCreationKeyState.RefreshQRGameplaySuppression()
+    end,
+    ENCOUNTER_START                   = function()
+        entryCreationKeyState.qrGameplayEncounterEventActive = true
+        entryCreationKeyState.RefreshQRGameplaySuppression()
+    end,
+    ENCOUNTER_END                     = function()
+        entryCreationKeyState.qrGameplayEncounterEventActive = false
+        entryCreationKeyState.RefreshQRGameplaySuppression()
     end,
     INSPECT_READY                    = function(_, guid)
         if _OnRosterInspectReady(guid) then
@@ -6452,12 +6718,52 @@ end)
 C_Timer.NewTicker(0.25, function()
     local now = GetTime()
     entryCreationKeyState.RecoverStalledQRTransport(now)
+
+    local addonEnabled = ApplicantScoutDB and ApplicantScoutDB.enabled
+    local disabledTransportCleanupActive = not addonEnabled
+        and (entryCreationKeyState.TerminalClearOwnsTransport()
+             or entryCreationKeyState.screenshotAwaitingResult
+             or entryCreationKeyState.qrPaintInProgress
+             or entryCreationKeyState.qrCaptureInProgress)
+    -- `/off` is a true idle state once a required terminal clear / physical
+    -- screenshot result has settled. Do not keep polling QR UI or LFG state.
+    if not addonEnabled and not disabledTransportCleanupActive then
+        return
+    end
+
+    local gameplaySuppressed =
+        entryCreationKeyState.RefreshQRGameplaySuppression()
+    -- Gameplay suppression is a complete transport pause. Keep only stalled
+    -- capture recovery alive; defer QR-panel housekeeping, LFG polling, forced
+    -- captures, and dirty-state consumption until combat / the active run ends.
+    if gameplaySuppressed then
+        return
+    end
+
+    -- A disabled addon may still owe its bounded terminal-clear delivery. Its
+    -- async timers keep running; the ticker only needs to dispatch queued work.
+    if not addonEnabled then
+        if entryCreationKeyState.screenshotPendingForce
+           and not entryCreationKeyState.qrPaintInProgress
+           and not entryCreationKeyState.qrCaptureInProgress
+           and not entryCreationKeyState.screenshotAwaitingResult then
+            entryCreationKeyState.DispatchPendingForcedScreenshot()
+        end
+        return
+    end
+
     _TryHookInfoPanels()
     _RecomputeInteractionSuppression()
     entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker()
     entryCreationKeyState.ProcessLFGEntryCreationDeferredWork()
     local lfgReadsAllowed = not IsChatMessagingLockdown()
-    if not (scanDirty and ApplicantScoutDB and ApplicantScoutDB.enabled) then
+    if entryCreationKeyState.screenshotPendingForce
+       and not entryCreationKeyState.qrPaintInProgress
+       and not entryCreationKeyState.qrCaptureInProgress
+       and not entryCreationKeyState.screenshotAwaitingResult then
+        entryCreationKeyState.DispatchPendingForcedScreenshot()
+    end
+    if not scanDirty then
         -- Drain pending throttled shot: data was changed during throttle
         -- window (pendingShotDirty=true), but no new events fired since.
         -- Without this drain: shot never goes out for sustained state.
@@ -6468,8 +6774,7 @@ C_Timer.NewTicker(0.25, function()
                 MaybeTriggerScreenshot(false, nil, nil, lfgReadsAllowed)
             end
         end
-        if ApplicantScoutDB and ApplicantScoutDB.enabled
-           and (now - lastTransportPollTime)
+        if (now - lastTransportPollTime)
                >= entryCreationKeyState.TRANSPORT_POLL_S then
             lastTransportPollTime = now
             local entry = CheckSessionTransition(lfgReadsAllowed)
@@ -6538,12 +6843,14 @@ local function _RunDisabledCleanup()
     entryCreationKeyState.ClearLeaderKeystone()
     scanDirty = false
     pendingShotDirty = false
+    local terminalClearOwnsTransport =
+        entryCreationKeyState.TerminalClearOwnsTransport()
 
     -- Kill-switch semantics cancel manual force work that has not reached the
     -- identity-free Screenshot() API yet. Terminal clear owns its own bounded
     -- dispatches, while an already-requested physical screenshot must keep its
     -- result handler armed so SCREENSHOT_* cannot resolve a later capture.
-    if not entryCreationKeyState.TerminalClearOwnsTransport() then
+    if not terminalClearOwnsTransport then
         entryCreationKeyState.ClearPendingForcedScreenshot()
         if not entryCreationKeyState.screenshotAwaitingResult then
             entryCreationKeyState.qrPaintJobGen =
@@ -6553,6 +6860,10 @@ local function _RunDisabledCleanup()
             qrForceVisibleForShot = false
             if qrFrame then qrFrame:SetFrameStrata("DIALOG") end
         end
+    end
+
+    if not terminalClearOwnsTransport then
+        entryCreationKeyState.qrRenderedPayload = nil
     end
 
     -- Reset before EndSession's deferred Hide closure fires so it respects
@@ -6694,6 +7005,12 @@ entryCreationKeyState.RequestForcedSnapshot = function()
         return false, "qr-frame-unavailable"
     end
     local lfgReadsAllowed = not IsChatMessagingLockdown()
+    if entryCreationKeyState.RefreshQRGameplaySuppression() then
+        entryCreationKeyState.QueuePendingForcedScreenshot(false, lfgReadsAllowed)
+        APSPrint("forced snapshot deferred — gameplay suppression: "
+                 .. tostring(entryCreationKeyState.qrGameplaySuppressionReason))
+        return true, "deferred"
+    end
     local entry = CheckSessionTransition(lfgReadsAllowed)
     MaybeTriggerScreenshot(true, entry, nil, lfgReadsAllowed)
     APSPrint("forced snapshot requested — check Screenshots/ folder")
@@ -7220,6 +7537,14 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
     end
     -- Phase 1 + 2 diagnostics
     print("|cff00ff7f---|r visibility:")
+    entryCreationKeyState.RefreshQRGameplaySuppression()
+    print("  QR suppressed by gameplay: "
+          .. tostring(entryCreationKeyState.qrGameplaySuppressed)
+          .. " (" .. tostring(entryCreationKeyState.qrGameplaySuppressionReason) .. ")")
+    print("  gameplay combat/M+/encounter: "
+          .. tostring(entryCreationKeyState.qrGameplayCombatActive) .. "/"
+          .. tostring(entryCreationKeyState.qrGameplayChallengeActive) .. "/"
+          .. tostring(entryCreationKeyState.qrGameplayEncounterActive))
     print("  QR suppressed by interaction: " .. tostring(_qrSuppressedByInteraction or false))
     local activeKinds = {}
     for kind, active in pairs(_interactionSlots) do
@@ -7260,7 +7585,7 @@ local function PrintHelp()
     print("  /apscout status         show current state + QR diagnostics")
     print("  /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle")
     print("  /apscout reset          clear transport cache, queue fresh snapshot")
-    print("  /apscout shotnow        force snapshot now while enabled (debug / manual sync)")
+    print("  /apscout shotnow        request snapshot while enabled; defers in combat/M+/boss fights")
     print("  /apscout qrvisible      toggle persistent QR always-visible mode; off clears it")
     print("  /apscout qrmove         toggle QR move mode (Alt+drag QR frame)")
     print("  /apscout qrreset        reset QR frame position to top-left")

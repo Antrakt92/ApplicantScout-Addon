@@ -10,6 +10,16 @@ Enum = {}
 ---@type any
 C_PlayerInteractionManager = nil
 
+---@class ChallengeModeAPI
+---@field IsChallengeModeActive fun(): boolean
+---@type ChallengeModeAPI?
+C_ChallengeMode = nil
+
+---@class InstanceEncounterAPI
+---@field IsEncounterInProgress fun(): boolean
+---@type InstanceEncounterAPI?
+C_InstanceEncounter = nil
+
 ---@overload fun(functionName: string, hook: function)
 ---@param target any
 ---@param method string

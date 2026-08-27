@@ -304,7 +304,7 @@ def test_non_force_screenshot_uses_transient_qr_lease_after_paint():
     screenshot_idx = body.index("local screenshotOK = pcall(Screenshot)")
     paint_idx = body.index("PaintQR(")
     build_idx = body.index(
-        "BuildQRMatrix(\n        payload,\n        reliableHexOnly and not overflowInUse,"
+        "BuildQRMatrix(\n            payload,\n            reliableHexOnly and not overflowInUse,"
     )
 
     assert payload_idx < job_idx < callback_idx < lease_idx < screenshot_idx
@@ -323,7 +323,160 @@ def test_session_visibility_does_not_keep_qr_on_screen_between_shots():
     )
 
     assert "isSessionActive and not _qrSuppressedByInteraction" not in visibility_body
-    assert "qrAlwaysVisible\n                       or qrMoveMode\n                       or qrForceVisibleForShot" in visibility_body
+    assert (
+        "and (qrAlwaysVisible\n"
+        "                            or qrMoveMode\n"
+        "                            or qrForceVisibleForShot)"
+        in visibility_body
+    )
+
+
+def test_gameplay_suppression_hard_hides_qr_even_in_debug_modes():
+    source = _lua_source()
+    visibility_body = _slice_between(
+        source,
+        "_RefreshQRVisibility = function()",
+        "-- Aggregator: walks events table + tracked info panels",
+    )
+
+    suppression_idx = visibility_body.index(
+        "not entryCreationKeyState.qrGameplaySuppressed"
+    )
+    debug_idx = visibility_body.index("qrAlwaysVisible", suppression_idx)
+    move_idx = visibility_body.index("qrMoveMode", debug_idx)
+    force_idx = visibility_body.index("qrForceVisibleForShot", move_idx)
+
+    assert suppression_idx < debug_idx < move_idx < force_idx
+
+
+def test_gameplay_suppression_uses_current_state_and_all_recovery_events():
+    source = _lua_source()
+    resolver_body = _slice_between(
+        source,
+        "entryCreationKeyState.ResolveGameplayActivityState = function(eventActive, api)",
+        "entryCreationKeyState.RefreshQRGameplaySuppression = function()",
+    )
+    refresh_body = _slice_between(
+        source,
+        "entryCreationKeyState.RefreshQRGameplaySuppression = function()",
+        "-- Aggregator: walks events table + tracked info panels",
+    )
+    ticker_body = _slice_between(source, "C_Timer.NewTicker(0.25, function()", "end)\n\n\n--")
+
+    assert "entryCreationKeyState.qrGameplayCombatEventActive" in refresh_body
+    assert "InCombatLockdown" in refresh_body
+    assert "challengeAPI.IsChallengeModeActive" in refresh_body
+    assert "encounterAPI.IsEncounterInProgress" in refresh_body
+    assert "if current ~= nil then" in resolver_body
+    assert "return current" in resolver_body
+    assert "return eventActive == true" in resolver_body
+    assert "challengeActive = challengeActive" not in refresh_body
+    assert "encounterActive = encounterActive" not in refresh_body
+    assert "entryCreationKeyState.RefreshQRGameplaySuppression()" in ticker_body
+    suppression_return_idx = ticker_body.index(
+        "if gameplaySuppressed then\n        return\n    end"
+    )
+    info_panel_idx = ticker_body.index("_TryHookInfoPanels()")
+    interaction_idx = ticker_body.index("_RecomputeInteractionSuppression()")
+    pve_restore_idx = ticker_body.index(
+        "entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker()"
+    )
+    deferred_lfg_idx = ticker_body.index(
+        "entryCreationKeyState.ProcessLFGEntryCreationDeferredWork()"
+    )
+    lfg_lockdown_idx = ticker_body.index("local lfgReadsAllowed")
+    assert (
+        suppression_return_idx
+        < info_panel_idx
+        < interaction_idx
+        < pve_restore_idx
+        < deferred_lfg_idx
+        < lfg_lockdown_idx
+    )
+    for event in (
+        "PLAYER_REGEN_DISABLED",
+        "PLAYER_REGEN_ENABLED",
+        "CHALLENGE_MODE_START",
+        "CHALLENGE_MODE_COMPLETED",
+        "CHALLENGE_MODE_RESET",
+        "ENCOUNTER_START",
+        "ENCOUNTER_END",
+    ):
+        assert event in source
+    assert "entryCreationKeyState.qrGameplayCombatEventActive = true" in source
+    assert "entryCreationKeyState.qrGameplayCombatEventActive = false" in source
+
+
+def test_gameplay_suppression_defers_every_capture_before_payload_and_async_edges():
+    source = _lua_source()
+    screenshot_body = _slice_between(
+        source,
+        MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
+        "-- LFG entry creation",
+    )
+
+    initial_guard_idx = screenshot_body.index(
+        "if entryCreationKeyState.RefreshQRGameplaySuppression() then"
+    )
+    payload_idx = screenshot_body.index("local payload, h = BuildPayload(")
+    callback_idx = screenshot_body.index("local function OnQRPaintComplete(paintOK)")
+    lease_idx = screenshot_body.index(
+        "local forceVisibleShotGen, forceVisibleShotDelay = _AcquireQRShotLease()",
+        callback_idx,
+    )
+    prelease_guard_idx = screenshot_body.index(
+        "if entryCreationKeyState.RefreshQRGameplaySuppression() then",
+        callback_idx,
+    )
+    settle_idx = screenshot_body.index(
+        "C_Timer.After(forceVisibleShotDelay, function()",
+        lease_idx,
+    )
+    capture_guard_idx = screenshot_body.index(
+        "if entryCreationKeyState.RefreshQRGameplaySuppression() then",
+        settle_idx,
+    )
+    screenshot_idx = screenshot_body.index(
+        "local screenshotOK = pcall(Screenshot)",
+        capture_guard_idx,
+    )
+
+    assert initial_guard_idx < payload_idx
+    assert callback_idx < prelease_guard_idx < lease_idx
+    assert settle_idx < capture_guard_idx < screenshot_idx
+    assert "if not force" not in screenshot_body[
+        initial_guard_idx : screenshot_body.index("\n    end", initial_guard_idx)
+    ]
+    assert "QueuePendingForcedScreenshot" in screenshot_body[
+        initial_guard_idx:payload_idx
+    ]
+
+
+def test_gameplay_cancellation_does_not_consume_a_pre_capture_terminal_attempt():
+    source = _lua_source()
+    suspend_body = _slice_between(
+        source,
+        "entryCreationKeyState.SuspendQRTransportForGameplay = function()",
+        "entryCreationKeyState.RefreshQRGameplaySuppression = function()",
+    )
+
+    awaiting_idx = suspend_body.index(
+        "if entryCreationKeyState.screenshotAwaitingResult then"
+    )
+    cancel_idx = suspend_body.index(
+        "elseif entryCreationKeyState.qrPaintInProgress",
+        awaiting_idx,
+    )
+    decrement_idx = suspend_body.index(
+        "entryCreationKeyState.terminalClearDispatchCount - 1",
+        cancel_idx,
+    )
+    clear_idx = suspend_body.index(
+        "entryCreationKeyState.ClearQRTransportJob()",
+        decrement_idx,
+    )
+
+    assert awaiting_idx < cancel_idx < decrement_idx < clear_idx
 
 
 def test_interaction_suppression_defers_non_force_payloads_before_dedup():
@@ -720,6 +873,37 @@ def test_entry_creation_cache_clears_when_grouped_listing_ends_without_ending_tr
     assert "_ClearEntryCreationKeyLevelCache(\"listing-ended\")" in source
 
 
+def test_grouped_listing_epoch_resets_transport_without_ending_party_session():
+    source = _lua_source()
+    transition_body = _slice_between(
+        source,
+        CHECK_SESSION_TRANSITION_ANCHOR,
+        "-- Single transition logger",
+    )
+    reset_body = _slice_between(
+        source,
+        "entryCreationKeyState.ResetListingTransportState = function()",
+        "local function _HasGroupRosterForTransport()",
+    )
+
+    reconcile_idx = transition_body.index("local listingChanged =")
+    lifecycle_idx = transition_body.index("if transportActive and not isSessionActive then")
+    reset_idx = transition_body.index(
+        "entryCreationKeyState.ResetListingTransportState()",
+        lifecycle_idx,
+    )
+
+    assert reconcile_idx < lifecycle_idx < reset_idx
+    assert "elseif listingChanged and isSessionActive then" in transition_body
+    assert "isSessionActive = false" not in reset_body
+    assert 'entryCreationKeyState.ClearQROverflowTransport("listing-change")' in reset_body
+    assert "entryCreationKeyState.ClearScreenshotFailureState()" in reset_body
+    assert "entryCreationKeyState.screenshotAwaitingSuperseded = true" in reset_body
+    assert "lastSnapshotHash = nil" in reset_body
+    assert "entryCreationKeyState.lastDeliverySnapshotHash = nil" in reset_body
+    assert "pendingShotDirty = true" in reset_body
+
+
 def test_same_activity_entry_update_requires_fresh_pending_key_cache():
     source = _lua_source()
     helper_body = _slice_between(
@@ -737,6 +921,22 @@ def test_same_activity_entry_update_requires_fresh_pending_key_cache():
 
     assert maybe_idx < pending_idx < stale_idx
     assert "_PublishPendingEntryCreationKeyLevelCache(listingContext)" in helper_body
+
+
+def test_listing_submit_marks_same_activity_listing_as_a_new_epoch():
+    source = _lua_source()
+    remember_body = _slice_between(
+        source,
+        "local function _RememberEntryCreationKeystoneLevel(panel, reason)",
+        "local function _HookEntryCreationKeyCapture(panel)",
+    )
+
+    mark_idx = remember_body.index(
+        "entryCreationKeyState.activeListingMaybeChanged = true"
+    )
+    activity_idx = remember_body.index("local activityID = panel.selectedActivity")
+
+    assert mark_idx < activity_idx
 
 
 def test_pending_entry_creation_cache_has_short_promotion_window():
@@ -761,8 +961,12 @@ def test_scan_ticker_polls_transport_state_when_events_are_missed():
         "-- Settings panel:",
     )
 
-    idle_idx = ticker_body.index("if not (scanDirty and ApplicantScoutDB and ApplicantScoutDB.enabled) then")
-    poll_idx = ticker_body.index("if ApplicantScoutDB and ApplicantScoutDB.enabled")
+    disabled_idle_idx = ticker_body.index(
+        "if not addonEnabled and not disabledTransportCleanupActive then"
+    )
+    disabled_cleanup_idx = ticker_body.index("if not addonEnabled then", disabled_idle_idx + 1)
+    idle_idx = ticker_body.index("if not scanDirty then", disabled_cleanup_idx)
+    poll_idx = ticker_body.index("if (now - lastTransportPollTime)", idle_idx)
     transition_idx = ticker_body.index("local entry = CheckSessionTransition(lfgReadsAllowed)", poll_idx)
     screenshot_idx = ticker_body.index(
         "MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)",
@@ -770,7 +974,15 @@ def test_scan_ticker_polls_transport_state_when_events_are_missed():
     )
     dirty_idx = ticker_body.index("scanDirty = false")
 
-    assert idle_idx < poll_idx < transition_idx < screenshot_idx < dirty_idx
+    assert (
+        disabled_idle_idx
+        < disabled_cleanup_idx
+        < idle_idx
+        < poll_idx
+        < transition_idx
+        < screenshot_idx
+        < dirty_idx
+    )
     assert "TRANSPORT_POLL_S" in ticker_body
     assert "local lfgReadsAllowed = not IsChatMessagingLockdown()" in ticker_body[:dirty_idx]
 
@@ -960,6 +1172,7 @@ def test_nonterminal_snapshots_get_short_redundant_resend_without_periodic_heart
     assert "NONTERMINAL_SNAPSHOT_MIN_SENDS = 2" in state_body
     assert "lastDeliverySnapshotHash = nil" in state_body
     assert "lastDeliverySnapshotSendCount = 0" in state_body
+    assert "qrRenderedPayload = nil" in state_body
     assert "entryCreationKeyState.lastDeliverySnapshotHash = nil" in start_body
     assert "entryCreationKeyState.lastDeliverySnapshotSendCount = 0" in start_body
 
@@ -982,9 +1195,33 @@ def test_nonterminal_snapshots_get_short_redundant_resend_without_periodic_heart
         "pendingShotDirty = true",
         track_idx,
     )
+    paint_success_idx = screenshot_body.index(
+        "entryCreationKeyState.qrRenderedPayload = terminalClear and nil or payload"
+    )
+    paint_invalidate_idx = screenshot_body.index(
+        "entryCreationKeyState.qrRenderedPayload = nil",
+        paint_success_idx,
+    )
+    paint_idx = screenshot_body.index("PaintQR(", paint_invalidate_idx)
+    reuse_idx = screenshot_body.index(
+        "if resendSameNonterminalSnapshot",
+        paint_idx,
+    )
+    exact_payload_idx = screenshot_body.index(
+        "and entryCreationKeyState.qrRenderedPayload == payload",
+        reuse_idx,
+    )
+    deferred_reuse_idx = screenshot_body.index("C_Timer.After(0, function()", exact_payload_idx)
+    reuse_complete_idx = screenshot_body.index(
+        "OnQRPaintComplete(true)",
+        deferred_reuse_idx,
+    )
+    rebuild_idx = screenshot_body.index("BuildQRMatrix(", reuse_complete_idx)
 
     assert resend_idx < terminal_idx < send_count_idx < same_hash_guard_idx
     assert commit_idx < track_idx < redundant_pending_idx
+    assert paint_success_idx < paint_invalidate_idx < paint_idx < reuse_idx
+    assert reuse_idx < exact_payload_idx < deferred_reuse_idx < reuse_complete_idx < rebuild_idx
     assert "and not resendSameNonterminalSnapshot then" in screenshot_body
 
 
@@ -2014,7 +2251,7 @@ def test_qr_build_failure_fragments_complete_payload_without_roster_omission():
 
     reliable_gate_idx = screenshot_body.index("local reliableHexOnly =")
     full_matrix_idx = screenshot_body.index(
-        "BuildQRMatrix(\n        payload,\n        reliableHexOnly and not overflowInUse,",
+        "BuildQRMatrix(\n            payload,\n            reliableHexOnly and not overflowInUse,",
         reliable_gate_idx,
     )
     overflow_idx = screenshot_body.index(
@@ -3634,6 +3871,68 @@ def test_rapid_session_restart_rejects_every_stale_qr_callback(
 
     assert output.splitlines()[-1] == (
         f"ok qr-capture-lifecycle mode=restart-race shots={shots} attempts={shots}"
+    )
+
+
+def test_grouped_listing_recreate_retires_stale_overflow_without_reload(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "listing-recreate",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=listing-recreate shots=2 attempts=2"
+    )
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["gameplay-combat", "gameplay-challenge-reload"],
+)
+def test_gameplay_suppression_blocks_all_qr_work_then_resumes_latest_snapshot(
+    pytestconfig,
+    mode,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        mode,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode={mode} shots=2 attempts=2"
+    )
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["gameplay-combat-during-paint", "gameplay-combat-during-settle"],
+)
+def test_combat_start_cancels_midflight_qr_and_rebuilds_after_combat(
+    pytestconfig,
+    mode,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        mode,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode={mode} shots=2 attempts=2"
+    )
+
+
+def test_raid_encounter_suppresses_qr_but_out_of_combat_recruiting_resumes(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "gameplay-raid-encounter",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=gameplay-raid-encounter shots=4 attempts=4"
     )
 
 
