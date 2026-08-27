@@ -175,9 +175,9 @@ local SafeStr, APSPrint, InitDB, StartSession, EndSession, CheckSessionTransitio
 -- mouse input because it sits over gameplay HUD while hosting.
 -- _qrSuppressedByInteraction: orthogonal to session/debug — true while any
 -- tracked Blizzard interaction frame (vendor, NPC, quest, mail, bank, taxi,
--- character, map, etc.) is open. Hides QR so user can read those windows
--- without the QR overlay obscuring text. Companion misses ~10-30s of emits
--- while user has interaction window open — acceptable per scope.
+-- character, map, etc.) is open. It grants a short transport grace so the QR
+-- does not immediately cover a panel, but must never stop applicant updates
+-- for the entire lifetime of that panel.
 -- qrForceVisibleForShot is a transport-only visibility lease for force shots
 -- such as EndSession's final clear while an interaction frame has hidden QR.
 local lastSnapshotHash, lastShotTime, pendingShotDirty,
@@ -248,6 +248,11 @@ local entryCreationKeyState = {
     qrOverflowState = nil,
     qrOverflowSupersededCount = 0,
     qrOverflowLastFailure = nil,
+    -- Interaction panels get a brief visual grace, not an indefinite transport
+    -- veto. Users can keep a vendor, map, or character panel open while they
+    -- continue monitoring applicants in the companion.
+    QR_INTERACTION_MAX_DEFER_S = 1.0,
+    qrInteractionSuppressionStartedAt = nil,
     -- Gameplay suppression is separate from interaction suppression. It is a
     -- hard transport gate: combat, an active Mythic+ challenge, or a raid boss
     -- encounter must not build, paint, reveal, or capture QR work.
@@ -258,6 +263,12 @@ local entryCreationKeyState = {
     qrGameplayChallengeEventActive = false,
     qrGameplayEncounterActive = false,
     qrGameplayEncounterEventActive = false,
+    -- Loading can already be in progress before this addon receives events.
+    -- LOADING_SCREEN_DISABLED is the only authority that the framebuffer is
+    -- visible again; PLAYER_ENTERING_WORLD fires slightly earlier.
+    qrGameplayLoadingActive = true,
+    qrGameplayLoadingResumeGen = 0,
+    QR_LOADING_RESUME_DELAY_S = 0.30,
     qrGameplaySuppressionReason = "none",
     qrTransportJobForce = false,
     lastPayloadBuildError = nil,
@@ -1624,11 +1635,10 @@ end
 --
 -- WHY: dense applicant snapshots can produce a QR wide enough to obscure
 -- Blizzard panels (vendor, gossip, quest text, mail, bank, taxi, etc.).
--- Hiding the QR while ANY tracked
--- interaction frame is open lets the user actually read those windows.
--- Companion misses the screenshots during the fade window — acceptable
--- because the user isn't actively monitoring applicants while they're at a
--- vendor. _RefreshQRVisibility re-arms suppressShotsUntil on each
+-- A newly opened panel gets a short grace before QR capture so it can settle
+-- without an immediate overlay. The grace is deliberately bounded: a vendor,
+-- map, or character panel may remain open while the user continues monitoring
+-- applicants in the companion. _RefreshQRVisibility re-arms suppressShotsUntil on each
 -- hidden→shown transition so the next Screenshot() doesn't capture an
 -- unpainted post-Hide frame.
 --
@@ -1855,9 +1865,12 @@ entryCreationKeyState.RefreshQRGameplaySuppression = function()
         encounterAPI and encounterAPI.IsEncounterInProgress
     )
 
-    local suppressed = combatActive or challengeActive or encounterActive
+    local loadingActive = entryCreationKeyState.qrGameplayLoadingActive == true
+    local suppressed = loadingActive or combatActive or challengeActive or encounterActive
     local reason = "none"
-    if challengeActive then
+    if loadingActive then
+        reason = "loading-screen"
+    elseif challengeActive then
         reason = "mythic-plus"
     elseif encounterActive then
         reason = "raid-encounter"
@@ -1885,6 +1898,41 @@ entryCreationKeyState.RefreshQRGameplaySuppression = function()
         _RefreshQRVisibility()
     end
     return suppressed
+end
+
+entryCreationKeyState.SetQRLoadingScreenActive = function(active)
+    entryCreationKeyState.qrGameplayLoadingResumeGen =
+        (entryCreationKeyState.qrGameplayLoadingResumeGen or 0) + 1
+    local resumeGen = entryCreationKeyState.qrGameplayLoadingResumeGen
+    if active then
+        entryCreationKeyState.qrGameplayLoadingActive = true
+        entryCreationKeyState.RefreshQRGameplaySuppression()
+        return
+    end
+
+    -- The overlay disappears just after LOADING_SCREEN_DISABLED. Keep a short
+    -- render grace so the first capture cannot preserve the final loading frame.
+    C_Timer.After(entryCreationKeyState.QR_LOADING_RESUME_DELAY_S, function()
+        if resumeGen ~= entryCreationKeyState.qrGameplayLoadingResumeGen then
+            return
+        end
+        entryCreationKeyState.qrGameplayLoadingActive = false
+        entryCreationKeyState.RefreshQRGameplaySuppression()
+    end)
+end
+
+-- A detected interaction delays ordinary QR work only briefly. This preserves
+-- the panel-open race protection without turning a long-lived vendor/map frame
+-- into a permanent transport latch.
+entryCreationKeyState.ShouldDeferQRForInteraction = function(now)
+    if not _qrSuppressedByInteraction then return false end
+    now = now or GetTime()
+    local startedAt = entryCreationKeyState.qrInteractionSuppressionStartedAt
+    if startedAt == nil then
+        startedAt = now
+        entryCreationKeyState.qrInteractionSuppressionStartedAt = startedAt
+    end
+    return now - startedAt < entryCreationKeyState.QR_INTERACTION_MAX_DEFER_S
 end
 
 -- Aggregator: walks events table + tracked info panels to determine if any
@@ -1948,9 +1996,35 @@ _RecomputeInteractionSuppression = function(skipManagerReconcile)
             end
         end
     end
-    if anyActive ~= (_qrSuppressedByInteraction or false) then
+    local wasActive = _qrSuppressedByInteraction == true
+    if anyActive ~= wasActive then
         _qrSuppressedByInteraction = anyActive
+        entryCreationKeyState.qrInteractionSuppressionStartedAt =
+            anyActive and GetTime() or nil
         _RefreshQRVisibility()
+        if wasActive and not anyActive and isSessionActive then
+            -- Captures attempted after the bounded grace can still be obscured
+            -- by same-strata Blizzard tooltips. Resend the unchanged latest
+            -- snapshot once the panel closes instead of trusting those pixels.
+            if entryCreationKeyState.screenshotAwaitingResult
+               and entryCreationKeyState.qrTransportJobForce ~= true
+               and entryCreationKeyState.qrTransportJobTerminalClear ~= true then
+                -- SCREENSHOT_* has no request identity. A late success from the
+                -- panel-open framebuffer must not consume the one safe resend.
+                entryCreationKeyState.screenshotAwaitingSuperseded = true
+            end
+            if lastSnapshotHash ~= nil
+               and entryCreationKeyState.lastDeliverySnapshotHash
+                   == lastSnapshotHash then
+                entryCreationKeyState.lastDeliverySnapshotSendCount =
+                    math.min(
+                        entryCreationKeyState.lastDeliverySnapshotSendCount or 0,
+                        entryCreationKeyState.NONTERMINAL_SNAPSHOT_MIN_SENDS - 1
+                    )
+            end
+            pendingShotDirty = true
+            MarkDirty("interaction-resume")
+        end
     end
 end
 
@@ -5716,11 +5790,10 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         return
     end
 
-    -- Interaction-hidden QR should not produce or dedupe a payload. Keep the
-    -- latest state pending and let the scan ticker emit once the interaction
-    -- frame closes; force shots still bypass for EndSession cleanup and
-    -- explicit support commands.
-    if not force and _qrSuppressedByInteraction then
+    -- Give newly opened interaction panels a short visual grace before doing
+    -- payload work. The grace expires even if the panel stays open so applicant
+    -- updates cannot remain stale indefinitely; force shots still bypass it.
+    if not force and entryCreationKeyState.ShouldDeferQRForInteraction() then
         pendingShotDirty = true
         return
     end
@@ -6013,13 +6086,12 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         end
 
         -- An interaction can open while QR encoding/painting yields across
-        -- frames. Non-force work must remain pending instead of acquiring a
-        -- lease that makes the QR cover the newly opened Blizzard panel.
+        -- frames. Honour its bounded grace before acquiring a visibility lease.
         if not force then
             _TryHookInfoPanels()
             _RecomputeInteractionSuppression()
         end
-        if not force and _qrSuppressedByInteraction then
+        if not force and entryCreationKeyState.ShouldDeferQRForInteraction() then
             pendingShotDirty = true
             entryCreationKeyState.ClearQRTransportJob(jobGen)
             return
@@ -6046,15 +6118,14 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             if entryCreationKeyState.RefreshQRGameplaySuppression() then
                 return
             end
-            -- Suppression may also begin during the framebuffer settle delay,
-            -- after the lease was acquired. Release it and rebuild the latest
-            -- payload after the interaction closes; force/terminal shots keep
-            -- their explicit bypass semantics.
+            -- Interaction grace may also begin during the framebuffer settle
+            -- delay. Release the lease while that bounded grace is still active;
+            -- force/terminal shots keep their explicit bypass semantics.
             if not force then
                 _TryHookInfoPanels()
                 _RecomputeInteractionSuppression()
             end
-            if not force and _qrSuppressedByInteraction then
+            if not force and entryCreationKeyState.ShouldDeferQRForInteraction() then
                 pendingShotDirty = true
                 entryCreationKeyState.ClearQRTransportJob(jobGen)
                 _ReleaseForceVisibleShotLease(forceVisibleShotGen)
@@ -6356,6 +6427,8 @@ if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
                 entryCreationKeyState.qrOverflowSupersededCount or 0,
             sessionActive = isSessionActive == true,
             suppressedByInteraction = _qrSuppressedByInteraction == true,
+            interactionDeferralActive =
+                entryCreationKeyState.ShouldDeferQRForInteraction(),
             suppressedByGameplay =
                 entryCreationKeyState.qrGameplaySuppressed == true,
             gameplayCombatActive =
@@ -6364,6 +6437,8 @@ if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
                 entryCreationKeyState.qrGameplayChallengeActive == true,
             gameplayEncounterActive =
                 entryCreationKeyState.qrGameplayEncounterActive == true,
+            gameplayLoadingActive =
+                entryCreationKeyState.qrGameplayLoadingActive == true,
             gameplaySuppressionReason =
                 entryCreationKeyState.qrGameplaySuppressionReason,
         }
@@ -6568,6 +6643,15 @@ local EVENT_HANDLERS = {
         -- reacquires JPG/quality immediately before Screenshot().
         RestoreScreenshotCVars()
         MarkDirty("pew")
+    end,
+    PLAYER_LEAVING_WORLD             = function()
+        entryCreationKeyState.SetQRLoadingScreenActive(true)
+    end,
+    LOADING_SCREEN_ENABLED           = function()
+        entryCreationKeyState.SetQRLoadingScreenActive(true)
+    end,
+    LOADING_SCREEN_DISABLED          = function()
+        entryCreationKeyState.SetQRLoadingScreenActive(false)
     end,
     PLAYER_INTERACTION_MANAGER_FRAME_SHOW =
         entryCreationKeyState.OnPlayerInteractionManagerEvent,
@@ -7541,11 +7625,23 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
     print("  QR suppressed by gameplay: "
           .. tostring(entryCreationKeyState.qrGameplaySuppressed)
           .. " (" .. tostring(entryCreationKeyState.qrGameplaySuppressionReason) .. ")")
-    print("  gameplay combat/M+/encounter: "
+    print("  gameplay combat/M+/encounter/loading: "
           .. tostring(entryCreationKeyState.qrGameplayCombatActive) .. "/"
           .. tostring(entryCreationKeyState.qrGameplayChallengeActive) .. "/"
-          .. tostring(entryCreationKeyState.qrGameplayEncounterActive))
-    print("  QR suppressed by interaction: " .. tostring(_qrSuppressedByInteraction or false))
+          .. tostring(entryCreationKeyState.qrGameplayEncounterActive) .. "/"
+          .. tostring(entryCreationKeyState.qrGameplayLoadingActive))
+    local interactionDeferralActive =
+        entryCreationKeyState.ShouldDeferQRForInteraction()
+    local interactionDeferralReason = "none"
+    if _qrSuppressedByInteraction then
+        interactionDeferralReason = interactionDeferralActive
+            and "grace active" or "detected, grace expired"
+    end
+    print("  interaction detected: "
+          .. tostring(_qrSuppressedByInteraction == true))
+    print("  QR deferred by interaction: "
+          .. tostring(interactionDeferralActive)
+          .. " (" .. interactionDeferralReason .. ")")
     local activeKinds = {}
     for kind, active in pairs(_interactionSlots) do
         if active then activeKinds[#activeKinds + 1] = tostring(kind) end

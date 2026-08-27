@@ -401,10 +401,22 @@ def test_gameplay_suppression_uses_current_state_and_all_recovery_events():
         "CHALLENGE_MODE_RESET",
         "ENCOUNTER_START",
         "ENCOUNTER_END",
+        "PLAYER_LEAVING_WORLD",
+        "LOADING_SCREEN_ENABLED",
+        "LOADING_SCREEN_DISABLED",
     ):
         assert event in source
     assert "entryCreationKeyState.qrGameplayCombatEventActive = true" in source
     assert "entryCreationKeyState.qrGameplayCombatEventActive = false" in source
+    assert "qrGameplayLoadingActive = true" in source
+    assert "QR_LOADING_RESUME_DELAY_S = 0.30" in source
+    assert "reason = \"loading-screen\"" in refresh_body
+    pew_body = _slice_between(
+        source,
+        "PLAYER_ENTERING_WORLD            = function()",
+        "PLAYER_LEAVING_WORLD",
+    )
+    assert "qrGameplayLoadingActive = false" not in pew_body
 
 
 def test_gameplay_suppression_defers_every_capture_before_payload_and_async_edges():
@@ -487,7 +499,9 @@ def test_interaction_suppression_defers_non_force_payloads_before_dedup():
         "-- LFG entry creation",
     )
 
-    suppression_idx = screenshot_body.index("not force and _qrSuppressedByInteraction")
+    suppression_idx = screenshot_body.index(
+        "not force and entryCreationKeyState.ShouldDeferQRForInteraction()"
+    )
     payload_idx = screenshot_body.index("local payload, h = BuildPayload(")
     suppression_block = screenshot_body[
         suppression_idx : screenshot_body.index("\n    end", suppression_idx)
@@ -496,6 +510,28 @@ def test_interaction_suppression_defers_non_force_payloads_before_dedup():
     assert suppression_idx < payload_idx
     assert "pendingShotDirty = true" in suppression_block
     assert "return" in suppression_block
+
+
+def test_interaction_suppression_is_a_bounded_grace_not_a_lifetime_gate():
+    source = _lua_source()
+    helper_body = _slice_between(
+        source,
+        "entryCreationKeyState.ShouldDeferQRForInteraction = function(now)",
+        "-- Aggregator: walks events table",
+    )
+    recompute_body = _slice_between(
+        source,
+        "_RecomputeInteractionSuppression = function(skipManagerReconcile)",
+        "-- Event-driven slot updater.",
+    )
+
+    assert "QR_INTERACTION_MAX_DEFER_S = 1.0" in source
+    assert "if not _qrSuppressedByInteraction then return false end" in helper_body
+    assert (
+        "return now - startedAt < entryCreationKeyState.QR_INTERACTION_MAX_DEFER_S"
+        in helper_body
+    )
+    assert "anyActive and GetTime() or nil" in recompute_body
 
 
 def test_interaction_suppression_is_rechecked_before_lease_and_capture():
@@ -512,7 +548,7 @@ def test_interaction_suppression_is_rechecked_before_lease_and_capture():
         callback_idx,
     )
     prelease_guard_idx = screenshot_body.index(
-        "if not force and _qrSuppressedByInteraction then",
+        "if not force and entryCreationKeyState.ShouldDeferQRForInteraction() then",
         callback_idx,
     )
     prelease_refresh = screenshot_body[callback_idx:prelease_guard_idx]
@@ -523,7 +559,7 @@ def test_interaction_suppression_is_rechecked_before_lease_and_capture():
         lease_idx,
     )
     capture_guard_idx = screenshot_body.index(
-        "if not force and _qrSuppressedByInteraction then",
+        "if not force and entryCreationKeyState.ShouldDeferQRForInteraction() then",
         settle_idx,
     )
     capture_refresh = screenshot_body[settle_idx:capture_guard_idx]
@@ -1999,8 +2035,11 @@ def test_terminal_clear_callback_guard_does_not_gate_manual_force_snapshots():
     guard_block = screenshot_body[schedule_idx:shot_idx]
 
     assert "terminalClearSessionGen" in guard_block
-    assert "if not force and _qrSuppressedByInteraction then" in guard_block
-    assert "if _qrSuppressedByInteraction then" not in guard_block
+    assert (
+        "if not force and entryCreationKeyState.ShouldDeferQRForInteraction() then"
+        in guard_block
+    )
+    assert "if entryCreationKeyState.ShouldDeferQRForInteraction() then" not in guard_block
     assert "ApplicantScoutDB and ApplicantScoutDB.enabled" not in guard_block
 
 
@@ -3924,6 +3963,31 @@ def test_combat_start_cancels_midflight_qr_and_rebuilds_after_combat(
     )
 
 
+@pytest.mark.parametrize(
+    ("mode", "shots"),
+    [
+        ("gameplay-loading-initial", 2),
+        ("gameplay-loading-during-paint", 2),
+        ("gameplay-loading-during-settle", 2),
+        ("gameplay-loading-awaiting", 3),
+    ],
+)
+def test_loading_screen_never_commits_obscured_qr_and_resumes_latest_snapshot(
+    pytestconfig,
+    mode,
+    shots,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        mode,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode={mode} shots={shots} attempts={shots}"
+    )
+
+
 def test_raid_encounter_suppresses_qr_but_out_of_combat_recruiting_resumes(pytestconfig):
     output = _run_lua_script(
         pytestconfig,
@@ -4004,9 +4068,33 @@ def test_interaction_opened_during_async_qr_work_defers_non_force_capture(
     )
 
 
+def test_persistent_interaction_only_defers_transport_for_bounded_grace(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "interaction-persistent",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=interaction-persistent shots=3 attempts=3"
+    )
+
+
+def test_interaction_close_supersedes_panel_open_screenshot_result(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "interaction-close-awaiting",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=interaction-close-awaiting shots=3 attempts=3"
+    )
+
+
 @pytest.mark.parametrize(
     ("mode", "shots"),
-    [("interaction-force", 1), ("interaction-terminal", 4)],
+    [("interaction-force", 2), ("interaction-terminal", 4)],
 )
 def test_force_capture_paths_bypass_interaction_suppression(
     pytestconfig,

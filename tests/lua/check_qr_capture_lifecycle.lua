@@ -22,6 +22,8 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "info-panel-during-settle"
        or fixture_mode == "interaction-force"
        or fixture_mode == "interaction-terminal"
+       or fixture_mode == "interaction-persistent"
+       or fixture_mode == "interaction-close-awaiting"
        or fixture_mode == "interaction-world-reset"
        or fixture_mode == "interaction-manager-recovery"
        or fixture_mode == "partial-debug"
@@ -33,6 +35,10 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "gameplay-combat-during-settle"
        or fixture_mode == "gameplay-challenge-reload"
        or fixture_mode == "gameplay-raid-encounter"
+       or fixture_mode == "gameplay-loading-initial"
+       or fixture_mode == "gameplay-loading-during-paint"
+       or fixture_mode == "gameplay-loading-during-settle"
+       or fixture_mode == "gameplay-loading-awaiting"
        or fixture_mode == "restart-race",
     "unsupported fixture mode: " .. tostring(fixture_mode))
 if fixture_mode == "restart-race" then
@@ -71,6 +77,8 @@ local interaction_during_settle = fixture_mode == "interaction-during-settle"
 local info_panel_during_settle = fixture_mode == "info-panel-during-settle"
 local interaction_force = fixture_mode == "interaction-force"
 local interaction_terminal = fixture_mode == "interaction-terminal"
+local interaction_persistent = fixture_mode == "interaction-persistent"
+local interaction_close_awaiting = fixture_mode == "interaction-close-awaiting"
 local interaction_world_reset = fixture_mode == "interaction-world-reset"
 local interaction_manager_recovery = fixture_mode == "interaction-manager-recovery"
 local partial_debug = fixture_mode == "partial-debug"
@@ -85,6 +93,15 @@ local gameplay_combat_during_paint = fixture_mode == "gameplay-combat-during-pai
 local gameplay_combat_during_settle = fixture_mode == "gameplay-combat-during-settle"
 local gameplay_challenge_reload = fixture_mode == "gameplay-challenge-reload"
 local gameplay_raid_encounter = fixture_mode == "gameplay-raid-encounter"
+local gameplay_loading_initial = fixture_mode == "gameplay-loading-initial"
+local gameplay_loading_during_paint =
+    fixture_mode == "gameplay-loading-during-paint"
+local gameplay_loading_during_settle =
+    fixture_mode == "gameplay-loading-during-settle"
+local gameplay_loading_awaiting = fixture_mode == "gameplay-loading-awaiting"
+local gameplay_loading_midflight = gameplay_loading_during_paint
+    or gameplay_loading_during_settle
+    or gameplay_loading_awaiting
 local wide_applicants = overflow_mode or listing_recreate
 
 -- Default mode reproduces the live report: two people and five applicants.
@@ -267,6 +284,14 @@ Screenshot = function()
         delayed_screenshot_result = true
         return
     end
+    if gameplay_loading_awaiting and screenshot_attempts == 1 then
+        delayed_screenshot_result = true
+        return
+    end
+    if interaction_close_awaiting and screenshot_attempts == 2 then
+        delayed_screenshot_result = true
+        return
+    end
     if terminal_shotnow_priority and screenshot_attempts == 3 then
         delayed_screenshot_result = true
         return
@@ -436,6 +461,18 @@ assert(event_frame, "addon event frame was not registered")
 event_frame.scripts.OnEvent(event_frame, "PLAYER_ENTERING_WORLD")
 assert(cvars.screenshotFormat == "png" and cvars.screenshotQuality == "3",
     "PLAYER_ENTERING_WORLD changed screenshot CVars before a capture")
+assert(event_frame.events.LOADING_SCREEN_ENABLED
+       and event_frame.events.LOADING_SCREEN_DISABLED
+       and event_frame.events.PLAYER_LEAVING_WORLD,
+    "loading-screen lifecycle events were not registered")
+local initial_loading_state = harness.QRTransportState()
+assert(initial_loading_state.suppressedByGameplay
+       and initial_loading_state.gameplayLoadingActive
+       and initial_loading_state.gameplaySuppressionReason == "loading-screen",
+    "transport did not start conservatively suppressed by loading")
+if not gameplay_loading_initial then
+    event_frame.scripts.OnEvent(event_frame, "LOADING_SCREEN_DISABLED")
+end
 
 if gameplay_combat or gameplay_challenge_reload then
     local state = harness.QRTransportState()
@@ -462,6 +499,15 @@ end
 if interaction_force then
     send_interaction_event("MERCHANT_SHOW")
     SlashCmdList.APSCOUT("shotnow")
+end
+
+if interaction_persistent then
+    send_interaction_event("MERCHANT_SHOW")
+    interaction_opened_at = now
+end
+if interaction_close_awaiting then
+    send_interaction_event("MERCHANT_SHOW")
+    interaction_opened_at = now
 end
 
 if interaction_world_reset then
@@ -654,6 +700,11 @@ local midflight_combat_started = false
 local midflight_combat_released = false
 local midflight_combat_release_at = nil
 local midflight_combat_encode_calls = nil
+local loading_transition_started = false
+local loading_transition_released = false
+local loading_transition_release_at = gameplay_release_at
+local loading_transition_encode_calls = nil
+local loading_transition_lfg_read_calls = nil
 for _ = 1, (overflow_mode or listing_recreate) and 2500
         or screenshot_event_timeout and 650 or 360 do
     now = now + frame_step
@@ -878,12 +929,55 @@ for _ = 1, (overflow_mode or listing_recreate) and 2500
     end
     if interaction_deferred_checked
        and not interaction_closed
+       and (interaction_during_paint
+            or interaction_during_settle
+            or info_panel_during_settle)
        and now - interaction_opened_at >= 0.75 then
         if info_panel_during_settle then
             WorldMapFrame.shown = false
         else
             send_interaction_event("MERCHANT_CLOSED")
         end
+        interaction_closed = true
+    end
+
+    if interaction_persistent
+       and not interaction_deferred_checked
+       and now - interaction_opened_at >= 0.5 then
+        applicant_ids = { 42, 43, 44 }
+        interaction_deferred_checked = true
+    end
+    if interaction_persistent
+       and interaction_deferred_checked
+       and not interaction_closed
+       and #screenshot_times == 2 then
+        local state = harness.QRTransportState()
+        if not state.paintInProgress and not state.captureInProgress then
+            assert(screenshot_times[1] - interaction_opened_at >= 1.0,
+                "persistent interaction captured before its bounded grace expired")
+            assert(state.lastEmittedApplicantCount == 3,
+                "persistent interaction missed applicant churn during its grace")
+            send_interaction_event("MERCHANT_CLOSED")
+            interaction_closed = true
+        end
+    end
+    if interaction_close_awaiting
+       and not interaction_closed
+       and screenshot_attempts == 2
+       and harness.QRTransportState().screenshotAwaitingResult then
+        assert(delayed_screenshot_result,
+            "interaction close fixture lost its delayed screenshot result")
+        send_interaction_event("MERCHANT_CLOSED")
+        local closing = harness.QRTransportState()
+        assert(closing.screenshotAwaitingSuperseded
+               and closing.deliverySnapshotSendCount == 1,
+            "interaction close did not supersede the panel-open result")
+        screenshot_times[#screenshot_times + 1] = now
+        event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_SUCCEEDED")
+        local after_old = harness.QRTransportState()
+        assert(after_old.deliverySnapshotSendCount == 1
+               and after_old.pendingShotDirty,
+            "late panel-open success consumed the safe resend budget")
         interaction_closed = true
     end
 
@@ -1061,6 +1155,72 @@ for _ = 1, (overflow_mode or listing_recreate) and 2500
             event_frame.scripts.OnEvent(event_frame, "CHALLENGE_MODE_COMPLETED")
         end
         gameplay_released = true
+    end
+
+    if gameplay_loading_initial
+       and not loading_transition_released
+       and now >= loading_transition_release_at then
+        local state = harness.QRTransportState()
+        assert(#screenshot_times == 0 and screenshot_attempts == 0
+               and qr_encode_calls == 0
+               and gameplay_lfg_read_calls == 0
+               and state.suppressedByGameplay
+               and state.gameplayLoadingActive
+               and state.gameplaySuppressionReason == "loading-screen",
+            "initial loading gate allowed QR or LFG work")
+        event_frame.scripts.OnEvent(event_frame, "LOADING_SCREEN_DISABLED")
+        loading_transition_released = true
+    end
+
+    if gameplay_loading_midflight and not loading_transition_started then
+        local state = harness.QRTransportState()
+        local targetReached = gameplay_loading_during_paint
+            and state.paintInProgress and not state.captureInProgress
+            or gameplay_loading_during_settle
+                and state.captureInProgress and state.forceVisible
+            or gameplay_loading_awaiting
+                and state.screenshotAwaitingResult
+        if targetReached then
+            event_frame.scripts.OnEvent(event_frame, "LOADING_SCREEN_ENABLED")
+            state = harness.QRTransportState()
+            assert(state.suppressedByGameplay
+                   and state.gameplayLoadingActive
+                   and state.gameplaySuppressionReason == "loading-screen"
+                   and not state.qrFrameShown,
+                "mid-flight loading did not hard-suppress QR transport")
+            if gameplay_loading_awaiting then
+                assert(state.screenshotAwaitingResult
+                       and state.screenshotAwaitingSuperseded
+                       and delayed_screenshot_result,
+                    "loading did not supersede the identity-free screenshot result")
+                screenshot_times[#screenshot_times + 1] = now
+                event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_SUCCEEDED")
+                state = harness.QRTransportState()
+                assert(state.lastSnapshotHash == nil
+                       and state.deliverySnapshotHash == nil
+                       and state.deliverySnapshotSendCount == 0,
+                    "loading-screen screenshot result committed delivery state")
+            else
+                assert(not state.paintInProgress
+                       and not state.captureInProgress
+                       and not state.forceVisible,
+                    "loading did not cancel pre-screenshot QR work")
+            end
+            applicant_ids = { 42, 43, 44 }
+            loading_transition_encode_calls = qr_encode_calls
+            loading_transition_lfg_read_calls = gameplay_lfg_read_calls
+            loading_transition_release_at = now + 1.0
+            loading_transition_started = true
+        end
+    elseif gameplay_loading_midflight
+       and loading_transition_started
+       and not loading_transition_released
+       and now >= loading_transition_release_at then
+        assert(qr_encode_calls == loading_transition_encode_calls
+               and gameplay_lfg_read_calls == loading_transition_lfg_read_calls,
+            "loading gate allowed QR build or LFG polling before release")
+        event_frame.scripts.OnEvent(event_frame, "LOADING_SCREEN_DISABLED")
+        loading_transition_released = true
     end
 
     if (gameplay_combat_during_paint or gameplay_combat_during_settle)
@@ -1499,6 +1659,33 @@ elseif listing_recreate then
            and state.deliverySnapshotHash == state.lastSnapshotHash
            and state.deliverySnapshotSendCount == 2,
         "recreated empty listing did not settle as the current delivery")
+elseif gameplay_loading_initial or gameplay_loading_midflight then
+    local state = harness.QRTransportState()
+    assert(loading_transition_released,
+        "loading-screen release boundary was not exercised")
+    local expected_attempts = gameplay_loading_awaiting and 3 or 2
+    assert(#screenshot_times == expected_attempts
+           and screenshot_attempts == expected_attempts,
+        string.format(
+            "loading resume produced shots=%d attempts=%d instead of %d/%d",
+            #screenshot_times,
+            screenshot_attempts,
+            expected_attempts,
+            expected_attempts
+        ))
+    assert(not state.suppressedByGameplay
+           and not state.gameplayLoadingActive
+           and not state.pendingShotDirty
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2,
+        "loading-screen transport did not rebuild and settle")
+    assert(state.lastEmittedApplicantCount
+           == (gameplay_loading_initial and 5 or 3),
+        "loading resume did not deliver the newest applicant generation")
 elseif gameplay_combat or gameplay_challenge_reload then
     local state = harness.QRTransportState()
     assert(gameplay_released,
@@ -1594,10 +1781,50 @@ elseif interaction_during_paint or interaction_during_settle or info_panel_durin
         "interaction-deferred transport did not settle after suppression closed")
     assert(state.lastEmittedApplicantCount == 2,
         "interaction retry did not rebuild the latest applicant payload")
+elseif interaction_persistent then
+    local state = harness.QRTransportState()
+    assert(#screenshot_times == 3 and screenshot_attempts == 3,
+        string.format(
+            "persistent interaction produced shots=%d attempts=%d, expected 3/3",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+    assert(interaction_closed
+           and not state.suppressedByInteraction
+           and not state.interactionDeferralActive
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown,
+        "persistent interaction did not resend after the panel closed")
+    assert(state.lastEmittedApplicantCount == 3
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2,
+        "persistent interaction did not settle the newest bounded resend")
+elseif interaction_close_awaiting then
+    local state = harness.QRTransportState()
+    assert(interaction_closed
+           and #screenshot_times == 3
+           and screenshot_attempts == 3,
+        string.format(
+            "interaction-close race produced shots=%d attempts=%d, expected 3/3",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+    assert(not state.screenshotAwaitingResult
+           and not state.screenshotAwaitingSuperseded
+           and not state.pendingShotDirty
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2,
+        "interaction-close race did not settle one safe post-close resend")
 elseif interaction_force then
     local state = harness.QRTransportState()
-    assert(#screenshot_times == 1 and screenshot_attempts == 1,
-        "explicit force capture did not bypass interaction suppression exactly once")
+    assert(#screenshot_times == 2 and screenshot_attempts == 2,
+        string.format(
+            "force plus resumed transport produced shots=%d attempts=%d, expected 2/2",
+            #screenshot_times,
+            screenshot_attempts
+        ))
     assert(state.sessionActive
            and not state.paintInProgress
            and not state.captureInProgress

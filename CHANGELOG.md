@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## 0.9.8 - 27-Aug-2026 - Reliable QR recovery
+
+This paired addon and companion patch keeps applicant snapshots moving through
+ordinary Blizzard UI overlap and prevents unusable loading-screen captures.
+
+### Fixed
+
+- Keeping a vendor, map, character, or other tracked interaction panel open no
+  longer blocks applicant screenshots indefinitely. Such panels now get only a
+  short visual grace; combat, active Mythic+ runs, and raid boss encounters
+  remain hard QR transport stops.
+- Loading screens now hard-pause QR work and invalidate any in-flight capture,
+  preventing a loading-screen JPG from being mistaken for a delivered snapshot.
+- Closing a long-lived interaction panel schedules one bounded resend of the
+  latest snapshot in case same-strata Blizzard UI obscured the earlier QR.
+
+### Notes
+
+- This addon release is paired with ApplicantScout Companion `0.14.2`, which
+  retries transient screenshot decoder failures for the exact file generation.
+- APS1 payload compatibility is unchanged.
+
 ## 0.9.7 - 27-Aug-2026 - Gameplay-safe QR transport
 
 This paired addon and companion patch keeps applicant snapshots current while

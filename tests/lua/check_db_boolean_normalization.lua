@@ -93,6 +93,7 @@ end
 
 local baseCreateFrame = CreateFrame
 if scenario == "qr-visible" then
+    C_Timer.After = function(_, callback) callback() end
     UIParent.GetWidth = function() return 1920 end
     UIParent.GetHeight = function() return 1080 end
     CreateFrame = function(frameType, name, ...)
@@ -169,6 +170,7 @@ local ok, err
 if scenario == "qr-visible" then
     harness.FireEvent("PLAYER_LOGIN")
     harness.FireEvent("PLAYER_ENTERING_WORLD")
+    harness.FireEvent("LOADING_SCREEN_DISABLED")
     assert_equal("persisted QR visibility", qrShown, true)
     assert_equal("persisted runtime visibility", harness.QRTransportState().alwaysVisible, true)
     assert_equal("normalized qrAlwaysVisible", ApplicantScoutDB.qrAlwaysVisible, true)
