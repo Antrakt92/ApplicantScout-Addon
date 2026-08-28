@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.9.8 - 27-Aug-2026 - Reliable QR recovery
+## 0.9.8 - 28-Aug-2026 - Reliable QR recovery
 
 This paired addon and companion patch keeps applicant snapshots moving through
 ordinary Blizzard UI overlap and prevents unusable loading-screen captures.
@@ -17,6 +17,22 @@ ordinary Blizzard UI overlap and prevents unusable loading-screen captures.
   preventing a loading-screen JPG from being mistaken for a delivered snapshot.
 - Closing a long-lived interaction panel schedules one bounded resend of the
   latest snapshot in case same-strata Blizzard UI obscured the earlier QR.
+- Temporary unreadable or secret Group Finder state preserves the active
+  listing until Blizzard returns an authoritative result, preventing false
+  delists and missing applicants that previously recovered only after `/reload`.
+- Combat, Mythic+ run, and raid-encounter start events suppress QR work
+  immediately even when Blizzard's current-state API briefly lags behind the
+  event; transport resumes only after an authoritative matching end.
+- Partial listing identities and failed protected activity lookups remain
+  unknown instead of creating a false listing generation or aborting the poll.
+- Late screenshot completion events can no longer acknowledge a newer QR job;
+  timed-out physical captures fail closed until their terminal event arrives.
+- QR watchdog timing now starts from the real screenshot request, so a slow QR
+  build cannot make a fresh capture look stalled.
+- QR build, paint, and pre-capture watchdog failures use a separate bounded
+  terminal-clear retry budget and no longer consume physical screenshot attempts.
+- Listing recreation, interaction-panel overflow, gameplay suppression, and
+  terminal-clear retries retain the correct capture permission and generation.
 
 ### Notes
 

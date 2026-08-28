@@ -8,12 +8,17 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "screenshot-always-fail"
        or fixture_mode == "screenshot-event-failure"
        or fixture_mode == "screenshot-event-timeout"
+       or fixture_mode == "screenshot-late-timeout-success"
+       or fixture_mode == "screenshot-late-timeout-failure"
+       or fixture_mode == "capture-fresh-timeout-clock"
        or fixture_mode == "screenshot-overlap-terminal"
        or fixture_mode == "screenshot-overlap-restart"
        or fixture_mode == "screenshot-overlap-shotnow"
        or fixture_mode == "terminal-shotnow-priority"
        or fixture_mode == "terminal-clear-failure"
        or fixture_mode == "terminal-clear-always-fail"
+       or fixture_mode == "terminal-pre-capture-build-failure"
+       or fixture_mode == "terminal-pre-capture-watchdog"
        or fixture_mode == "terminal-repeat-disable"
        or fixture_mode == "disable-idle-force"
        or fixture_mode == "disable-idle-force-overlap"
@@ -24,21 +29,38 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "interaction-terminal"
        or fixture_mode == "interaction-persistent"
        or fixture_mode == "interaction-close-awaiting"
+       or fixture_mode == "interaction-quick-close"
        or fixture_mode == "interaction-world-reset"
        or fixture_mode == "interaction-manager-recovery"
        or fixture_mode == "partial-debug"
        or fixture_mode == "overflow"
+       or fixture_mode == "overflow-interaction-close"
+       or fixture_mode == "overflow-interaction-close-awaiting"
        or fixture_mode == "overflow-terminal"
        or fixture_mode == "listing-recreate"
+       or fixture_mode == "lfg-read-transient"
+       or fixture_mode == "lfg-read-partial-identity"
+       or fixture_mode == "lfg-read-recreate-race"
+       or fixture_mode == "activity-info-transient"
+       or fixture_mode == "diagnostic-api-errors"
+       or fixture_mode == "external-screenshot-overlap"
+       or fixture_mode == "external-screenshot-timeout"
+       or fixture_mode == "external-screenshot-during-waiter"
        or fixture_mode == "gameplay-combat"
        or fixture_mode == "gameplay-combat-during-paint"
        or fixture_mode == "gameplay-combat-during-settle"
+       or fixture_mode == "gameplay-start-edge-lag-combat"
+       or fixture_mode == "gameplay-start-edge-lag-challenge"
+       or fixture_mode == "gameplay-start-edge-lag-encounter"
        or fixture_mode == "gameplay-challenge-reload"
        or fixture_mode == "gameplay-raid-encounter"
        or fixture_mode == "gameplay-loading-initial"
        or fixture_mode == "gameplay-loading-during-paint"
        or fixture_mode == "gameplay-loading-during-settle"
        or fixture_mode == "gameplay-loading-awaiting"
+       or fixture_mode == "gameplay-loading-awaiting-terminal"
+       or fixture_mode == "forced-lockdown-suppression"
+       or fixture_mode == "forced-lockdown-transition"
        or fixture_mode == "restart-race",
     "unsupported fixture mode: " .. tostring(fixture_mode))
 if fixture_mode == "restart-race" then
@@ -61,14 +83,30 @@ local transient_screenshot_failure = fixture_mode == "screenshot-failure"
 local persistent_screenshot_failure = fixture_mode == "screenshot-always-fail"
 local screenshot_event_failure = fixture_mode == "screenshot-event-failure"
 local screenshot_event_timeout = fixture_mode == "screenshot-event-timeout"
+local screenshot_late_timeout_success =
+    fixture_mode == "screenshot-late-timeout-success"
+local screenshot_late_timeout_failure =
+    fixture_mode == "screenshot-late-timeout-failure"
+local screenshot_late_timeout = screenshot_late_timeout_success
+    or screenshot_late_timeout_failure
+local capture_fresh_timeout_clock =
+    fixture_mode == "capture-fresh-timeout-clock"
 local screenshot_overlap_terminal = fixture_mode == "screenshot-overlap-terminal"
 local screenshot_overlap_restart = fixture_mode == "screenshot-overlap-restart"
 local screenshot_overlap = screenshot_overlap_terminal or screenshot_overlap_restart
+local external_screenshot_overlap = fixture_mode == "external-screenshot-overlap"
+local external_screenshot_timeout = fixture_mode == "external-screenshot-timeout"
+local external_screenshot_mode = external_screenshot_overlap
+    or external_screenshot_timeout
 local screenshot_overlap_shotnow = fixture_mode == "screenshot-overlap-shotnow"
 local terminal_shotnow_priority = fixture_mode == "terminal-shotnow-priority"
 local terminal_clear_failure = fixture_mode == "terminal-clear-failure"
 local terminal_clear_always_fail = fixture_mode == "terminal-clear-always-fail"
 local terminal_clear_mode = terminal_clear_failure or terminal_clear_always_fail
+local terminal_pre_capture_kind = fixture_mode:match(
+    "^terminal%-pre%-capture%-(%a+%-?%a*)$"
+)
+local terminal_pre_capture_mode = terminal_pre_capture_kind ~= nil
 local terminal_repeat_disable = fixture_mode == "terminal-repeat-disable"
 local disable_idle_force = fixture_mode == "disable-idle-force"
 local disable_idle_force_overlap = fixture_mode == "disable-idle-force-overlap"
@@ -79,18 +117,34 @@ local interaction_force = fixture_mode == "interaction-force"
 local interaction_terminal = fixture_mode == "interaction-terminal"
 local interaction_persistent = fixture_mode == "interaction-persistent"
 local interaction_close_awaiting = fixture_mode == "interaction-close-awaiting"
+local interaction_quick_close = fixture_mode == "interaction-quick-close"
 local interaction_world_reset = fixture_mode == "interaction-world-reset"
 local interaction_manager_recovery = fixture_mode == "interaction-manager-recovery"
 local partial_debug = fixture_mode == "partial-debug"
 local overflow_mode = fixture_mode == "overflow"
+    or fixture_mode == "overflow-interaction-close"
+    or fixture_mode == "overflow-interaction-close-awaiting"
     or fixture_mode == "overflow-terminal"
+    or fixture_mode == "lfg-read-recreate-race"
     or restart_phase == "overflow-settle"
 local overflow_terminal = fixture_mode == "overflow-terminal"
+local overflow_interaction_close = fixture_mode == "overflow-interaction-close"
+local overflow_interaction_close_awaiting =
+    fixture_mode == "overflow-interaction-close-awaiting"
 local restart_race = fixture_mode == "restart-race"
 local listing_recreate = fixture_mode == "listing-recreate"
+local lfg_read_transient = fixture_mode == "lfg-read-transient"
+local lfg_read_partial_identity = fixture_mode == "lfg-read-partial-identity"
+local lfg_read_recreate_race = fixture_mode == "lfg-read-recreate-race"
+local activity_info_transient = fixture_mode == "activity-info-transient"
+local diagnostic_api_errors = fixture_mode == "diagnostic-api-errors"
 local gameplay_combat = fixture_mode == "gameplay-combat"
 local gameplay_combat_during_paint = fixture_mode == "gameplay-combat-during-paint"
 local gameplay_combat_during_settle = fixture_mode == "gameplay-combat-during-settle"
+local gameplay_start_edge_lag_axis = fixture_mode:match(
+    "^gameplay%-start%-edge%-lag%-(%a+)$"
+)
+local gameplay_start_edge_lag = gameplay_start_edge_lag_axis ~= nil
 local gameplay_challenge_reload = fixture_mode == "gameplay-challenge-reload"
 local gameplay_raid_encounter = fixture_mode == "gameplay-raid-encounter"
 local gameplay_loading_initial = fixture_mode == "gameplay-loading-initial"
@@ -99,6 +153,10 @@ local gameplay_loading_during_paint =
 local gameplay_loading_during_settle =
     fixture_mode == "gameplay-loading-during-settle"
 local gameplay_loading_awaiting = fixture_mode == "gameplay-loading-awaiting"
+local gameplay_loading_awaiting_terminal =
+    fixture_mode == "gameplay-loading-awaiting-terminal"
+local forced_lockdown_suppression = fixture_mode == "forced-lockdown-suppression"
+local forced_lockdown_transition = fixture_mode == "forced-lockdown-transition"
 local gameplay_loading_midflight = gameplay_loading_during_paint
     or gameplay_loading_during_settle
     or gameplay_loading_awaiting
@@ -111,13 +169,20 @@ if not roster_only then
     env.unit_data.party3 = nil
     env.unit_data.party4 = nil
 end
-GetNumGroupMembers = function() return roster_only and 5 or 2 end
+GetNumGroupMembers = function()
+    if roster_only then return 5 end
+    if lfg_read_transient or lfg_read_partial_identity then return 0 end
+    return 2
+end
 IsInRaid = function() return false end
 local combat_active = gameplay_combat
 local combat_api_unavailable = false
 local challenge_active = gameplay_challenge_reload
 local encounter_active = false
 local gameplay_lfg_read_calls = 0
+local chat_lockdown = false
+C_ChatInfo = C_ChatInfo or {}
+C_ChatInfo.InChatMessagingLockdown = function() return chat_lockdown end
 InCombatLockdown = function()
     if combat_api_unavailable then
         error("injected unavailable combat state")
@@ -197,6 +262,13 @@ local event_frame = nil
 local interaction_manager_active = {}
 local interaction_manager_query_calls = 0
 local delayed_screenshot_result = false
+local screenshot_late_timeout_old_result_drained = false
+local screenshot_late_timeout_checked = false
+local lfg_read_transient_checked = false
+local lfg_read_recreate_race_checked = false
+local capture_clock_result_pending = false
+local capture_clock_result_release_at = nil
+local capture_clock_result_checked = false
 local screenshot_overlap_started = false
 local screenshot_overlap_old_result_checked = false
 local screenshot_overlap_new_result_checked = false
@@ -214,6 +286,23 @@ local idle_force_overlap_checked = false
 local idle_force_attempts_before = nil
 local idle_force_interaction_queries_after_disable = nil
 local harness = nil
+local regression_state = {
+    activityInfoPhase = 0,
+    originalActivityInfo = nil,
+    lfgPartialIdentityChecked = false,
+    startEdge = {
+        started = false,
+        released = false,
+        releaseAt = nil,
+        encodeCalls = nil,
+        lfgReadCalls = nil,
+    },
+    terminalPreCapture = {
+        started = false,
+        injectionReleased = false,
+        watchdogAged = false,
+    },
+}
 
 Enum = Enum or {}
 Enum.PlayerInteractionType = {
@@ -278,7 +367,24 @@ Screenshot = function()
     assert(event_frame and event_frame.events.SCREENSHOT_STARTED,
         "screenshot lifecycle events were not registered")
     event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_STARTED")
-    if screenshot_event_timeout then return end
+    if capture_fresh_timeout_clock and screenshot_attempts == 1 then
+        assert(harness.AgeCurrentQRBuildForFixture(7.9),
+            "capture-clock fixture could not age build clock")
+        local clocks = harness.QRTransportState()
+        assert(now - clocks.transportJobStartedAt >= 7.9
+               and now - clocks.transportCaptureRequestedAt < 0.1,
+            "physical capture did not receive a fresh timeout clock")
+        capture_clock_result_pending = true
+        capture_clock_result_release_at = now + 1.0
+        return
+    end
+    if screenshot_event_timeout
+       or (screenshot_late_timeout
+           and not screenshot_late_timeout_old_result_drained)
+       or (fixture_mode == "external-screenshot-during-waiter"
+           and screenshot_attempts == 1) then
+        return
+    end
     if (screenshot_overlap or screenshot_overlap_shotnow)
        and screenshot_attempts == 1 then
         delayed_screenshot_result = true
@@ -288,7 +394,15 @@ Screenshot = function()
         delayed_screenshot_result = true
         return
     end
+    if gameplay_loading_awaiting_terminal and screenshot_attempts == 3 then
+        delayed_screenshot_result = true
+        return
+    end
     if interaction_close_awaiting and screenshot_attempts == 2 then
+        delayed_screenshot_result = true
+        return
+    end
+    if overflow_interaction_close_awaiting and screenshot_attempts == 1 then
         delayed_screenshot_result = true
         return
     end
@@ -445,6 +559,11 @@ qr_chunk("ApplicantScout", qr_namespace)
 local original_qrcode = assert(qr_namespace.QR.qrcode)
 qr_namespace.QR.qrcode = function(...)
     qr_encode_calls = qr_encode_calls + 1
+    if terminal_pre_capture_kind == "build-failure"
+       and regression_state.terminalPreCapture.started
+       and not regression_state.terminalPreCapture.injectionReleased then
+        return false, "injected terminal pre-capture QR build failure"
+    end
     local ok, result = original_qrcode(...)
     if ok then qr_encode_successes = qr_encode_successes + 1 end
     return ok, result
@@ -470,8 +589,79 @@ assert(initial_loading_state.suppressedByGameplay
        and initial_loading_state.gameplayLoadingActive
        and initial_loading_state.gameplaySuppressionReason == "loading-screen",
     "transport did not start conservatively suppressed by loading")
+
+do
+    local active, confirmed, reconciled =
+        harness.ResolveGameplayActivityState(false, function() return true end, false)
+    assert(active and confirmed and not reconciled,
+        "current-state API did not recover a missed gameplay start")
+
+    active, confirmed, reconciled = harness.ResolveGameplayActivityState(
+        false,
+        function() error("temporary protected gameplay state") end,
+        confirmed
+    )
+    assert(active and confirmed and not reconciled,
+        "transient unknown API state released an API-confirmed gameplay latch")
+
+    active, confirmed, reconciled = harness.ResolveGameplayActivityState(
+        false,
+        function() return false end,
+        confirmed
+    )
+    assert(not active and not confirmed and not reconciled,
+        "clean inactive API state did not release an API-confirmed gameplay latch")
+end
+
+if diagnostic_api_errors then
+    local originalPrint = print
+    local originalApplicants = C_LFGList.GetApplicants
+    local originalKeystone = C_LFGList.GetKeystoneForActivity
+    local lines = {}
+    print = function(...)
+        local parts = {}
+        for index = 1, select("#", ...) do
+            parts[#parts + 1] = tostring(select(index, ...))
+        end
+        lines[#lines + 1] = table.concat(parts, "\t")
+    end
+    C_LFGList.GetApplicants = function()
+        error("temporary protected applicants surface")
+    end
+    C_LFGList.GetKeystoneForActivity = function()
+        error("temporary protected keystone surface")
+    end
+
+    local taintOK = pcall(SlashCmdList.APSCOUT, "taintcheck")
+    local statusOK = pcall(SlashCmdList.APSCOUT, "status")
+
+    print = originalPrint
+    C_LFGList.GetApplicants = originalApplicants
+    C_LFGList.GetKeystoneForActivity = originalKeystone
+    assert(taintOK, "taintcheck crashed on an unavailable applicant API")
+    assert(statusOK, "status crashed on an unavailable keystone API")
+    local output = table.concat(lines, "\n")
+    assert(output:find("applicants: unavailable", 1, true),
+        "taintcheck did not report the unavailable applicant API")
+    assert(output:find("activity.keystoneLevel: unavailable", 1, true),
+        "status did not report the unavailable keystone API")
+end
+
 if not gameplay_loading_initial then
     event_frame.scripts.OnEvent(event_frame, "LOADING_SCREEN_DISABLED")
+end
+
+if external_screenshot_mode then
+    event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_STARTED")
+    local externalState = harness.QRTransportState()
+    assert(externalState.screenshotExternalInProgress,
+        "external screenshot start was not serialized")
+    assert(externalState.screenshotExternalPendingCount == 1,
+        "external screenshot ownership count was not armed")
+    if external_screenshot_timeout then
+        assert(harness.AgeExternalScreenshotForFixture(9.0),
+            "external timeout fixture could not age its ownership clock")
+    end
 end
 
 if gameplay_combat or gameplay_challenge_reload then
@@ -507,6 +697,11 @@ if interaction_persistent then
 end
 if interaction_close_awaiting then
     send_interaction_event("MERCHANT_SHOW")
+    interaction_opened_at = now
+end
+if overflow_interaction_close or overflow_interaction_close_awaiting then
+    send_interaction_event("MERCHANT_SHOW")
+    interaction_opened = true
     interaction_opened_at = now
 end
 
@@ -696,6 +891,62 @@ local raid_encounter_started = false
 local raid_encounter_released = false
 local raid_encounter_release_at = nil
 local raid_encounter_encode_calls = nil
+local external_screenshot_released = false
+regression_state.RunLFGPartialIdentityProbe = function()
+    local originalGet = C_LFGList.GetActiveEntryInfo
+    local originalSecret = issecretvalue
+    local before = harness.QRTransportState()
+    local attemptsBefore = screenshot_attempts
+    local function assert_identity_preserved(label)
+        local state = harness.QRTransportState()
+        assert(state.sessionActive
+               and state.activeListingGeneration == before.activeListingGeneration
+               and state.activeListingActivityID == before.activeListingActivityID
+               and state.lastSnapshotHash == before.lastSnapshotHash
+               and state.deliverySnapshotHash == before.deliverySnapshotHash
+               and state.deliverySnapshotSendCount == 2,
+            label .. " mutated the active listing epoch")
+        assert(screenshot_attempts == attemptsBefore,
+            label .. " emitted a false replacement snapshot")
+    end
+
+    local secretActivityID = {}
+    issecretvalue = function(value) return value == secretActivityID end
+    C_LFGList.GetActiveEntryInfo = function()
+        return {
+            activityIDs = { secretActivityID },
+            questID = 0,
+            name = "Protected listing identity",
+            comment = "activity ID is temporarily secret",
+        }
+    end
+    local secretEntry, secretStateKnown = harness.CheckSessionTransition(true)
+    assert(secretEntry and not secretStateKnown,
+        "secret activity identity was declared authoritative")
+    harness.MaybeTriggerScreenshot(false, secretEntry, nil, true, secretStateKnown)
+    assert_identity_preserved("secret active-entry identity")
+
+    issecretvalue = originalSecret
+    C_LFGList.GetActiveEntryInfo = function() return {} end
+    local partialEntry, partialStateKnown = harness.CheckSessionTransition(true)
+    assert(partialEntry and not partialStateKnown,
+        "empty active-entry identity was declared authoritative")
+    harness.MaybeTriggerScreenshot(false, partialEntry, nil, true, partialStateKnown)
+    assert_identity_preserved("empty active-entry identity")
+
+    C_LFGList.GetActiveEntryInfo = originalGet
+    local cleanEntry, cleanStateKnown = harness.CheckSessionTransition(true)
+    assert(cleanEntry and cleanStateKnown,
+        "clean active-entry identity did not recover")
+    assert_identity_preserved("clean identity recovery")
+
+    C_LFGList.HasActiveEntryInfo = function() return false end
+    C_LFGList.GetActiveEntryInfo = function() return nil end
+    harness.CheckSessionTransition(true)
+    assert(not harness.QRTransportState().sessionActive,
+        "clean inactive listing did not end the partial-identity fixture")
+    regression_state.lfgPartialIdentityChecked = true
+end
 local midflight_combat_started = false
 local midflight_combat_released = false
 local midflight_combat_release_at = nil
@@ -705,10 +956,31 @@ local loading_transition_released = false
 local loading_transition_release_at = gameplay_release_at
 local loading_transition_encode_calls = nil
 local loading_transition_lfg_read_calls = nil
-for _ = 1, (overflow_mode or listing_recreate) and 2500
-        or screenshot_event_timeout and 650 or 360 do
+local terminal_loading_started = false
+local terminal_loading_old_result_drained = false
+local terminal_loading_old_result_at = nil
+local terminal_loading_released = false
+local terminal_loading_release_at = nil
+local overflow_interaction_shots_before = nil
+local overflow_interaction_old_generation = nil
+local overflow_interaction_new_generation = nil
+local overflow_interaction_chunk_count = nil
+local overflow_interaction_awaiting_old_result_drained = false
+local forced_lockdown_started = false
+local forced_lockdown_released = false
+local forced_lockdown_release_at = nil
+local forced_lockdown_lfg_reads_before = nil
+for _ = 1, (overflow_interaction_close
+             or overflow_interaction_close_awaiting) and 5000
+        or (overflow_mode or listing_recreate) and 2500
+        or (screenshot_event_timeout or screenshot_late_timeout) and 650 or 360 do
     now = now + frame_step
-    drain_due_timers()
+    local holdTerminalWatchdogTimers = terminal_pre_capture_kind == "watchdog"
+        and regression_state.terminalPreCapture.started
+        and not regression_state.terminalPreCapture.injectionReleased
+    if not holdTerminalWatchdogTimers then
+        drain_due_timers()
+    end
     for _, ticker in ipairs(tickers) do
         local hold_info_panel_poll = info_panel_during_settle
             and interaction_opened and not interaction_deferred_checked
@@ -776,6 +1048,224 @@ for _ = 1, (overflow_mode or listing_recreate) and 2500
         end
     end
 
+
+    if external_screenshot_mode and not external_screenshot_released then
+        local state = harness.QRTransportState()
+        if state.screenshotLastResult == "deferred: external screenshot" then
+            assert(screenshot_attempts == 0
+                   and #screenshot_times == 0
+                   and qr_encode_calls == 0
+                   and state.screenshotExternalInProgress
+                   and state.screenshotExternalPendingCount == 1,
+                "ApplicantScout worked before the external screenshot completed")
+            if external_screenshot_timeout then
+                assert(state.screenshotExternalOrphaned,
+                    "timed-out external screenshot released physical ownership")
+            end
+            event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_SUCCEEDED")
+            external_screenshot_released = true
+            state = harness.QRTransportState()
+            assert(not state.screenshotExternalInProgress
+                   and not state.screenshotAwaitingResult,
+                "external screenshot terminal event was attributed to ApplicantScout")
+        end
+    end
+
+    if fixture_mode == "external-screenshot-during-waiter"
+       and not regression_state.externalWaiterOverlapChecked then
+        local waiting = harness.QRTransportState()
+        if screenshot_attempts == 1
+           and waiting.screenshotAwaitingResult
+           and waiting.screenshotAwaitingStarted then
+            event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_STARTED")
+            local overlapped = harness.QRTransportState()
+            assert(overlapped.screenshotOverlapAmbiguous
+                   and overlapped.screenshotExternalInProgress
+                   and overlapped.screenshotExternalPendingCount == 2,
+                "second screenshot start did not make APS result ownership ambiguous")
+            event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_FAILED")
+            local halfDrained = harness.QRTransportState()
+            assert(halfDrained.screenshotAwaitingResult
+                   and halfDrained.screenshotOverlapAmbiguous
+                   and halfDrained.screenshotExternalPendingCount == 1
+                   and halfDrained.deliverySnapshotHash == nil
+                   and halfDrained.screenshotFailureAttemptCount == 0,
+                "first ambiguous terminal event completed the APS waiter")
+            event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_SUCCEEDED")
+            local drained = harness.QRTransportState()
+            assert(not drained.screenshotAwaitingResult
+                   and not drained.screenshotExternalInProgress
+                   and not drained.screenshotOverlapAmbiguous
+                   and drained.deliverySnapshotHash == nil
+                   and drained.screenshotFailureAttemptCount == 1,
+                "ambiguous result drain did not fail closed and queue a retry")
+            regression_state.externalWaiterOverlapChecked = true
+        end
+    end
+
+    if screenshot_late_timeout
+       and not screenshot_late_timeout_old_result_drained then
+        local waiting = harness.QRTransportState()
+        if screenshot_attempts == 1
+           and waiting.screenshotAwaitingResult
+           and waiting.screenshotAwaitingSuperseded
+           and waiting.screenshotLastResult
+               == "timed out; waiting for late result" then
+            assert(not waiting.paintInProgress
+                   and not waiting.captureInProgress
+                   and waiting.deliverySnapshotHash == nil
+                   and waiting.screenshotFailureAttemptCount == 0,
+                "timed-out screenshot did not fail closed before late result")
+            if screenshot_late_timeout_success then
+                screenshot_times[#screenshot_times + 1] = now
+                event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_SUCCEEDED")
+            else
+                event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_FAILED")
+            end
+            screenshot_late_timeout_old_result_drained = true
+            local drained = harness.QRTransportState()
+            assert(screenshot_attempts == 1
+                   and drained.deliverySnapshotHash == nil
+                   and drained.screenshotFailureAttemptCount == 0,
+                "late result was attributed to replacement delivery state")
+        end
+    end
+
+    if capture_fresh_timeout_clock
+       and capture_clock_result_pending
+       and not capture_clock_result_checked
+       and now >= capture_clock_result_release_at then
+        local waiting = harness.QRTransportState()
+        assert(screenshot_attempts == 1
+               and waiting.screenshotAwaitingResult
+               and not waiting.screenshotAwaitingSuperseded
+               and waiting.screenshotLastResult == "started"
+               and waiting.screenshotFailureAttemptCount == 0,
+            "aged build clock prematurely timed out a fresh physical capture")
+        screenshot_times[#screenshot_times + 1] = now
+        event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_SUCCEEDED")
+        capture_clock_result_checked = true
+    end
+
+    if screenshot_late_timeout_old_result_drained
+       and not screenshot_late_timeout_checked
+       and screenshot_attempts == 3 then
+        local settled = harness.QRTransportState()
+        assert(settled.deliverySnapshotHash == settled.lastSnapshotHash
+               and settled.deliverySnapshotSendCount == 2
+               and settled.screenshotFailureAttemptCount == 0,
+            "replacement screenshots did not settle independently of late result")
+        screenshot_late_timeout_checked = true
+    end
+
+    if lfg_read_transient
+       and not lfg_read_transient_checked
+       and #screenshot_times == 2
+       and not harness.QRTransportState().paintInProgress
+       and not harness.QRTransportState().captureInProgress then
+        local originalGet = C_LFGList.GetActiveEntryInfo
+        local originalSecret = issecretvalue
+        local before = harness.QRTransportState()
+        local attemptsBefore = screenshot_attempts
+        local function assert_preserved(label)
+            local state = harness.QRTransportState()
+            assert(state.sessionActive
+                   and state.lastSnapshotHash == before.lastSnapshotHash
+                   and state.deliverySnapshotHash == before.deliverySnapshotHash
+                   and state.deliverySnapshotSendCount == 2
+                   and state.terminalClearDispatchCount == 0,
+                label .. " was mistaken for an ended listing")
+            assert(screenshot_attempts == attemptsBefore,
+                label .. " emitted a false empty snapshot")
+        end
+
+        C_LFGList.HasActiveEntryInfo = function()
+            error("injected active-entry probe failure")
+        end
+        assert(harness.CheckSessionTransition(true) == nil)
+        harness.MaybeTriggerScreenshot(false, nil, nil, true)
+        assert_preserved("throwing HasActiveEntryInfo")
+
+        local secretHasEntry = {}
+        issecretvalue = function(value) return value == secretHasEntry end
+        C_LFGList.HasActiveEntryInfo = function() return secretHasEntry end
+        assert(harness.CheckSessionTransition(true) == nil)
+        harness.MaybeTriggerScreenshot(false, nil, nil, true)
+        assert_preserved("secret HasActiveEntryInfo")
+        issecretvalue = originalSecret
+
+        C_LFGList.HasActiveEntryInfo = function() return true end
+        C_LFGList.GetActiveEntryInfo = function()
+            error("injected active-entry fetch failure")
+        end
+        assert(harness.CheckSessionTransition(true) == nil)
+        harness.MaybeTriggerScreenshot(false, nil, nil, true)
+        assert_preserved("throwing GetActiveEntryInfo")
+
+        C_LFGList.GetActiveEntryInfo = function() return nil end
+        assert(harness.CheckSessionTransition(true) == nil)
+        harness.MaybeTriggerScreenshot(false, nil, nil, true)
+        assert_preserved("nil GetActiveEntryInfo")
+
+        C_LFGList.HasActiveEntryInfo = function() return false end
+        C_LFGList.GetActiveEntryInfo = originalGet
+        harness.CheckSessionTransition(true)
+        assert(not harness.QRTransportState().sessionActive,
+            "clean inactive listing did not end the transport session")
+        C_LFGList.HasActiveEntryInfo = function() return false end
+        lfg_read_transient_checked = true
+    end
+
+    if lfg_read_partial_identity
+       and not regression_state.lfgPartialIdentityChecked
+       and #screenshot_times == 2
+       and not harness.QRTransportState().paintInProgress
+       and not harness.QRTransportState().captureInProgress then
+        regression_state.RunLFGPartialIdentityProbe()
+    end
+
+    if activity_info_transient then
+        local state = harness.QRTransportState()
+        if regression_state.activityInfoPhase == 0
+           and #screenshot_times == 2
+           and not state.paintInProgress
+           and not state.captureInProgress then
+            regression_state.originalActivityInfo =
+                C_LFGList.GetActivityInfoTable
+            C_LFGList.GetActivityInfoTable = function()
+                error("injected transient activity-info failure")
+            end
+            applicant_ids = { 42, 43, 44, 45, 46, 47 }
+            local ok, err = pcall(
+                harness.MaybeTriggerScreenshot,
+                false,
+                nil,
+                nil,
+                true
+            )
+            assert(ok, "activity-info failure escaped QR payload build: " .. tostring(err))
+            regression_state.activityInfoPhase = 1
+        elseif regression_state.activityInfoPhase == 1
+           and #screenshot_times == 4
+           and state.deliverySnapshotSendCount == 2
+           and state.lastEmittedApplicantCount == 6
+           and not state.paintInProgress
+           and not state.captureInProgress then
+            C_LFGList.GetActivityInfoTable =
+                regression_state.originalActivityInfo
+            applicant_ids = { 42, 43, 44, 45, 46, 47, 48 }
+            harness.MaybeTriggerScreenshot(false, nil, nil, true)
+            regression_state.activityInfoPhase = 2
+        elseif regression_state.activityInfoPhase == 2
+           and #screenshot_times == 6
+           and state.deliverySnapshotSendCount == 2
+           and state.lastEmittedApplicantCount == 7
+           and not state.paintInProgress
+           and not state.captureInProgress then
+            regression_state.activityInfoPhase = 3
+        end
+    end
+
     if screenshot_overlap
        and not screenshot_overlap_started
        and screenshot_attempts == 1
@@ -826,8 +1316,8 @@ for _ = 1, (overflow_mode or listing_recreate) and 2500
         if screenshot_overlap_terminal then
             assert(not after_old.sessionActive
                    and after_old.paintInProgress
-                   and after_old.terminalClearDispatchCount == 1,
-                "old result did not start exactly one queued terminal job")
+                   and after_old.terminalClearDispatchCount == 0,
+                "queued terminal job consumed physical budget before Screenshot()")
         else
             assert(after_old.sessionActive
                    and after_old.terminalClearDispatchCount == 0,
@@ -980,6 +1470,108 @@ for _ = 1, (overflow_mode or listing_recreate) and 2500
             "late panel-open success consumed the safe resend budget")
         interaction_closed = true
     end
+    if interaction_quick_close
+       and not interaction_opened
+       and #screenshot_times == 2
+       and not harness.QRTransportState().paintInProgress
+       and not harness.QRTransportState().captureInProgress then
+        interaction_opened = true
+        interaction_shots_before = #screenshot_times
+        send_interaction_event("MERCHANT_SHOW")
+        assert(harness.QRTransportState().suppressedByInteraction,
+            "quick-close fixture did not open interaction state")
+        send_interaction_event("MERCHANT_CLOSED")
+        interaction_closed = true
+        local closed = harness.QRTransportState()
+        assert(not closed.suppressedByInteraction
+               and closed.deliverySnapshotSendCount == 2
+               and not closed.pendingShotDirty,
+            "quick panel close rearmed a snapshot without a panel-open capture")
+    end
+    if overflow_interaction_close_awaiting and not interaction_closed then
+        local state = harness.QRTransportState()
+        if screenshot_attempts == 1
+           and state.screenshotAwaitingResult
+           and state.overflowState then
+            overflow_interaction_shots_before = #screenshot_times
+            overflow_interaction_old_generation = state.overflowState.generation
+            overflow_interaction_chunk_count = state.overflowState.chunkCount
+            send_interaction_event("MERCHANT_CLOSED")
+            interaction_closed = true
+            local closed = harness.QRTransportState()
+            assert(closed.overflowState == nil
+                   and closed.screenshotAwaitingResult
+                   and closed.screenshotAwaitingSuperseded
+                   and closed.pendingShotDirty,
+                "awaiting interaction close did not retire and supersede overflow")
+        end
+    elseif overflow_interaction_close_awaiting
+       and interaction_closed
+       and not overflow_interaction_awaiting_old_result_drained then
+        local state = harness.QRTransportState()
+        if state.screenshotLastResult == "timed out; waiting for late result" then
+            assert(screenshot_attempts == 1
+                   and state.screenshotAwaitingResult
+                   and state.screenshotAwaitingSuperseded
+                   and state.overflowState == nil,
+                "timed-out panel capture armed replacement overflow too early")
+            screenshot_times[#screenshot_times + 1] = now
+            event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_SUCCEEDED")
+            overflow_interaction_awaiting_old_result_drained = true
+            local drained = harness.QRTransportState()
+            assert(drained.deliverySnapshotHash == nil
+                   and drained.deliverySnapshotSendCount == 0,
+                "late panel-open result committed replacement overflow")
+        end
+    elseif overflow_interaction_close_awaiting
+       and overflow_interaction_awaiting_old_result_drained
+       and not overflow_interaction_new_generation then
+        local state = harness.QRTransportState()
+        if state.overflowState then
+            overflow_interaction_new_generation = state.overflowState.generation
+            assert(overflow_interaction_new_generation
+                       ~= overflow_interaction_old_generation,
+                "late panel result reused the tainted overflow generation")
+            assert(state.overflowState.chunkIndex == 0
+                   and state.overflowState.pass == 1,
+                "late panel replacement did not restart at fragment zero/pass one")
+        end
+    end
+
+    if overflow_interaction_close and not interaction_closed then
+        local state = harness.QRTransportState()
+        if state.overflowState
+           and state.overflowState.pass == 2
+           and state.overflowState.chunkIndex >= 1
+           and state.paintInProgress
+           and not state.captureInProgress
+           and not state.screenshotAwaitingResult then
+            overflow_interaction_shots_before = #screenshot_times
+            overflow_interaction_old_generation = state.overflowState.generation
+            overflow_interaction_chunk_count = state.overflowState.chunkCount
+            send_interaction_event("MERCHANT_CLOSED")
+            interaction_closed = true
+            local closed = harness.QRTransportState()
+            assert(closed.overflowState == nil
+                   and not closed.paintInProgress
+                   and not closed.captureInProgress
+                   and closed.pendingShotDirty,
+                "interaction close did not retire the tainted overflow job")
+        end
+    elseif overflow_interaction_close
+       and interaction_closed
+       and not overflow_interaction_new_generation then
+        local state = harness.QRTransportState()
+        if state.overflowState then
+            overflow_interaction_new_generation = state.overflowState.generation
+            assert(overflow_interaction_new_generation
+                       ~= overflow_interaction_old_generation,
+                "interaction close reused the tainted overflow generation")
+            assert(state.overflowState.chunkIndex == 0
+                   and state.overflowState.pass == 1,
+                "replacement overflow did not restart at fragment zero/pass one")
+        end
+    end
 
     if interaction_terminal
        and not interaction_terminal_started
@@ -1050,6 +1642,34 @@ for _ = 1, (overflow_mode or listing_recreate) and 2500
         C_LFGList.HasActiveEntryInfo = function() return false end
         C_LFGList.GetActiveEntryInfo = function() return nil end
         harness.EndSession()
+    end
+    if terminal_pre_capture_mode
+       and not regression_state.terminalPreCapture.started
+       and #screenshot_times == 2 then
+        pre_terminal_hash = harness.QRTransportState().lastSnapshotHash
+        assert(pre_terminal_hash ~= nil,
+            "pre-terminal delivery hash was not committed")
+        regression_state.terminalPreCapture.started = true
+        applicant_ids = {}
+        GetNumGroupMembers = function() return 0 end
+        C_LFGList.HasActiveEntryInfo = function() return false end
+        C_LFGList.GetActiveEntryInfo = function() return nil end
+        harness.EndSession()
+        if terminal_pre_capture_kind == "watchdog" then
+            assert(harness.AgeCurrentQRBuildForFixture(8.1),
+                "terminal watchdog fixture could not age the pre-capture job")
+            regression_state.terminalPreCapture.watchdogAged = true
+        end
+    end
+    if terminal_pre_capture_mode
+       and regression_state.terminalPreCapture.started
+       and not regression_state.terminalPreCapture.injectionReleased then
+        local state = harness.QRTransportState()
+        if state.terminalClearRetryScheduled
+           and not state.paintInProgress
+           and not state.captureInProgress then
+            regression_state.terminalPreCapture.injectionReleased = true
+        end
     end
     if (disable_idle_force or disable_idle_force_overlap)
        and not idle_force_terminal_started
@@ -1223,6 +1843,92 @@ for _ = 1, (overflow_mode or listing_recreate) and 2500
         loading_transition_released = true
     end
 
+    if gameplay_loading_awaiting_terminal
+       and not terminal_loading_started
+       and #screenshot_times == 2
+       and screenshot_attempts == 2 then
+        applicant_ids = {}
+        GetNumGroupMembers = function() return 0 end
+        C_LFGList.HasActiveEntryInfo = function() return false end
+        C_LFGList.GetActiveEntryInfo = function() return nil end
+        harness.EndSession()
+    end
+    if gameplay_loading_awaiting_terminal
+       and not terminal_loading_started
+       and screenshot_attempts == 3
+       and harness.QRTransportState().screenshotAwaitingResult then
+        assert(delayed_screenshot_result,
+            "terminal loading fixture lost its delayed screenshot result")
+        event_frame.scripts.OnEvent(event_frame, "LOADING_SCREEN_ENABLED")
+        combat_active = true
+        local suppressed = harness.QRTransportState()
+        assert(suppressed.screenshotAwaitingSuperseded
+               and suppressed.terminalClearDispatchCount == 0,
+            "loading did not refund the superseded terminal dispatch")
+        terminal_loading_old_result_at = now + 1.0
+        terminal_loading_started = true
+    elseif gameplay_loading_awaiting_terminal
+       and terminal_loading_started
+       and not terminal_loading_old_result_drained
+       and now >= terminal_loading_old_result_at then
+        local repeatedlySuppressed = harness.QRTransportState()
+        assert(repeatedlySuppressed.screenshotAwaitingResult
+               and repeatedlySuppressed.terminalClearDispatchCount == 0,
+            "repeated gameplay suppression refunded terminal dispatch more than once")
+        screenshot_times[#screenshot_times + 1] = now
+        event_frame.scripts.OnEvent(event_frame, "SCREENSHOT_SUCCEEDED")
+        local after_old = harness.QRTransportState()
+        assert(after_old.screenshotPendingTerminalClear
+               and after_old.terminalClearDispatchCount == 0,
+            "superseded terminal result consumed safe delivery budget")
+        terminal_loading_release_at = now + 1.0
+        terminal_loading_old_result_drained = true
+    elseif gameplay_loading_awaiting_terminal
+       and terminal_loading_started
+       and terminal_loading_old_result_drained
+       and not terminal_loading_released
+       and now >= terminal_loading_release_at then
+        combat_active = false
+        event_frame.scripts.OnEvent(event_frame, "LOADING_SCREEN_DISABLED")
+        terminal_loading_released = true
+    end
+
+    if (forced_lockdown_suppression or forced_lockdown_transition)
+       and not forced_lockdown_started
+       and #screenshot_times == 2
+       and not harness.QRTransportState().paintInProgress
+       and not harness.QRTransportState().captureInProgress then
+        chat_lockdown = forced_lockdown_suppression
+        if forced_lockdown_suppression then
+            forced_lockdown_lfg_reads_before = gameplay_lfg_read_calls
+        end
+        SlashCmdList.APSCOUT("shotnow")
+        local building = harness.QRTransportState()
+        assert(building.paintInProgress,
+            "lockdown force fixture did not start an asynchronous job")
+        if forced_lockdown_transition then
+            forced_lockdown_lfg_reads_before = gameplay_lfg_read_calls
+            chat_lockdown = true
+        end
+        event_frame.scripts.OnEvent(event_frame, "LOADING_SCREEN_ENABLED")
+        local suppressed = harness.QRTransportState()
+        assert(suppressed.suppressedByGameplay
+               and suppressed.screenshotPendingForce
+               and not suppressed.paintInProgress
+               and not suppressed.captureInProgress,
+            "loading did not queue the lockdown force job")
+        forced_lockdown_release_at = now + 1.0
+        forced_lockdown_started = true
+    elseif (forced_lockdown_suppression or forced_lockdown_transition)
+       and forced_lockdown_started
+       and not forced_lockdown_released
+       and now >= forced_lockdown_release_at then
+        assert(gameplay_lfg_read_calls == forced_lockdown_lfg_reads_before,
+            "suppressed lockdown force job performed LFG reads")
+        event_frame.scripts.OnEvent(event_frame, "LOADING_SCREEN_DISABLED")
+        forced_lockdown_released = true
+    end
+
     if (gameplay_combat_during_paint or gameplay_combat_during_settle)
        and not midflight_combat_started then
         local state = harness.QRTransportState()
@@ -1263,6 +1969,58 @@ for _ = 1, (overflow_mode or listing_recreate) and 2500
         combat_api_unavailable = false
         event_frame.scripts.OnEvent(event_frame, "PLAYER_REGEN_ENABLED")
         midflight_combat_released = true
+    end
+
+    if gameplay_start_edge_lag and not regression_state.startEdge.started then
+        local state = harness.QRTransportState()
+        if state.captureInProgress and state.forceVisible then
+            local startEvent = gameplay_start_edge_lag_axis == "combat"
+                and "PLAYER_REGEN_DISABLED"
+                or gameplay_start_edge_lag_axis == "challenge"
+                    and "CHALLENGE_MODE_START"
+                    or "ENCOUNTER_START"
+            local expectedReason = gameplay_start_edge_lag_axis == "combat"
+                and "combat"
+                or gameplay_start_edge_lag_axis == "challenge"
+                    and "mythic-plus"
+                    or "raid-encounter"
+            assert(not combat_active and not challenge_active and not encounter_active,
+                "start-edge fixture did not preserve the injected clean-false API lag")
+            assert(event_frame.events[startEvent],
+                "gameplay start event was not registered: " .. startEvent)
+            event_frame.scripts.OnEvent(event_frame, startEvent, 9001)
+            state = harness.QRTransportState()
+            assert(state.suppressedByGameplay
+                   and state.gameplaySuppressionReason == expectedReason
+                   and not state.paintInProgress
+                   and not state.captureInProgress
+                   and not state.forceVisible
+                   and not state.qrFrameShown,
+                "clean-false API lag cleared the authoritative gameplay start edge")
+            assert(#screenshot_times == 0 and screenshot_attempts == 0,
+                "gameplay start edge allowed a settle callback to capture")
+            regression_state.startEdge.encodeCalls = qr_encode_calls
+            regression_state.startEdge.lfgReadCalls = gameplay_lfg_read_calls
+            regression_state.startEdge.releaseAt = now + 1.0
+            regression_state.startEdge.started = true
+        end
+    elseif gameplay_start_edge_lag
+       and regression_state.startEdge.started
+       and not regression_state.startEdge.released
+       and now >= regression_state.startEdge.releaseAt then
+        assert(#screenshot_times == 0 and screenshot_attempts == 0
+               and qr_encode_calls == regression_state.startEdge.encodeCalls
+               and gameplay_lfg_read_calls == regression_state.startEdge.lfgReadCalls,
+            "latched gameplay start allowed transport before the matching end")
+        local endEvent = gameplay_start_edge_lag_axis == "combat"
+            and "PLAYER_REGEN_ENABLED"
+            or gameplay_start_edge_lag_axis == "challenge"
+                and "CHALLENGE_MODE_COMPLETED"
+                or "ENCOUNTER_END"
+        assert(event_frame.events[endEvent],
+            "gameplay end event was not registered: " .. endEvent)
+        event_frame.scripts.OnEvent(event_frame, endEvent, 9001)
+        regression_state.startEdge.released = true
     end
 
     if gameplay_raid_encounter and not raid_encounter_started then
@@ -1340,6 +2098,54 @@ for _ = 1, (overflow_mode or listing_recreate) and 2500
         end
     end
 
+    if lfg_read_recreate_race and not lfg_read_recreate_race_checked then
+        local state = harness.QRTransportState()
+        if state.overflowState and #screenshot_times == 0 then
+            local oldGeneration = state.overflowState.generation
+            local hasCalls = 0
+            C_LFGList.HasActiveEntryInfo = function()
+                hasCalls = hasCalls + 1
+                if hasCalls == 1 then
+                    error("injected first-probe listing race")
+                end
+                return true
+            end
+            C_LFGList.GetActiveEntryInfo = function()
+                return {
+                    activityIDs = { 402 },
+                    questID = 0,
+                    name = "Recreated after unavailable probe",
+                    comment = "fresh listing epoch",
+                }
+            end
+
+            local entry, listingKnown = harness.CheckSessionTransition(true)
+            assert(entry == nil and not listingKnown and hasCalls == 1,
+                "first unavailable listing probe was not preserved as unknown")
+            harness.MaybeTriggerScreenshot(
+                false, entry, nil, true, listingKnown
+            )
+            local deferred = harness.QRTransportState()
+            assert(hasCalls == 1
+                   and deferred.overflowState
+                   and deferred.overflowState.generation == oldGeneration
+                   and screenshot_attempts == 0,
+                "unknown hint was re-read or captured before reconciliation")
+
+            entry, listingKnown = harness.CheckSessionTransition(true)
+            local reconciled = harness.QRTransportState()
+            assert(entry and listingKnown and hasCalls == 2
+                   and reconciled.overflowState == nil
+                   and reconciled.lastSnapshotHash == nil
+                   and reconciled.deliverySnapshotHash == nil,
+                "fresh listing did not retire old overflow before capture")
+            harness.MaybeTriggerScreenshot(
+                false, entry, nil, true, listingKnown
+            )
+            lfg_read_recreate_race_checked = true
+        end
+    end
+
     if disable_idle_force_overlap
        and idle_force_started
        and not idle_force_overlap_checked
@@ -1375,12 +2181,12 @@ for _ = 1, (overflow_mode or listing_recreate) and 2500
         harness.EndSession()
         local building = harness.QRTransportState()
         assert(building.paintInProgress
-               and building.terminalClearDispatchCount == 1,
+               and building.terminalClearDispatchCount == 0,
             "terminal shotnow fixture did not start the first clear")
         SlashCmdList.APSCOUT("shotnow")
         local after_build_shotnow = harness.QRTransportState()
         assert(after_build_shotnow.paintInProgress
-               and after_build_shotnow.terminalClearDispatchCount == 1
+               and after_build_shotnow.terminalClearDispatchCount == 0
                and not after_build_shotnow.screenshotPendingForce,
             "shotnow replaced terminal work during build/paint")
     end
@@ -1436,19 +2242,99 @@ elseif persistent_screenshot_failure then
         "persistent failure did not exhaust the exact retry budget")
 elseif screenshot_event_timeout then
     local state = harness.QRTransportState()
-    assert(#screenshot_times == 0 and screenshot_attempts == 2,
-        string.format("missing result events produced shots=%d attempts=%d, expected 0/2",
+    assert(#screenshot_times == 0 and screenshot_attempts == 1,
+        string.format("missing result events produced shots=%d attempts=%d, expected 0/1",
             #screenshot_times, screenshot_attempts))
-    assert(not state.pendingShotDirty
+    assert(state.pendingShotDirty
            and not state.paintInProgress
            and not state.captureInProgress
-           and not state.screenshotAwaitingResult
+           and state.screenshotAwaitingResult
+           and state.screenshotAwaitingSuperseded
            and not state.forceVisible
            and not state.qrFrameShown,
-        "missing result events did not recover to an idle state")
-    assert(state.screenshotFailureHash ~= nil
-           and state.screenshotFailureAttemptCount == 2,
-        "missing result events did not exhaust the bounded retry budget")
+        "missing result event did not stop behind a fail-closed waiter")
+    assert(state.screenshotFailureHash == nil
+           and state.screenshotFailureAttemptCount == 0,
+        "missing result event was counted as a safely attributable failure")
+elseif screenshot_late_timeout then
+    local state = harness.QRTransportState()
+    local expectedShots = screenshot_late_timeout_success and 3 or 2
+    assert(screenshot_late_timeout_old_result_drained
+           and screenshot_late_timeout_checked,
+        "late timeout result boundaries were not exercised")
+    assert(#screenshot_times == expectedShots and screenshot_attempts == 3,
+        string.format(
+            "late result produced shots=%d attempts=%d, expected %d/3",
+            #screenshot_times,
+            screenshot_attempts,
+            expectedShots
+        ))
+    assert(not state.screenshotAwaitingResult
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2
+           and state.screenshotFailureAttemptCount == 0,
+        "late result contaminated replacement delivery state")
+elseif capture_fresh_timeout_clock then
+    local state = harness.QRTransportState()
+    assert(capture_clock_result_checked,
+        "fresh capture timeout-clock boundary was not exercised")
+    assert(#screenshot_times == 2 and screenshot_attempts == 2
+           and not state.screenshotAwaitingResult
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2
+           and state.screenshotFailureAttemptCount == 0,
+        "fresh capture clock did not settle two normal deliveries")
+elseif lfg_read_transient then
+    local state = harness.QRTransportState()
+    assert(lfg_read_transient_checked,
+        "transient LFG read boundaries were not exercised")
+    assert(not state.sessionActive
+           and state.terminalClearDispatchCount == 2
+           and not state.screenshotPendingTerminalClear,
+        "clean inactive control did not settle terminal delivery")
+    assert(#screenshot_times == 4 and screenshot_attempts == 4,
+        string.format(
+            "transient LFG fixture produced shots=%d attempts=%d instead of 4/4",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+elseif lfg_read_partial_identity then
+    local state = harness.QRTransportState()
+    assert(regression_state.lfgPartialIdentityChecked,
+        "partial LFG identity boundaries were not exercised")
+    assert(not state.sessionActive
+           and state.terminalClearDispatchCount == 2
+           and not state.screenshotPendingTerminalClear,
+        "partial identity control did not settle terminal delivery")
+    assert(#screenshot_times == 4 and screenshot_attempts == 4,
+        string.format(
+            "partial LFG identity fixture produced shots=%d attempts=%d instead of 4/4",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+elseif lfg_read_recreate_race then
+    local state = harness.QRTransportState()
+    assert(lfg_read_recreate_race_checked,
+        "unavailable-to-recreated listing race was not exercised")
+    assert(state.overflowState == nil
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2,
+        "recreated listing did not settle a fresh complete overflow")
+elseif activity_info_transient then
+    local state = harness.QRTransportState()
+    assert(regression_state.activityInfoPhase == 3,
+        "transient activity-info failure/recovery boundaries were not exercised")
+    assert(#screenshot_times == 6 and screenshot_attempts == 6,
+        string.format(
+            "activity-info recovery produced shots=%d attempts=%d instead of 6/6",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+    assert(state.sessionActive
+           and state.lastEmittedApplicantCount == 7
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2,
+        "activity-info recovery did not settle the newest applicant snapshot")
 elseif terminal_repeat_disable then
     local state = harness.QRTransportState()
     assert(terminal_repeat_disable_started,
@@ -1542,6 +2428,37 @@ elseif terminal_clear_always_fail then
         "persistent terminal clear exceeded or missed its dispatch budget")
     assert(state.lastSnapshotHash == pre_terminal_hash,
         "failed terminal captures committed a false delivery hash")
+elseif terminal_pre_capture_mode then
+    local state = harness.QRTransportState()
+    assert(regression_state.terminalPreCapture.started
+           and regression_state.terminalPreCapture.injectionReleased,
+        "terminal pre-capture failure boundary was not exercised")
+    if terminal_pre_capture_kind == "watchdog" then
+        assert(regression_state.terminalPreCapture.watchdogAged,
+            "terminal watchdog clock was not aged")
+    end
+    assert(#screenshot_times == 4 and screenshot_attempts == 4,
+        string.format(
+            "terminal pre-capture recovery produced shots=%d attempts=%d instead of 4/4",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+    assert(not state.sessionActive
+           and not state.pendingShotDirty
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown
+           and not state.terminalClearRetryScheduled,
+        "terminal pre-capture recovery did not settle in an idle ended session")
+    assert(state.terminalClearDispatchCount == 2
+           and state.terminalClearPreCaptureFailureCount == 1,
+        "terminal pre-capture failure consumed the physical clear budget")
+    assert(state.lastSnapshotHash ~= nil
+           and state.lastSnapshotHash ~= pre_terminal_hash
+           and state.deliverySnapshotHash == nil
+           and state.deliverySnapshotSendCount == 0,
+        "terminal pre-capture recovery did not commit the clear state")
 elseif screenshot_overlap_terminal then
     local state = harness.QRTransportState()
     assert(screenshot_overlap_started
@@ -1659,6 +2576,40 @@ elseif listing_recreate then
            and state.deliverySnapshotHash == state.lastSnapshotHash
            and state.deliverySnapshotSendCount == 2,
         "recreated empty listing did not settle as the current delivery")
+elseif forced_lockdown_suppression or forced_lockdown_transition then
+    local state = harness.QRTransportState()
+    assert(forced_lockdown_started and forced_lockdown_released,
+        "forced lockdown suppression boundaries were not exercised")
+    assert(gameplay_lfg_read_calls == forced_lockdown_lfg_reads_before,
+        "resumed forced job widened its original LFG-read permission")
+    assert(#screenshot_times == 4 and screenshot_attempts == 4,
+        string.format(
+            "lockdown force resume produced shots=%d attempts=%d instead of 4/4",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+    assert(state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2
+           and not state.screenshotPendingForce,
+        "lockdown force resume did not settle bounded delivery")
+elseif gameplay_loading_awaiting_terminal then
+    local state = harness.QRTransportState()
+    assert(terminal_loading_started
+           and terminal_loading_old_result_drained
+           and terminal_loading_released,
+        "terminal loading race boundaries were not exercised")
+    assert(#screenshot_times == 5 and screenshot_attempts == 5,
+        string.format(
+            "terminal loading resume produced shots=%d attempts=%d instead of 5/5",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+    assert(not state.sessionActive
+           and not state.suppressedByGameplay
+           and not state.screenshotPendingTerminalClear
+           and not state.terminalClearRetryScheduled
+           and state.terminalClearDispatchCount == 2,
+        "terminal loading resume did not preserve two safe clear deliveries")
 elseif gameplay_loading_initial or gameplay_loading_midflight then
     local state = harness.QRTransportState()
     assert(loading_transition_released,
@@ -1721,6 +2672,23 @@ elseif gameplay_combat_during_paint or gameplay_combat_during_settle then
            and not state.forceVisible
            and not state.qrFrameShown,
         "mid-flight combat transport did not rebuild and settle")
+elseif gameplay_start_edge_lag then
+    local state = harness.QRTransportState()
+    assert(regression_state.startEdge.started and regression_state.startEdge.released,
+        "gameplay start-edge lag boundaries were not exercised")
+    assert(#screenshot_times == 2 and screenshot_attempts == 2,
+        string.format(
+            "gameplay start-edge resume produced shots=%d attempts=%d instead of 2/2",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+    assert(not state.suppressedByGameplay
+           and not state.pendingShotDirty
+           and not state.paintInProgress
+           and not state.captureInProgress
+           and not state.forceVisible
+           and not state.qrFrameShown,
+        "gameplay start-edge latch did not resume and settle after the matching end")
 elseif gameplay_raid_encounter then
     local state = harness.QRTransportState()
     assert(raid_encounter_started and raid_encounter_released,
@@ -1737,6 +2705,44 @@ elseif gameplay_raid_encounter then
            and not state.forceVisible
            and not state.qrFrameShown,
         "raid encounter transport did not resume and settle")
+elseif overflow_interaction_close_awaiting then
+    local state = harness.QRTransportState()
+    assert(interaction_closed
+           and overflow_interaction_awaiting_old_result_drained
+           and overflow_interaction_new_generation
+           and overflow_interaction_chunk_count,
+        "awaiting overflow interaction-close boundaries were not exercised")
+    local cleanPostCloseShots =
+        #screenshot_times - overflow_interaction_shots_before - 1
+    assert(cleanPostCloseShots == overflow_interaction_chunk_count * 2,
+        string.format(
+            "post-timeout overflow captured %d clean frames instead of two %d-frame passes",
+            cleanPostCloseShots,
+            overflow_interaction_chunk_count
+        ))
+    assert(screenshot_attempts == 1 + overflow_interaction_chunk_count * 2
+           and state.overflowState == nil
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2,
+        "late panel result contaminated replacement overflow delivery")
+elseif overflow_interaction_close then
+    local state = harness.QRTransportState()
+    assert(interaction_closed
+           and overflow_interaction_new_generation
+           and overflow_interaction_chunk_count,
+        "overflow interaction-close boundaries were not exercised")
+    local post_close_shots =
+        #screenshot_times - overflow_interaction_shots_before
+    assert(post_close_shots == overflow_interaction_chunk_count * 2,
+        string.format(
+            "post-close overflow captured %d frames instead of two clean %d-frame passes",
+            post_close_shots,
+            overflow_interaction_chunk_count
+        ))
+    assert(state.overflowState == nil
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2,
+        "post-close overflow did not commit two complete clean passes")
 elseif overflow_terminal then
     local state = harness.QRTransportState()
     assert(interaction_terminal_started,
@@ -1801,6 +2807,22 @@ elseif interaction_persistent then
            and state.deliverySnapshotHash == state.lastSnapshotHash
            and state.deliverySnapshotSendCount == 2,
         "persistent interaction did not settle the newest bounded resend")
+elseif interaction_quick_close then
+    local state = harness.QRTransportState()
+    assert(interaction_opened and interaction_closed,
+        "quick interaction close boundary was not exercised")
+    assert(#screenshot_times == interaction_shots_before
+           and screenshot_attempts == interaction_shots_before,
+        string.format(
+            "quick interaction close produced shots=%d attempts=%d instead of %d/%d",
+            #screenshot_times,
+            screenshot_attempts,
+            interaction_shots_before,
+            interaction_shots_before
+        ))
+    assert(state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2,
+        "quick interaction close disturbed stable delivery state")
 elseif interaction_close_awaiting then
     local state = harness.QRTransportState()
     assert(interaction_closed
@@ -1858,6 +2880,23 @@ elseif interaction_terminal then
         "terminal force capture did not settle while interaction remained open")
     assert(state.terminalClearDispatchCount == 2,
         "terminal clear did not retain its bounded redundant dispatch")
+elseif fixture_mode == "external-screenshot-during-waiter" then
+    local state = harness.QRTransportState()
+    assert(regression_state.externalWaiterOverlapChecked,
+        "in-flight external screenshot overlap was not exercised")
+    assert(#screenshot_times == 2 and screenshot_attempts == 3,
+        string.format(
+            "overlap retry produced shots=%d attempts=%d, expected 2/3",
+            #screenshot_times,
+            screenshot_attempts
+        ))
+    assert(not state.screenshotAwaitingResult
+           and not state.screenshotExternalInProgress
+           and not state.screenshotOverlapAmbiguous
+           and state.screenshotFailureAttemptCount == 0
+           and state.deliverySnapshotHash == state.lastSnapshotHash
+           and state.deliverySnapshotSendCount == 2,
+        "overlap retry did not settle a clean bounded APS delivery")
 elseif roster_only then
     assert(#screenshot_times == 2, string.format(
         "changed roster-only snapshot got %d captures instead of exactly two",
@@ -1876,6 +2915,7 @@ end
 if #screenshot_times >= 2
    and not screenshot_overlap
    and not screenshot_overlap_shotnow
+   and not capture_fresh_timeout_clock
    and not terminal_shotnow_priority then
     assert(screenshot_times[2] - screenshot_times[1] >= 0.5,
         string.format("redundant resend interval %.3fs ignored the screenshot throttle",
@@ -1891,7 +2931,11 @@ assert(ApplicantScoutDB.priorScreenshotFormat == nil
        and ApplicantScoutDB.priorScreenshotQuality == nil,
     "QR capture left stale screenshot CVar restore state")
 local final_state = harness.QRTransportState()
-assert(not final_state.screenshotAwaitingResult,
+if external_screenshot_mode then
+    assert(external_screenshot_released,
+        "external screenshot serialization boundary was not exercised")
+end
+assert(screenshot_event_timeout or not final_state.screenshotAwaitingResult,
     "QR capture left a stale SCREENSHOT_* result waiter")
 assert(final_state.qrFrameStrata == "DIALOG",
     "QR capture did not restore DIALOG frame strata")

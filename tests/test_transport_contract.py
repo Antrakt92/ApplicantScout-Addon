@@ -123,7 +123,7 @@ LUA_GOLDEN_CASES = (
     ("leader-key", "aps1_v9_lua_leader_key_golden.hex"),
 )
 MAYBE_TRIGGER_SCREENSHOT_ANCHOR = (
-    "MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllowed)"
+    "MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllowed, entryStateKnownHint)"
 )
 BUILD_PAYLOAD_ANCHOR = (
     "local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, rosterUnavailable)"
@@ -353,7 +353,7 @@ def test_gameplay_suppression_uses_current_state_and_all_recovery_events():
     source = _lua_source()
     resolver_body = _slice_between(
         source,
-        "entryCreationKeyState.ResolveGameplayActivityState = function(eventActive, api)",
+        "entryCreationKeyState.ResolveGameplayActivityState = function(",
         "entryCreationKeyState.RefreshQRGameplaySuppression = function()",
     )
     refresh_body = _slice_between(
@@ -367,9 +367,13 @@ def test_gameplay_suppression_uses_current_state_and_all_recovery_events():
     assert "InCombatLockdown" in refresh_body
     assert "challengeAPI.IsChallengeModeActive" in refresh_body
     assert "encounterAPI.IsEncounterInProgress" in refresh_body
-    assert "if current ~= nil then" in resolver_body
-    assert "return current" in resolver_body
-    assert "return eventActive == true" in resolver_body
+    assert "if eventActive then" in resolver_body
+    assert "if current == false and apiConfirmedActive then" in resolver_body
+    assert "return false, false, true" in resolver_body
+    assert "return true, apiConfirmedActive == true, false" in resolver_body
+    assert "return current, current == true, false" in resolver_body
+    assert "APIConfirmedActive" in refresh_body
+    assert "ReconciledEnd" in refresh_body
     assert "challengeActive = challengeActive" not in refresh_body
     assert "encounterActive = encounterActive" not in refresh_body
     assert "entryCreationKeyState.RefreshQRGameplaySuppression()" in ticker_body
@@ -466,29 +470,46 @@ def test_gameplay_suppression_defers_every_capture_before_payload_and_async_edge
 
 def test_gameplay_cancellation_does_not_consume_a_pre_capture_terminal_attempt():
     source = _lua_source()
+    refund_body = _slice_between(
+        source,
+        "entryCreationKeyState.RefundTerminalClearDispatchForCurrentJob = function()",
+        "entryCreationKeyState.DispatchPendingForcedScreenshot = function()",
+    )
     suspend_body = _slice_between(
         source,
         "entryCreationKeyState.SuspendQRTransportForGameplay = function()",
         "entryCreationKeyState.RefreshQRGameplaySuppression = function()",
     )
 
+    refund_guard_idx = refund_body.index(
+        "or entryCreationKeyState.qrTransportJobTerminalClearDispatchRefunded"
+    )
+    decrement_idx = refund_body.index(
+        "entryCreationKeyState.terminalClearDispatchCount - 1",
+        refund_guard_idx,
+    )
+    refunded_idx = refund_body.index(
+        "entryCreationKeyState.qrTransportJobTerminalClearDispatchRefunded = true",
+        decrement_idx,
+    )
+    refund_call_idx = suspend_body.index(
+        "entryCreationKeyState.RefundTerminalClearDispatchForCurrentJob()"
+    )
     awaiting_idx = suspend_body.index(
-        "if entryCreationKeyState.screenshotAwaitingResult then"
+        "if entryCreationKeyState.screenshotAwaitingResult then",
+        refund_call_idx,
     )
     cancel_idx = suspend_body.index(
         "elseif entryCreationKeyState.qrPaintInProgress",
         awaiting_idx,
     )
-    decrement_idx = suspend_body.index(
-        "entryCreationKeyState.terminalClearDispatchCount - 1",
-        cancel_idx,
-    )
     clear_idx = suspend_body.index(
         "entryCreationKeyState.ClearQRTransportJob()",
-        decrement_idx,
+        cancel_idx,
     )
 
-    assert awaiting_idx < cancel_idx < decrement_idx < clear_idx
+    assert refund_guard_idx < decrement_idx < refunded_idx
+    assert refund_call_idx < awaiting_idx < cancel_idx < clear_idx
 
 
 def test_interaction_suppression_defers_non_force_payloads_before_dedup():
@@ -873,22 +894,22 @@ def test_party_roster_transport_can_run_during_chat_messaging_lockdown():
 
     assert "lfgReadsAllowed" in transition_body
     assert "if lfgReadsAllowed then" in transition_body
-    assert "C_LFGList.HasActiveEntryInfo()" in transition_body
+    assert "entryCreationKeyState.ReadActiveLFGEntry()" in transition_body
     assert "entryCreationKeyState.ReconcileEntryCreationKeyCache(listingContext)" in transition_body
 
     lfg_guard_idx = transition_body.index("if lfgReadsAllowed then")
-    lfg_read_idx = transition_body.index("C_LFGList.HasActiveEntryInfo()")
+    lfg_read_idx = transition_body.index("entryCreationKeyState.ReadActiveLFGEntry()")
     roster_idx = transition_body.index("local hasRoster = _HasGroupRosterForTransport()")
     assert roster_idx < lfg_guard_idx < lfg_read_idx
 
     assert "if lfgReadsAllowed == nil then lfgReadsAllowed = true end" in screenshot_body
-    fallback_idx = screenshot_body.index("C_LFGList.GetActiveEntryInfo()")
+    fallback_idx = screenshot_body.index("CheckSessionTransition(lfgReadsAllowed)")
     screenshot_lfg_guard_idx = screenshot_body.rindex("lfgReadsAllowed", 0, fallback_idx)
     assert screenshot_lfg_guard_idx < fallback_idx
 
     assert "local lfgReadsAllowed = not IsChatMessagingLockdown()" in ticker_body
     assert "CheckSessionTransition(lfgReadsAllowed)" in ticker_body
-    assert "MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)" in ticker_body
+    assert "false, entry, nil, lfgReadsAllowed, listingStateKnown" in ticker_body
     assert "if IsChatMessagingLockdown() then" not in ticker_body
 
 
@@ -904,7 +925,8 @@ def test_entry_creation_cache_clears_when_grouped_listing_ends_without_ending_tr
     transport_idx = transition_body.index("local transportActive = hosting or hasRoster")
     end_idx = transition_body.index("EndSession()")
 
-    assert "local listingContext = entryCreationKeyState.EntryListingCacheContext(entry)" in transition_body
+    assert "local listingContext =" in transition_body
+    assert "entryCreationKeyState.EntryListingCacheContext(entry)" in transition_body
     assert reconcile_idx < transport_idx < end_idx
     assert "_ClearEntryCreationKeyLevelCache(\"listing-ended\")" in source
 
@@ -1003,9 +1025,9 @@ def test_scan_ticker_polls_transport_state_when_events_are_missed():
     disabled_cleanup_idx = ticker_body.index("if not addonEnabled then", disabled_idle_idx + 1)
     idle_idx = ticker_body.index("if not scanDirty then", disabled_cleanup_idx)
     poll_idx = ticker_body.index("if (now - lastTransportPollTime)", idle_idx)
-    transition_idx = ticker_body.index("local entry = CheckSessionTransition(lfgReadsAllowed)", poll_idx)
+    transition_idx = ticker_body.index("local entry, listingStateKnown = CheckSessionTransition(lfgReadsAllowed)", poll_idx)
     screenshot_idx = ticker_body.index(
-        "MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)",
+        "false, entry, nil, lfgReadsAllowed, listingStateKnown",
         transition_idx,
     )
     dirty_idx = ticker_body.index("scanDirty = false")
@@ -1153,9 +1175,9 @@ def test_transport_poll_does_not_force_unchanged_snapshots():
     )
 
     poll_idx = ticker_body.index("TRANSPORT_POLL_S")
-    transition_idx = ticker_body.index("local entry = CheckSessionTransition(lfgReadsAllowed)", poll_idx)
+    transition_idx = ticker_body.index("local entry, listingStateKnown = CheckSessionTransition(lfgReadsAllowed)", poll_idx)
     non_force_idx = ticker_body.index(
-        "MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)",
+        "false, entry, nil, lfgReadsAllowed, listingStateKnown",
         transition_idx,
     )
 
@@ -1172,10 +1194,10 @@ def test_transport_poll_does_not_heartbeat_stable_snapshots():
     )
 
     poll_idx = ticker_body.index("TRANSPORT_POLL_S")
-    transition_idx = ticker_body.index("local entry = CheckSessionTransition(lfgReadsAllowed)", poll_idx)
+    transition_idx = ticker_body.index("local entry, listingStateKnown = CheckSessionTransition(lfgReadsAllowed)", poll_idx)
     active_idx = ticker_body.index("if isSessionActive then", transition_idx)
     screenshot_idx = ticker_body.index(
-        "MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)",
+        "false, entry, nil, lfgReadsAllowed, listingStateKnown",
         active_idx,
     )
     stable_poll_block = ticker_body[active_idx:screenshot_idx]
@@ -1375,8 +1397,8 @@ def test_forced_snapshot_helper_rejects_unready_requests_before_dispatch():
     disabled_guard_idx = body.index("not (ApplicantScoutDB and ApplicantScoutDB.enabled)")
     qr_guard_idx = body.index("if not qrFrameCreated then")
     lockdown_idx = body.index("local lfgReadsAllowed = not IsChatMessagingLockdown()")
-    transition_idx = body.index("local entry = CheckSessionTransition(lfgReadsAllowed)")
-    screenshot_idx = body.index("MaybeTriggerScreenshot(true")
+    transition_idx = body.index("local entry, listingStateKnown = CheckSessionTransition(lfgReadsAllowed)")
+    screenshot_idx = body.index("MaybeTriggerScreenshot(")
 
     assert disabled_guard_idx < qr_guard_idx < lockdown_idx < transition_idx < screenshot_idx
     assert 'return false, "disabled"' in body[disabled_guard_idx:qr_guard_idx]
@@ -1390,7 +1412,7 @@ def test_shotnow_refreshes_session_before_forced_snapshot():
     body = _forced_snapshot_helper_body(source)
 
     transition_idx = body.index("CheckSessionTransition(lfgReadsAllowed)")
-    screenshot_idx = body.index("MaybeTriggerScreenshot(true")
+    screenshot_idx = body.index("MaybeTriggerScreenshot(")
 
     assert transition_idx < screenshot_idx
 
@@ -1930,7 +1952,7 @@ def test_terminal_clear_is_only_passed_by_end_session():
 
     assert "MaybeTriggerScreenshot(true, nil, true)" in end_body
     assert "MaybeTriggerScreenshot(true, entry, true)" not in shotnow_body
-    assert "MaybeTriggerScreenshot(true, entry, nil, lfgReadsAllowed)" in shotnow_body
+    assert "true, entry, nil, lfgReadsAllowed, listingStateKnown" in shotnow_body
 
 
 def test_terminal_clear_retry_is_serialized_and_session_generation_guarded():
@@ -2380,15 +2402,9 @@ def test_solo_active_listing_poll_runs_during_lockdown_without_lfg_reads():
         "lfgReadsAllowed or _HasGroupRosterForTransport() or isSessionActive"
     )
     assert ticker_body.count(transport_ready) == 2
-    assert (
-        "if isSessionActive then\n"
-        + "                MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)"
-    ) in ticker_body
-    assert (
-        transport_ready
-        + "\n    if transportReady then\n"
-        + "        MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)"
-    ) in ticker_body
+    assert ticker_body.count(
+        "false, entry, nil, lfgReadsAllowed, listingStateKnown"
+    ) == 2
 
 
 def test_shotnow_uses_lockdown_guard_without_terminal_clear():
@@ -2396,8 +2412,11 @@ def test_shotnow_uses_lockdown_guard_without_terminal_clear():
     shotnow_body = _forced_snapshot_helper_body(source)
 
     assert "local lfgReadsAllowed = not IsChatMessagingLockdown()" in shotnow_body
-    assert "local entry = CheckSessionTransition(lfgReadsAllowed)" in shotnow_body
-    assert "MaybeTriggerScreenshot(true, entry, nil, lfgReadsAllowed)" in shotnow_body
+    assert (
+        "local entry, listingStateKnown = CheckSessionTransition(lfgReadsAllowed)"
+        in shotnow_body
+    )
+    assert "true, entry, nil, lfgReadsAllowed, listingStateKnown" in shotnow_body
     assert "MaybeTriggerScreenshot(true, entry, true" not in shotnow_body
 
 
@@ -3615,13 +3634,13 @@ def test_status_support_command_skips_lfg_reads_during_chat_lockdown():
     guard_idx = status_body.index("local lfgReadsAllowed = not IsChatMessagingLockdown()")
     raw_idx = status_body.index('print("|cff00ff7f---|r raw API:")')
     raw_guard_idx = status_body.index("if lfgReadsAllowed then", raw_idx)
-    has_idx = status_body.index("C_LFGList.HasActiveEntryInfo()")
-    active_idx = status_body.index("C_LFGList.GetActiveEntryInfo()")
-    applicants_idx = status_body.index("C_LFGList.GetApplicants()")
+    active_idx = status_body.index("entryCreationKeyState.ReadActiveLFGEntry()")
+    has_idx = status_body.index("HasActiveEntryInfo:", active_idx)
+    applicants_idx = status_body.index("pcall(C_LFGList.GetApplicants)")
     skipped_idx = status_body.index("raw API skipped during ChatMessagingLockdown")
     visibility_idx = status_body.index('print("|cff00ff7f---|r visibility:")')
 
-    assert guard_idx < raw_idx < raw_guard_idx < has_idx < active_idx < applicants_idx
+    assert guard_idx < raw_idx < raw_guard_idx < active_idx < has_idx < applicants_idx
     assert raw_idx < skipped_idx < visibility_idx
     assert "entryCreationKeyState.PrintRosterInspectBatchDiagnostics()" in status_body[:raw_idx]
     assert "entryCreationKeyState.PrintDiagnostics()" in status_body[visibility_idx:]
@@ -3638,13 +3657,56 @@ def test_taintcheck_support_command_skips_lfg_reads_during_chat_lockdown():
     guard_idx = taint_body.index("local lfgReadsAllowed = not IsChatMessagingLockdown()")
     skip_idx = taint_body.index("LFG applicant reads skipped during ChatMessagingLockdown")
     return_idx = taint_body.index("return", skip_idx)
-    applicants_idx = taint_body.index("C_LFGList.GetApplicants()")
+    applicants_idx = taint_body.index("pcall(C_LFGList.GetApplicants)")
     info_idx = taint_body.index("entryCreationKeyState.GetApplicantInfoForTransport(rawID)")
     member_idx = taint_body.index(
         "entryCreationKeyState.GetApplicantMemberInfoForTransport"
     )
 
     assert guard_idx < skip_idx < return_idx < applicants_idx < info_idx < member_idx
+    assert 'print("  applicants: unavailable")' in taint_body
+
+
+def test_support_commands_survive_transient_lfg_api_errors(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "diagnostic-api-errors",
+    ).strip()
+
+    assert "ok qr-capture-lifecycle mode=diagnostic-api-errors" in output
+
+
+def test_external_screenshot_terminal_event_cannot_complete_applicant_scout_job(
+    pytestconfig,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "external-screenshot-overlap",
+    ).strip()
+
+    assert "ok qr-capture-lifecycle mode=external-screenshot-overlap" in output
+
+
+def test_timed_out_external_screenshot_retains_result_ownership(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "external-screenshot-timeout",
+    ).strip()
+
+    assert "ok qr-capture-lifecycle mode=external-screenshot-timeout" in output
+
+
+def test_external_screenshot_during_waiter_forces_clean_retry(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "external-screenshot-during-waiter",
+    ).strip()
+
+    assert "ok qr-capture-lifecycle mode=external-screenshot-during-waiter" in output
 
 
 def test_applicant_member_reads_share_one_guarded_adapter():
@@ -3710,8 +3772,11 @@ def test_lfg_updates_are_polled_instead_of_registered_on_tainted_event_stack():
     assert "LFG_LIST_APPLICANT_UPDATED" not in event_body
     assert "LFG_LIST_ACTIVE_ENTRY_UPDATE" not in event_body
     assert "TRANSPORT_POLL_S = 0.5" in source
-    assert "local entry = CheckSessionTransition(lfgReadsAllowed)" in ticker_body
-    assert "MaybeTriggerScreenshot(false, entry, nil, lfgReadsAllowed)" in ticker_body
+    assert (
+        "local entry, listingStateKnown = CheckSessionTransition(lfgReadsAllowed)"
+        in ticker_body
+    )
+    assert "false, entry, nil, lfgReadsAllowed, listingStateKnown" in ticker_body
 
 
 def test_info_panel_suppression_is_polled_instead_of_hooking_blizzard_frames():
@@ -3988,6 +4053,40 @@ def test_loading_screen_never_commits_obscured_qr_and_resumes_latest_snapshot(
     )
 
 
+def test_loading_during_terminal_result_preserves_two_safe_clear_deliveries(
+    pytestconfig,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "gameplay-loading-awaiting-terminal",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=gameplay-loading-awaiting-terminal "
+        "shots=5 attempts=5"
+    )
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["forced-lockdown-suppression", "forced-lockdown-transition"],
+)
+def test_suppressed_forced_job_preserves_current_lfg_read_permission(
+    pytestconfig,
+    mode,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        mode,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode={mode} shots=4 attempts=4"
+    )
+
+
 def test_raid_encounter_suppresses_qr_but_out_of_combat_recruiting_resumes(pytestconfig):
     output = _run_lua_script(
         pytestconfig,
@@ -3997,6 +4096,29 @@ def test_raid_encounter_suppresses_qr_but_out_of_combat_recruiting_resumes(pytes
 
     assert output.splitlines()[-1] == (
         "ok qr-capture-lifecycle mode=gameplay-raid-encounter shots=4 attempts=4"
+    )
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "gameplay-start-edge-lag-combat",
+        "gameplay-start-edge-lag-challenge",
+        "gameplay-start-edge-lag-encounter",
+    ],
+)
+def test_gameplay_start_edge_cannot_be_cleared_by_clean_false_api_lag(
+    pytestconfig,
+    mode,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        mode,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode={mode} shots=2 attempts=2"
     )
 
 
@@ -4021,6 +4143,32 @@ def test_qr_overflow_captures_complete_200_row_snapshot_twice(pytestconfig):
 
     assert output.splitlines()[-1].startswith(
         "ok qr-capture-lifecycle mode=overflow shots="
+    )
+
+
+def test_interaction_close_restarts_tainted_overflow_from_fragment_zero(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "overflow-interaction-close",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=overflow-interaction-close "
+        "shots=52 attempts=52"
+    )
+
+
+def test_late_panel_open_result_cannot_advance_replacement_overflow(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "overflow-interaction-close-awaiting",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=overflow-interaction-close-awaiting "
+        "shots=35 attempts=35"
     )
 
 
@@ -4089,6 +4237,18 @@ def test_interaction_close_supersedes_panel_open_screenshot_result(pytestconfig)
 
     assert output.splitlines()[-1] == (
         "ok qr-capture-lifecycle mode=interaction-close-awaiting shots=3 attempts=3"
+    )
+
+
+def test_quick_interaction_close_without_capture_does_not_resend(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "interaction-quick-close",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=interaction-quick-close shots=2 attempts=2"
     )
 
 
@@ -4183,7 +4343,7 @@ def test_screenshot_failed_event_does_not_commit_delivery(pytestconfig):
     )
 
 
-def test_missing_screenshot_result_event_times_out_and_stops_boundedly(pytestconfig):
+def test_missing_screenshot_result_event_times_out_fail_closed(pytestconfig):
     output = _run_lua_script(
         pytestconfig,
         LUA_QR_CAPTURE_LIFECYCLE_CHECK,
@@ -4191,7 +4351,91 @@ def test_missing_screenshot_result_event_times_out_and_stops_boundedly(pytestcon
     ).strip()
 
     assert output.splitlines()[-1] == (
-        "ok qr-capture-lifecycle mode=screenshot-event-timeout shots=0 attempts=2"
+        "ok qr-capture-lifecycle mode=screenshot-event-timeout shots=0 attempts=1"
+    )
+
+
+def test_physical_capture_timeout_starts_after_async_build(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "capture-fresh-timeout-clock",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=capture-fresh-timeout-clock "
+        "shots=2 attempts=2"
+    )
+
+
+@pytest.mark.parametrize(
+    ("mode", "shots"),
+    [
+        ("screenshot-late-timeout-success", 3),
+        ("screenshot-late-timeout-failure", 2),
+    ],
+)
+def test_late_screenshot_result_cannot_complete_replacement_job(
+    pytestconfig,
+    mode,
+    shots,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        mode,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode={mode} shots={shots} attempts=3"
+    )
+
+
+def test_transient_or_secret_lfg_reads_preserve_active_session(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "lfg-read-transient",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=lfg-read-transient shots=4 attempts=4"
+    )
+
+
+def test_partial_or_secret_lfg_identity_preserves_listing_epoch(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "lfg-read-partial-identity",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=lfg-read-partial-identity shots=4 attempts=4"
+    )
+
+
+def test_transient_activity_info_failure_is_contained_and_recovers(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "activity-info-transient",
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok qr-capture-lifecycle mode=activity-info-transient shots=6 attempts=6"
+    )
+
+
+def test_unknown_probe_does_not_bypass_recreated_listing_reconciliation(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        "lfg-read-recreate-race",
+    ).strip()
+
+    assert output.splitlines()[-1].startswith(
+        "ok qr-capture-lifecycle mode=lfg-read-recreate-race shots="
     )
 
 
@@ -4265,6 +4509,28 @@ def test_persistent_terminal_clear_failures_stop_after_two_serial_dispatches(
     assert output.count("screenshot capture failed during forced capture") == 2
     assert output.splitlines()[-1] == (
         "ok qr-capture-lifecycle mode=terminal-clear-always-fail shots=2 attempts=4"
+    )
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "terminal-pre-capture-build-failure",
+        "terminal-pre-capture-watchdog",
+    ],
+)
+def test_terminal_pre_capture_failure_does_not_consume_physical_clear_budget(
+    pytestconfig,
+    mode,
+):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_QR_CAPTURE_LIFECYCLE_CHECK,
+        mode,
+    ).strip()
+
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode={mode} shots=4 attempts=4"
     )
 
 
