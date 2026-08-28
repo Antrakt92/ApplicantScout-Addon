@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.9.9 - 28-Aug-2026 - Reliable QR recovery
+## 0.9.10 - 28-Aug-2026 - Reliable QR recovery
 
 This paired addon and companion patch keeps applicant snapshots moving through
 ordinary Blizzard UI overlap and prevents unusable loading-screen captures.
@@ -36,7 +36,7 @@ ordinary Blizzard UI overlap and prevents unusable loading-screen captures.
 
 ### Notes
 
-- This addon release is paired with ApplicantScout Companion `0.14.3`, which
+- This addon release is paired with ApplicantScout Companion `0.14.4`, which
   retries transient screenshot decoder failures for the exact file generation.
 - APS1 payload compatibility is unchanged.
 
