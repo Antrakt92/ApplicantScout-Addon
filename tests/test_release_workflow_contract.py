@@ -160,6 +160,12 @@ def _recovery_workflow_source() -> str:
     ).read_text(encoding="utf-8")
 
 
+def _auto_recovery_workflow_source() -> str:
+    return (
+        REPO_ROOT / ".github" / "workflows" / "auto-recover-preupload-release.yml"
+    ).read_text(encoding="utf-8")
+
+
 def _workflow_concurrency_contract(workflow: str) -> tuple[str, str, str]:
     match = re.search(
         r"(?m)^concurrency:\n"
@@ -689,6 +695,7 @@ def test_release_and_recovery_share_max_non_cancelling_concurrency_queue():
 
     assert _workflow_concurrency_contract(_workflow_source()) == expected
     assert _workflow_concurrency_contract(_recovery_workflow_source()) == expected
+    assert _workflow_concurrency_contract(_auto_recovery_workflow_source()) == expected
 
 
 def test_release_and_recovery_publish_only_generated_exact_version_notes():
@@ -743,6 +750,72 @@ def test_preupload_recovery_is_manual_exact_run_only_and_serialized():
         r"(?m)^    permissions:\n      actions: read\n      contents: write\s*$",
         recovery,
     )
+
+
+def test_auto_recovery_dispatcher_is_bounded_fail_closed_and_writer_free():
+    workflow = _auto_recovery_workflow_source()
+    recovery = _job_block(workflow, "dispatch-recovery")
+    discover = _step_block(recovery, "Find exact recoverable release run")
+    checkout = _step_block(recovery, "Checkout exact failed release tag")
+    paired = _step_block(recovery, "Verify paired companion publication is ready")
+    dispatch = _step_block(recovery, "Revalidate candidate and dispatch guarded recovery")
+
+    assert re.search(r"(?m)^  schedule:\n    - cron: '[^']+'\s*$", workflow)
+    assert re.search(r"(?m)^  workflow_dispatch:\s*$", workflow)
+    assert re.search(
+        r"(?m)^    permissions:\n      actions: write\n      contents: read\s*$",
+        recovery,
+    )
+    assert "secrets." not in workflow
+    assert "contents: write" not in workflow
+    assert "packages: write" not in workflow
+    assert "Package and release" in discover
+    assert ".github/workflows/release.yml" in discover
+    assert "[string]$_.event -ceq 'push'" in discover
+    assert "[string]$_.status -ceq 'completed'" in discover
+    assert "[string]$_.conclusion -ceq 'failure'" in discover
+    assert "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" in discover
+    assert "AddDays(-6)" in discover
+    assert "attempts/1/jobs?per_page=100" in discover
+    assert "Verify paired companion published release assets" in discover
+    assert "[string]$Package.conclusion -cne 'success'" in discover
+    assert "[string]$Writer.conclusion -cne 'skipped'" in discover
+    assert "applicantscout-addon-release-$ReleaseCommit" in discover
+    assert "[bool]$Artifacts[0].expired" in discover
+    assert "release view $Tag" in discover
+    assert "already has a release" in discover
+    assert "candidate=true" in discover
+    assert "ref: ${{ steps.candidate.outputs.tag }}" in checkout
+    assert "fetch-depth: 0" in checkout
+    assert "persist-credentials: false" in checkout
+    assert "-RequirePublishedPairedCompanionAssets" in paired
+    assert "-PublishedReleaseWaitSeconds 0" in paired
+    assert "recover-preupload-release.yml/runs?per_page=20" in dispatch
+    assert "status -cne 'completed'" in dispatch
+    assert "git rev-parse HEAD" in dispatch
+    assert "release view $env:RELEASE_TAG" in dispatch
+    assert "gh workflow run recover-preupload-release.yml" in dispatch
+    assert "--ref main" in dispatch
+    assert "confirm_preupload_timeout=true" in dispatch
+    assert "gh release create" not in workflow
+    assert "BigWigsMods/packager@" not in workflow
+    _assert_order(
+        recovery,
+        "Find exact recoverable release run",
+        "Checkout exact failed release tag",
+        "Verify paired companion publication is ready",
+        "Revalidate candidate and dispatch guarded recovery",
+    )
+
+
+def test_auto_recovery_dispatcher_pins_external_actions_to_commit_shas():
+    action_refs = _workflow_action_refs(_auto_recovery_workflow_source())
+
+    assert Counter(action for action, _ in action_refs) == Counter(
+        {"actions/checkout": 1}
+    )
+    for action, ref in action_refs:
+        assert _SHA_REF_RE.fullmatch(ref), f"{action} must be pinned to a full commit SHA"
 
 
 def test_preupload_recovery_proves_source_failed_before_all_writers():

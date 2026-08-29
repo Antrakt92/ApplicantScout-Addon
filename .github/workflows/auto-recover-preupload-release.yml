@@ -1,0 +1,254 @@
+name: Auto-recover pre-upload paired release
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: applicantscout-addon-release
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  dispatch-recovery:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Find exact recoverable release run
+        id: candidate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          function Get-SingleJob([object]$Jobs, [string]$Name) {
+            $Matches = @($Jobs.jobs | Where-Object { [string]$_.name -ceq $Name })
+            if ($Matches.Count -ne 1) {
+              throw "Expected exactly one source-run job named $Name."
+            }
+            return $Matches[0]
+          }
+
+          function Get-SingleStep([object]$Job, [string]$Name) {
+            $Matches = @($Job.steps | Where-Object { [string]$_.name -ceq $Name })
+            if ($Matches.Count -ne 1) {
+              throw "Expected exactly one source-run step named $Name."
+            }
+            return $Matches[0]
+          }
+
+          $Response = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/release.yml/runs?event=push&status=completed&per_page=20" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $null -eq $Response) {
+            throw "Could not inspect completed release workflow runs."
+          }
+          $Runs = @(
+            $Response.workflow_runs |
+              Where-Object {
+                [string]$_.name -ceq 'Package and release' -and
+                [string]$_.path -ceq '.github/workflows/release.yml' -and
+                [string]$_.event -ceq 'push' -and
+                [string]$_.status -ceq 'completed' -and
+                [string]$_.conclusion -ceq 'failure' -and
+                [string]$_.head_branch -match '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+              } |
+              Sort-Object { [DateTimeOffset]$_.created_at } -Descending |
+              Select-Object -First 1
+          )
+          if ($Runs.Count -eq 0) {
+            Write-Host "No failed canonical release run needs inspection."
+            exit 0
+          }
+
+          $Run = $Runs[0]
+          if ([DateTimeOffset]$Run.created_at -lt [DateTimeOffset]::UtcNow.AddDays(-6)) {
+            Write-Host "Latest failed canonical release run is outside the retained-artifact recovery window."
+            exit 0
+          }
+          $Tag = [string]$Run.head_branch
+          $RunId = [string]$Run.id
+          $ReleaseCommit = ([string]$Run.head_sha).ToLowerInvariant()
+          if ($RunId -notmatch '^[1-9][0-9]*$' -or
+              $ReleaseCommit -notmatch '^[0-9a-f]{40}$' -or
+              [int]$Run.run_attempt -lt 1) {
+            throw "Latest failed release run has an invalid immutable identity."
+          }
+
+          $ReleaseErrorFile = New-TemporaryFile
+          gh release view $Tag --repo $env:GITHUB_REPOSITORY --json tagName 2> $ReleaseErrorFile.FullName | Out-Null
+          $ReleaseExit = $LASTEXITCODE
+          $ReleaseError = Get-Content -LiteralPath $ReleaseErrorFile.FullName -Raw
+          Remove-Item -LiteralPath $ReleaseErrorFile.FullName -Force
+          if ($ReleaseExit -eq 0) {
+            Write-Host "$Tag already has a release; no recovery is needed."
+            exit 0
+          }
+          if (-not [string]::IsNullOrWhiteSpace($ReleaseError) -and
+              $ReleaseError -notmatch '(?i)not found|no release found') {
+            throw "Could not prove that release $Tag is absent: $ReleaseError"
+          }
+
+          $AttemptOne = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$RunId/attempts/1/jobs?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $null -eq $AttemptOne) {
+            throw "Could not inspect source run attempt 1."
+          }
+          $Preflight = Get-SingleJob $AttemptOne 'preflight'
+          $Package = Get-SingleJob $AttemptOne 'marketplace-package'
+          if ([string]$Preflight.conclusion -cne 'failure' -or
+              [string]$Package.conclusion -cne 'success') {
+            throw "Failed run is not a recoverable preflight/package split."
+          }
+          $PairedWait = Get-SingleStep $Preflight 'Verify paired companion published release assets'
+          $UnexpectedFailures = @(
+            $Preflight.steps | Where-Object {
+              [string]$_.conclusion -ceq 'failure' -and
+              [string]$_.name -cne 'Verify paired companion published release assets'
+            }
+          )
+          if ([string]$PairedWait.conclusion -cne 'failure' -or
+              $UnexpectedFailures.Count -ne 0) {
+            throw "Failed run did not stop exclusively at the paired publication wait."
+          }
+          foreach ($StepName in @(
+            'Checkout addon',
+            'Verify release tag is reachable from origin/main',
+            'Check release version',
+            'Wait for paired companion tag',
+            'Checkout paired companion',
+            'Validate paired companion metadata',
+            'Set up Python',
+            'Install Python dependencies',
+            'Install Lua 5.1',
+            'Install pinned LuaLS',
+            'Check addon Lua diagnostics',
+            'Check paired companion and addon contracts',
+            'Development package smoke'
+          )) {
+            $RequiredStep = Get-SingleStep $Preflight $StepName
+            if ([string]$RequiredStep.conclusion -cne 'success') {
+              throw "Required source preflight step did not succeed: $StepName"
+            }
+          }
+          foreach ($WriterName in @('release', 'marketplace-release', 'verify-curseforge', 'verify-wago')) {
+            $Writer = Get-SingleJob $AttemptOne $WriterName
+            if ([string]$Writer.conclusion -cne 'skipped') {
+              throw "Source writer job $WriterName was not skipped."
+            }
+          }
+
+          $ArtifactName = "applicantscout-addon-release-$ReleaseCommit"
+          $ArtifactResponse = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$RunId/artifacts?per_page=100" | ConvertFrom-Json
+          $Artifacts = @($ArtifactResponse.artifacts | Where-Object { [string]$_.name -ceq $ArtifactName })
+          if ($LASTEXITCODE -ne 0 -or
+              $Artifacts.Count -ne 1 -or
+              [bool]$Artifacts[0].expired -or
+              [long]$Artifacts[0].workflow_run.id -ne [long]$RunId -or
+              [string]$Artifacts[0].workflow_run.head_sha -cne $ReleaseCommit -or
+              [string]$Artifacts[0].workflow_run.head_branch -cne $Tag) {
+            throw "Exact source-run artifact is missing, expired, or mismatched."
+          }
+
+          $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "candidate=true`n", $Utf8NoBom)
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "tag=$Tag`n", $Utf8NoBom)
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "run_id=$RunId`n", $Utf8NoBom)
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "release_commit=$ReleaseCommit`n", $Utf8NoBom)
+
+      - name: Checkout exact failed release tag
+        if: ${{ steps.candidate.outputs.candidate == 'true' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ steps.candidate.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify paired companion publication is ready
+        if: ${{ steps.candidate.outputs.candidate == 'true' }}
+        id: paired
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+        run: |
+          .\scripts\check-release-version.ps1 `
+            -Tag $env:RELEASE_TAG `
+            -RequirePublishedPairedCompanionAssets `
+            -PublishedReleaseWaitSeconds 0
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Paired companion publication is not ready; a later scheduled run will retry."
+            exit 0
+          }
+          $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "ready=true`n", $Utf8NoBom)
+
+      - name: Revalidate candidate and dispatch guarded recovery
+        if: ${{ steps.candidate.outputs.candidate == 'true' && steps.paired.outputs.ready == 'true' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+          SOURCE_RUN_ID: ${{ steps.candidate.outputs.run_id }}
+          RELEASE_COMMIT: ${{ steps.candidate.outputs.release_commit }}
+        run: |
+          $CheckoutCommit = (git rev-parse HEAD).Trim().ToLowerInvariant()
+          if ($LASTEXITCODE -ne 0 -or $CheckoutCommit -cne $env:RELEASE_COMMIT) {
+            throw "Exact release checkout changed before recovery dispatch."
+          }
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not refresh origin/main before recovery dispatch."
+          }
+          git merge-base --is-ancestor $CheckoutCommit refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Exact release commit is no longer reachable from origin/main."
+          }
+
+          $Run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or
+              $null -eq $Run -or
+              [string]$Run.status -cne 'completed' -or
+              [string]$Run.conclusion -cne 'failure' -or
+              [string]$Run.head_branch -cne $env:RELEASE_TAG -or
+              [string]$Run.head_sha -cne $CheckoutCommit) {
+            throw "Source run identity changed before recovery dispatch."
+          }
+
+          $RecoveryRuns = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/recover-preupload-release.yml/runs?per_page=20" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $null -eq $RecoveryRuns) {
+            throw "Could not inspect active recovery runs."
+          }
+          $ActiveRecovery = @(
+            $RecoveryRuns.workflow_runs | Where-Object {
+              [string]$_.status -cne 'completed'
+            }
+          )
+          if ($ActiveRecovery.Count -gt 0) {
+            Write-Host "A guarded recovery is already active; no duplicate was dispatched."
+            exit 0
+          }
+
+          $ReleaseErrorFile = New-TemporaryFile
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName 2> $ReleaseErrorFile.FullName | Out-Null
+          $ReleaseExit = $LASTEXITCODE
+          $ReleaseError = Get-Content -LiteralPath $ReleaseErrorFile.FullName -Raw
+          Remove-Item -LiteralPath $ReleaseErrorFile.FullName -Force
+          if ($ReleaseExit -eq 0) {
+            Write-Host "Release $env:RELEASE_TAG appeared before dispatch; no recovery is needed."
+            exit 0
+          }
+          if (-not [string]::IsNullOrWhiteSpace($ReleaseError) -and
+              $ReleaseError -notmatch '(?i)not found|no release found') {
+            throw "Could not re-prove that release $env:RELEASE_TAG is absent: $ReleaseError"
+          }
+
+          gh workflow run recover-preupload-release.yml `
+            --repo $env:GITHUB_REPOSITORY `
+            --ref main `
+            -f "tag=$env:RELEASE_TAG" `
+            -f "source_run_id=$env:SOURCE_RUN_ID" `
+            -f "confirm_preupload_timeout=true"
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub refused the guarded recovery workflow dispatch."
+          }
+          Write-Host "Dispatched guarded recovery for $env:RELEASE_TAG from source run $env:SOURCE_RUN_ID."
