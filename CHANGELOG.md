@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Notes
+
+- Companion-side watcher and startup recovery work now keeps an existing QR
+  screenshot retryable after a transient backlog-scan failure, without requiring
+  a companion restart.
+- The addon QR runtime and APS1 wire format are unchanged.
+
 ## 0.9.10 - 28-Aug-2026 - Reliable QR recovery
 
 This paired addon and companion patch keeps applicant snapshots moving through
