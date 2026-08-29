@@ -22,14 +22,14 @@ jobs:
     steps:
       - name: Checkout addon
         # actions/checkout v6 pinned to the upstream tag commit.
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           path: ApplicantScout-Addon
 
       - name: Checkout companion
         # actions/checkout v6 pinned to the upstream tag commit.
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: Antrakt92/ApplicantScout-Companion
           ref: ${{ github.event.inputs.paired_companion_ref || 'main' }}
@@ -94,7 +94,7 @@ jobs:
     steps:
       - name: Checkout addon for marketplace package
         # actions/checkout v6 pinned to the upstream tag commit.
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
