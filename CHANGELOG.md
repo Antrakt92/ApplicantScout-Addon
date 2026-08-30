@@ -2,11 +2,21 @@
 
 ## Unreleased
 
+## 0.9.11 - 30-Aug-2026 - Reliable companion recovery
+
+This paired patch makes companion-side screenshot discovery recover cleanly
+from transient startup and background-worker failures.
+
 ### Notes
 
 - Companion-side watcher and startup recovery work now keeps an existing QR
   screenshot retryable after a transient backlog-scan failure, without requiring
   a companion restart.
+- Failed companion background-worker launches restore the affected Settings
+  actions immediately, and lifecycle watching retries on its next bounded tick.
+- Screenshot-folder startup work is bounded, and retired watcher work cannot
+  replace a newer applicant snapshot.
+- This addon release is paired with ApplicantScout Companion `0.14.5`.
 - The addon QR runtime and APS1 wire format are unchanged.
 
 ## 0.9.10 - 28-Aug-2026 - Reliable QR recovery
