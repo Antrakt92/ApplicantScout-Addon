@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.9.13 - 02-Sep-2026 - Companion security update
+
+### Improved
+
+- Paired with ApplicantScout Companion `0.14.7`, which updates its bundled
+  image-processing library with security fixes and refreshes the Qt runtime.
+
+### Notes
+
+- The addon gameplay logic, Mythic+ background-work suppression, and APS1
+  payload compatibility are unchanged.
+
 ## 0.9.12 - 02-Sep-2026 - Quieter Mythic+ runs
 
 ### Improved
