@@ -733,6 +733,24 @@ if gameplay_combat or gameplay_challenge_reload then
         state = harness.QRTransportState()
         assert(state.challengeDormant and not state.scanTickerActive,
             "combat-end event restarted work during an active challenge")
+        regression_state.dormantTimerCount = #timers
+        regression_state.dormantTickerStarts = state.scanTickerStartCount
+        regression_state.dormantLFGReads = gameplay_lfg_read_calls
+        regression_state.dormantEncodes = qr_encode_calls
+        for _ = 1, 100 do
+            for _, event in ipairs({ "PLAYER_REGEN_DISABLED", "ENCOUNTER_START",
+                "ENCOUNTER_END", "PLAYER_REGEN_ENABLED" }) do
+                event_frame.scripts.OnEvent(event_frame, event)
+            end
+        end
+        state = harness.QRTransportState()
+        assert(state.challengeDormant and not state.scanTickerActive
+               and state.scanTickerStartCount == regression_state.dormantTickerStarts
+               and #timers == regression_state.dormantTimerCount
+               and gameplay_lfg_read_calls == regression_state.dormantLFGReads
+               and qr_encode_calls == regression_state.dormantEncodes
+               and gameplay_group_member_count_calls == regression_state.groupMemberCountCallsBefore,
+            "combat/encounter event storm woke optional work inside an active key")
     end
 end
 
