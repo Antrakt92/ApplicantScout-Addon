@@ -91,6 +91,7 @@ CreateFrame = function(_kind, name, parent, template)
     return frame
 end
 
+UIParent = new_widget("UIParent")
 PVEFrame = nil
 local harness = env.load_addon({})
 assert(type(harness.SettingsAttachState) == "function",
@@ -119,6 +120,27 @@ local watcher = firstState.watcher
 assert(watcher.events.ADDON_LOADED == true
        and type(watcher.scripts.OnEvent) == "function",
     "pending watcher is not subscribed to ADDON_LOADED")
+
+local challengeActive = true
+C_ChallengeMode = {
+    IsChallengeModeActive = function() return challengeActive end,
+}
+harness.FireEvent("CHALLENGE_MODE_START")
+assert(harness.SettingsAttachState().watcher == nil
+       and watcher.events.ADDON_LOADED == nil
+       and watcher.scripts.OnEvent == nil
+       and watcher.unregisterAllCalls == 1,
+    "challenge dormancy did not retire the separate settings watcher")
+SlashCmdList.APSCOUT("config")
+assert(harness.SettingsAttachState().watcher == nil,
+    "config recreated a background watcher during challenge dormancy")
+challengeActive = false
+harness.FireEvent("CHALLENGE_MODE_COMPLETED")
+local resumedWatcher = harness.SettingsAttachState().watcher
+assert(resumedWatcher and resumedWatcher ~= watcher
+       and resumedWatcher.events.ADDON_LOADED,
+    "challenge completion did not resume deferred settings attachment")
+watcher = resumedWatcher
 
 PVEFrame = new_widget("PVEFrame")
 watcher.scripts.OnEvent(watcher, "ADDON_LOADED", "Blizzard_GroupFinder")

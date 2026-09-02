@@ -267,6 +267,29 @@ local entryCreationKeyState = {
     qrGameplayChallengeActive = false,
     qrGameplayChallengeEventActive = false,
     qrGameplayChallengeAPIConfirmedActive = false,
+    -- An active challenge is stricter than the general combat/loading gate.
+    -- Stop the periodic scanner and invalidate optional background helpers so
+    -- ApplicantScout is effectively dormant until the run ends.
+    challengeDormant = false,
+    challengeDormantRosterDirty = false,
+    challengeResumeCheckToken = 0,
+    CHALLENGE_RESUME_CHECK_DELAYS_S = { 0.25, 0.5, 1.0, 2.0 },
+    challengeDormantOptionalEventsRegistered = true,
+    challengeDormantOptionalEvents = {
+        "ADDON_LOADED",
+        "PARTY_LEADER_CHANGED",
+        "GROUP_ROSTER_UPDATE",
+        "GROUP_LEFT",
+        "CHAT_MSG_ADDON",
+        "PLAYER_SPECIALIZATION_CHANGED",
+        "INSPECT_READY",
+        "PLAYER_INTERACTION_MANAGER_FRAME_SHOW",
+        "PLAYER_INTERACTION_MANAGER_FRAME_HIDE",
+    },
+    eventFrame = nil,
+    scanTicker = nil,
+    scanTickerStartCount = 0,
+    scanTickerStopCount = 0,
     qrGameplayEncounterActive = false,
     qrGameplayEncounterEventActive = false,
     qrGameplayEncounterAPIConfirmedActive = false,
@@ -1111,8 +1134,15 @@ entryCreationKeyState.ClearAutoHiRuntimeState = function()
     entryCreationKeyState.ResetAutoHiPartyMembers()
 end
 
+entryCreationKeyState.IsAutoHiTrackingEnabled = function()
+    -- Sampling can schedule retries before a greeting reaches its send guard.
+    -- Manual enable and world/resume entrypoints must obey the same pause.
+    return ApplicantScoutDB and ApplicantScoutDB.enabled
+        and not entryCreationKeyState.challengeDormant
+end
+
 entryCreationKeyState.AutoHiContextReady = function(kind, generation)
-    if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return false end
+    if not entryCreationKeyState.IsAutoHiTrackingEnabled() then return false end
     if kind == "group" then
         if generation ~= entryCreationKeyState.autoHiGroupGen then return false end
         return entryCreationKeyState.IsGroupedForAutoHi()
@@ -1263,6 +1293,7 @@ entryCreationKeyState.ClearAutoHiPartySampleRetry = function()
 end
 
 entryCreationKeyState.ScheduleAutoHiPartySampleRetry = function(attempt)
+    if not entryCreationKeyState.IsAutoHiTrackingEnabled() then return false end
     entryCreationKeyState.autoHiPartySamplePending = true
     if entryCreationKeyState.autoHiPartySampleRetryScheduled then return true end
     attempt = math.floor(SafeNumber(attempt, 0))
@@ -1277,6 +1308,10 @@ entryCreationKeyState.ScheduleAutoHiPartySampleRetry = function(attempt)
     entryCreationKeyState.autoHiPartySampleRetryScheduled = true
     C_Timer.After(entryCreationKeyState.AUTO_HI_PARTY_SAMPLE_RETRY_DELAY_S, function()
         if retryToken ~= entryCreationKeyState.autoHiPartySampleRetryToken then
+            return
+        end
+        if not entryCreationKeyState.IsAutoHiTrackingEnabled() then
+            entryCreationKeyState.ClearAutoHiPartySampleRetry()
             return
         end
         entryCreationKeyState.autoHiPartySampleRetryScheduled = false
@@ -1299,6 +1334,7 @@ entryCreationKeyState.ResetAutoHiPartyMembers = function()
 end
 
 entryCreationKeyState.PrimeAutoHiPartyMembers = function()
+    if not entryCreationKeyState.IsAutoHiTrackingEnabled() then return false end
     if not entryCreationKeyState.IsPartyContextForAutoHiNewMembers() then
         entryCreationKeyState.ResetAutoHiPartyMembers()
         return
@@ -1347,6 +1383,7 @@ entryCreationKeyState.UpdateAutoHiPartyMembers = function(currentGUIDs)
 end
 
 entryCreationKeyState.SyncAutoHiInitialGroupState = function()
+    if not entryCreationKeyState.IsAutoHiTrackingEnabled() then return end
     local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()
     local isGrouped = groupMemberCount > 1
     local isSoloGroup = groupMemberCount == 1
@@ -1369,6 +1406,7 @@ entryCreationKeyState.SyncAutoHiInitialGroupState = function()
 end
 
 entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
+    if not entryCreationKeyState.IsAutoHiTrackingEnabled() then return end
     local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()
     if groupMemberCount <= 0 then
         if entryCreationKeyState.autoHiWasInGroup
@@ -1420,7 +1458,7 @@ entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
     local groupGen = entryCreationKeyState.autoHiGroupGen
     C_Timer.After(entryCreationKeyState.AUTO_HI_DELAY_S, function()
         if groupGen ~= entryCreationKeyState.autoHiGroupGen then return end
-        if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
+        if not entryCreationKeyState.IsAutoHiTrackingEnabled() then return end
         if not entryCreationKeyState.IsGroupedForAutoHi() then return end
 
         entryCreationKeyState.TrySendAutoHiWithRetry("group", groupGen, 1)
@@ -1428,6 +1466,7 @@ entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
 end
 
 entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function(sampleAttempt)
+    if not entryCreationKeyState.IsAutoHiTrackingEnabled() then return end
     if not entryCreationKeyState.IsPartyContextForAutoHiNewMembers() then
         entryCreationKeyState.ResetAutoHiPartyMembers()
         return
@@ -1482,7 +1521,7 @@ entryCreationKeyState.ScheduleAutoHiForNewPartyMembers = function(sampleAttempt)
         if entryCreationKeyState.autoHiNewPartyGreetingScheduledGeneration
            ~= groupGen then return end
         entryCreationKeyState.autoHiNewPartyGreetingScheduledGeneration = nil
-        if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then
+        if not entryCreationKeyState.IsAutoHiTrackingEnabled() then
             entryCreationKeyState.ClearAutoHiPendingNewPartyMembers()
             return
         end
@@ -1932,12 +1971,144 @@ entryCreationKeyState.SuspendQRTransportForGameplay = function()
     _RefreshQRVisibility()
 end
 
+entryCreationKeyState.SetChallengeDormantOptionalEventsRegistered = function(registered)
+    local eventFrame = entryCreationKeyState.eventFrame
+    registered = registered == true
+    if not eventFrame
+       or entryCreationKeyState.challengeDormantOptionalEventsRegistered
+           == registered then
+        return false
+    end
+
+    local method = registered and eventFrame.RegisterEvent or eventFrame.UnregisterEvent
+    if type(method) ~= "function" then return false end
+    for _, event in ipairs(entryCreationKeyState.challengeDormantOptionalEvents) do
+        method(eventFrame, event)
+    end
+    for event in pairs(INTERACTION_EVENTS) do
+        method(eventFrame, event)
+    end
+    entryCreationKeyState.challengeDormantOptionalEventsRegistered = registered
+    return true
+end
+
+entryCreationKeyState.CancelChallengeDormancyResumeCheck = function()
+    entryCreationKeyState.challengeResumeCheckToken =
+        entryCreationKeyState.challengeResumeCheckToken + 1
+end
+
+entryCreationKeyState.EnterChallengeDormancy = function()
+    if entryCreationKeyState.challengeDormant then
+        if type(entryCreationKeyState.StopScanTicker) == "function" then
+            entryCreationKeyState.StopScanTicker()
+        end
+        return false
+    end
+
+    entryCreationKeyState.challengeDormant = true
+    entryCreationKeyState.CancelChallengeDormancyResumeCheck()
+    -- We intentionally stop observing roster/spec events below. Reconcile the
+    -- current party once on exit instead of spending work on intermediate state.
+    entryCreationKeyState.challengeDormantRosterDirty = true
+    if type(entryCreationKeyState.StopScanTicker) == "function" then
+        entryCreationKeyState.StopScanTicker()
+    end
+    entryCreationKeyState.SetChallengeDormantOptionalEventsRegistered(false)
+    local settingsWatcher = entryCreationKeyState.settingsFrameAttachWatcher
+    if settingsWatcher then
+        settingsWatcher:UnregisterAllEvents()
+        settingsWatcher:SetScript("OnEvent", nil)
+        entryCreationKeyState.settingsFrameAttachWatcher = nil
+    end
+
+    -- Every delayed helper owns a generation/token. Clearing the runtime state
+    -- makes already-scheduled C_Timer.After callbacks cheap no-ops in the key.
+    entryCreationKeyState.ClearAutoHiRuntimeState()
+    entryCreationKeyState.ClearRosterInspectBatchState()
+    entryCreationKeyState.ClearRosterLoadRetryState()
+    entryCreationKeyState.ClearRosterCompositionChanged()
+    entryCreationKeyState.AdvanceGroupTransportGeneration()
+    entryCreationKeyState.ClearLeaderKeystone()
+    entryCreationKeyState.lfgEntryCreationKeyCapturePending = false
+    entryCreationKeyState.lfgDefaultPlaystylePending = false
+    return true
+end
+
+entryCreationKeyState.ExitChallengeDormancy = function()
+    if not entryCreationKeyState.challengeDormant then return false end
+
+    entryCreationKeyState.challengeDormant = false
+    entryCreationKeyState.CancelChallengeDormancyResumeCheck()
+    entryCreationKeyState.SetChallengeDormantOptionalEventsRegistered(true)
+    CreateQRFrame()
+    entryCreationKeyState.RefreshInteractionTypeMappings()
+    entryCreationKeyState.ResetInteractionSlotsForWorldTransition()
+    entryCreationKeyState.SyncAutoHiInitialGroupState()
+    if entryCreationKeyState.challengeDormantRosterDirty then
+        -- Spec/gear changes may have happened while their events were paused,
+        -- even when the same GUIDs are still present in the party.
+        entryCreationKeyState.ResetRosterInspectDataCache()
+        entryCreationKeyState.ClearRosterInspectFailureState()
+        entryCreationKeyState.ReconcileRosterInspectMembership()
+        entryCreationKeyState.MarkRosterCompositionChanged()
+    end
+    entryCreationKeyState.challengeDormantRosterDirty = false
+    entryCreationKeyState.RequestLeaderKeystone(true)
+    _AttachSettingsPanel()
+    _SetupPVEFrameMovement()
+    _SetupLFGEntryCreationHooks()
+    _TryHookInfoPanels()
+    MarkDirty("challenge-resume")
+    if type(entryCreationKeyState.StartScanTicker) == "function" then
+        entryCreationKeyState.StartScanTicker()
+    end
+    return true
+end
+
+entryCreationKeyState.ScheduleChallengeDormancyResumeCheck = function()
+    entryCreationKeyState.CancelChallengeDormancyResumeCheck()
+    if not entryCreationKeyState.challengeDormant
+       or entryCreationKeyState.qrGameplayChallengeEventActive
+       or not (C_Timer and C_Timer.After) then
+        return false
+    end
+
+    -- The end/reset event can precede the current-state API flip. The scanner
+    -- is stopped, so give only that terminal edge a bounded recovery window.
+    local token = entryCreationKeyState.challengeResumeCheckToken
+    local attempt = 0
+    local function ScheduleNext()
+        attempt = attempt + 1
+        local delay = entryCreationKeyState.CHALLENGE_RESUME_CHECK_DELAYS_S[attempt]
+        if not delay then return end
+        C_Timer.After(delay, function()
+            if token ~= entryCreationKeyState.challengeResumeCheckToken
+               or not entryCreationKeyState.challengeDormant
+               or entryCreationKeyState.qrGameplayChallengeEventActive then
+                return
+            end
+            entryCreationKeyState.RefreshQRGameplaySuppression()
+            if entryCreationKeyState.challengeDormant then ScheduleNext() end
+        end)
+    end
+    ScheduleNext()
+    return true
+end
+
 entryCreationKeyState.ResolveGameplayActivityState = function(
     eventActive,
     api,
-    apiConfirmedActive
+    apiConfirmedActive,
+    worldTransition
 )
     local current = entryCreationKeyState.CleanUnitAPIBoolean(api)
+    if worldTransition then
+        -- World arrival ends the old start-edge grace, not the activity itself.
+        -- Carry trusted event/API evidence through an unreadable world load;
+        -- a clean current false may release it even if the end event was missed.
+        apiConfirmedActive = apiConfirmedActive == true or eventActive == true
+        eventActive = false
+    end
     if eventActive then
         if current == true then
             return true, true, false
@@ -1957,23 +2128,24 @@ entryCreationKeyState.ResolveGameplayActivityState = function(
         -- Current-state APIs recover missed start events and `/reload`.
         return current, current == true, false
     end
-    -- Once a current-state API has cleanly confirmed an activity, a later
-    -- secret/error result is not evidence that it ended. Keep the API-derived
+    -- Once an activity is confirmed, a later secret/error result is not
+    -- evidence that it ended. Keep the trusted activity
     -- latch until either a matching end event clears it or the API returns a
     -- clean false. Otherwise one transient protected poll can expose and
     -- capture QR work in the middle of combat, a key, or a raid boss.
     return apiConfirmedActive == true, apiConfirmedActive == true, false
 end
 
-entryCreationKeyState.RefreshQRGameplaySuppression = function()
+entryCreationKeyState.RefreshQRGameplaySuppression = function(worldTransition)
     local combatActive, combatAPIConfirmed, combatReconciledEnd =
         entryCreationKeyState.ResolveGameplayActivityState(
         entryCreationKeyState.qrGameplayCombatEventActive,
         InCombatLockdown,
-        entryCreationKeyState.qrGameplayCombatAPIConfirmedActive
+        entryCreationKeyState.qrGameplayCombatAPIConfirmedActive,
+        worldTransition
     )
     entryCreationKeyState.qrGameplayCombatAPIConfirmedActive = combatAPIConfirmed
-    if combatReconciledEnd then
+    if combatReconciledEnd or worldTransition then
         entryCreationKeyState.qrGameplayCombatEventActive = false
     end
 
@@ -1982,11 +2154,12 @@ entryCreationKeyState.RefreshQRGameplaySuppression = function()
         entryCreationKeyState.ResolveGameplayActivityState(
         entryCreationKeyState.qrGameplayChallengeEventActive,
         challengeAPI and challengeAPI.IsChallengeModeActive,
-        entryCreationKeyState.qrGameplayChallengeAPIConfirmedActive
+        entryCreationKeyState.qrGameplayChallengeAPIConfirmedActive,
+        worldTransition
     )
     entryCreationKeyState.qrGameplayChallengeAPIConfirmedActive =
         challengeAPIConfirmed
-    if challengeReconciledEnd then
+    if challengeReconciledEnd or worldTransition then
         entryCreationKeyState.qrGameplayChallengeEventActive = false
     end
 
@@ -1995,11 +2168,12 @@ entryCreationKeyState.RefreshQRGameplaySuppression = function()
         entryCreationKeyState.ResolveGameplayActivityState(
         entryCreationKeyState.qrGameplayEncounterEventActive,
         encounterAPI and encounterAPI.IsEncounterInProgress,
-        entryCreationKeyState.qrGameplayEncounterAPIConfirmedActive
+        entryCreationKeyState.qrGameplayEncounterAPIConfirmedActive,
+        worldTransition
     )
     entryCreationKeyState.qrGameplayEncounterAPIConfirmedActive =
         encounterAPIConfirmed
-    if encounterReconciledEnd then
+    if encounterReconciledEnd or worldTransition then
         entryCreationKeyState.qrGameplayEncounterEventActive = false
     end
 
@@ -2034,6 +2208,11 @@ entryCreationKeyState.RefreshQRGameplaySuppression = function()
         pendingShotDirty = isSessionActive or pendingShotDirty
         MarkDirty("gameplay-resume")
         _RefreshQRVisibility()
+    end
+    if challengeActive then
+        entryCreationKeyState.EnterChallengeDormancy()
+    elseif entryCreationKeyState.challengeDormant then
+        entryCreationKeyState.ExitChallengeDormancy()
     end
     return suppressed
 end
@@ -2211,6 +2390,7 @@ end
 -- writes the same slot. desired=nil events filtered upstream by EVENT_HANDLERS
 -- registration (only events present in INTERACTION_EVENTS are bound).
 _OnInteractionEvent = function(event)
+    if entryCreationKeyState.challengeDormant then return end
     local config = INTERACTION_EVENTS[event]
     if not config then return end
     local kind, desired = config[1], config[2]
@@ -2223,6 +2403,7 @@ _OnInteractionEvent = function(event)
 end
 
 entryCreationKeyState.OnPlayerInteractionManagerEvent = function(event, interactionType)
+    if entryCreationKeyState.challengeDormant then return end
     if type(interactionType) ~= "number" or IsSecretValue(interactionType) then return end
     if event == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" then
         _interactionSlots[interactionType] = true
@@ -4183,6 +4364,7 @@ end
 
 entryCreationKeyState.IsLibKeystoneTransportEnabled = function()
     return ApplicantScoutDB and ApplicantScoutDB.enabled
+        and not entryCreationKeyState.challengeDormant
 end
 
 entryCreationKeyState.SendLibKeystoneAddonMessage = function(payload, channel)
@@ -5384,6 +5566,8 @@ end
 -- Nil-safe so BuildQRMatrix can show its missing-library diagnostic instead of
 -- crashing at file load if the embedded QR library failed to populate ns.QR.
 local _qrencode = _addonNS.QR and _addonNS.QR.qrcode
+entryCreationKeyState.qrencodeAsync =
+    _addonNS.QR and _addonNS.QR.qrcodeAsync
 
 -- Acquire (or reuse from pool) a black-rectangle texture and position+size it.
 -- Returns the texture or nil if pool exhausted (caller logs warning).
@@ -5658,17 +5842,47 @@ end
 -- Large payloads skip hex/M but try hex/L before raw/L. Live WoW screenshots
 -- have shown raw byte-mode APS1 payloads decoding as corrupt once applicant
 -- bursts grow, while hex remains stable for the same transport.
--- WHY pcall: qrencode.lua's get_version_eclevel uses assert() (real Lua error)
--- on capacity overflow at line 214, NOT the documented (false, errmsg) tuple
--- return. Plain `local ok, result = _qrencode(...)` lets that error propagate
--- through scan-tick and floods BugSack with hundreds of identical errors per
--- minute on big payloads. pcall traps it; we then fall back to lower EC
--- (M=2 → L=1, ~26% more capacity at Version 40) for one more attempt.
-local function _TryQrEncode(data, ec_level)
-    local pcall_ok, ok, result = pcall(_qrencode, data, ec_level)
-    if not pcall_ok then return nil, tostring(ok) end          -- assert blew up
-    if not ok then return nil, tostring(result) end            -- documented failure
-    return result, nil
+entryCreationKeyState.TryQrEncodeAsync = function(
+    data,
+    ec_level,
+    jobGen,
+    onComplete
+)
+    local asyncEncoder = entryCreationKeyState.qrencodeAsync
+    if type(asyncEncoder) ~= "function" then
+        -- A partially updated embedded library must fail closed instead of
+        -- restoring a synchronous encoder that can stall the entire UI frame.
+        onComplete(nil, "frame-sliced QR encoder unavailable")
+        return
+    end
+
+    local function IsCancelled()
+        return entryCreationKeyState.qrPaintJobGen ~= jobGen
+    end
+    local function Schedule(callback)
+        C_Timer.After(0, callback)
+    end
+    local function Finish(ok, result)
+        if IsCancelled() then return end
+        if ok then
+            onComplete(result, nil)
+        else
+            onComplete(nil, tostring(result))
+        end
+    end
+
+    local callOK, callError = pcall(
+        asyncEncoder,
+        data,
+        ec_level,
+        nil,
+        Schedule,
+        IsCancelled,
+        Finish
+    )
+    if not callOK and not IsCancelled() then
+        onComplete(nil, tostring(callError))
+    end
 end
 
 local function BuildQRMatrix(
@@ -5745,37 +5959,44 @@ local function BuildQRMatrix(
                 first_size = attempt.size
                 first_unit = attempt.unit
             end
-            local matrix, err = _TryQrEncode(attempt.data, attempt.ec_level)
-            if not matrix then
-                failure_parts[#failure_parts + 1] = label .. ": " .. tostring(err)
-                C_Timer.After(0, TryNextAttempt)
-                return
-            end
-
-            local module_ui_size = entryCreationKeyState.GetQRModuleUISize()
-            _BuildQRBlackRunsAsync(
-                matrix,
-                QR_QUIET_ZONE * module_ui_size,
-                module_ui_size,
-                entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET,
+            entryCreationKeyState.TryQrEncodeAsync(
+                attempt.data,
+                attempt.ec_level,
                 jobGen,
-                function(runs, renderRuns)
+                function(matrix, err)
                     if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
-                    if not runs then
-                        failure_parts[#failure_parts + 1] = label .. ": render needs " ..
-                            renderRuns .. " textures > pooled budget " ..
-                            entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET
+                    if not matrix then
+                        failure_parts[#failure_parts + 1] = label .. ": " .. tostring(err)
                         C_Timer.After(0, TryNextAttempt)
                         return
                     end
 
-                    _SetLastQREncodeDiag(label, #payload, nil)
-                    if APSPrint and ApplicantScoutDB and ApplicantScoutDB.debug and label ~= first_label then
-                        APSPrint(string.format(
-                            "[APS-debug] QR fallback %s (%d %s) -> %s (%d bytes payload, %d textures)",
-                            first_label, first_size, first_unit, label, #payload, renderRuns))
-                    end
-                    onComplete(matrix, runs, renderRuns, module_ui_size)
+                    local module_ui_size = entryCreationKeyState.GetQRModuleUISize()
+                    _BuildQRBlackRunsAsync(
+                        matrix,
+                        QR_QUIET_ZONE * module_ui_size,
+                        module_ui_size,
+                        entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET,
+                        jobGen,
+                        function(runs, renderRuns)
+                            if entryCreationKeyState.qrPaintJobGen ~= jobGen then return end
+                            if not runs then
+                                failure_parts[#failure_parts + 1] = label .. ": render needs " ..
+                                    renderRuns .. " textures > pooled budget " ..
+                                    entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET
+                                C_Timer.After(0, TryNextAttempt)
+                                return
+                            end
+
+                            _SetLastQREncodeDiag(label, #payload, nil)
+                            if APSPrint and ApplicantScoutDB and ApplicantScoutDB.debug and label ~= first_label then
+                                APSPrint(string.format(
+                                    "[APS-debug] QR fallback %s (%d %s) -> %s (%d bytes payload, %d textures)",
+                                    first_label, first_size, first_unit, label, #payload, renderRuns))
+                            end
+                            onComplete(matrix, runs, renderRuns, module_ui_size)
+                        end
+                    )
                 end
             )
         end
@@ -6918,6 +7139,14 @@ if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
                 entryCreationKeyState.qrGameplayCombatActive == true,
             gameplayChallengeActive =
                 entryCreationKeyState.qrGameplayChallengeActive == true,
+            challengeDormant = entryCreationKeyState.challengeDormant == true,
+            challengeDormantRosterDirty =
+                entryCreationKeyState.challengeDormantRosterDirty == true,
+            challengeDormantOptionalEventsRegistered =
+                entryCreationKeyState.challengeDormantOptionalEventsRegistered == true,
+            scanTickerActive = entryCreationKeyState.scanTicker ~= nil,
+            scanTickerStartCount = entryCreationKeyState.scanTickerStartCount or 0,
+            scanTickerStopCount = entryCreationKeyState.scanTickerStopCount or 0,
             gameplayEncounterActive =
                 entryCreationKeyState.qrGameplayEncounterActive == true,
             gameplayLoadingActive =
@@ -6958,6 +7187,7 @@ end
 -- HookScript calls, and form mutations are drained from ApplicantScout's ticker.
 
 entryCreationKeyState.QueueLFGEntryCreationDeferredWork = function(keyCapture, defaultPlaystyle)
+    if entryCreationKeyState.challengeDormant then return end
     if keyCapture then
         entryCreationKeyState.lfgEntryCreationKeyCapturePending = true
     end
@@ -7107,6 +7337,8 @@ end
 local EVENT_HANDLERS = {
     PLAYER_LOGIN                     = function()
         InitDB()
+        entryCreationKeyState.RefreshQRGameplaySuppression()
+        if entryCreationKeyState.challengeDormant then return end
         entryCreationKeyState.RefreshInteractionTypeMappings()
         entryCreationKeyState.SyncAutoHiInitialGroupState()
         MarkDirty("login")
@@ -7117,17 +7349,13 @@ local EVENT_HANDLERS = {
     end,
     PLAYER_ENTERING_WORLD            = function()
         entryCreationKeyState.ResetInteractionSlotsForWorldTransition()
-        entryCreationKeyState.qrGameplayCombatEventActive = false
-        entryCreationKeyState.qrGameplayCombatAPIConfirmedActive = false
-        entryCreationKeyState.qrGameplayChallengeEventActive = false
-        entryCreationKeyState.qrGameplayChallengeAPIConfirmedActive = false
-        entryCreationKeyState.qrGameplayEncounterEventActive = false
-        entryCreationKeyState.qrGameplayEncounterAPIConfirmedActive = false
         entryCreationKeyState.ClearRosterLoadRetryState()
-        CreateQRFrame()
-        entryCreationKeyState.RefreshQRGameplaySuppression()
-        entryCreationKeyState.SyncAutoHiInitialGroupState()
-        entryCreationKeyState.RequestLeaderKeystone(true)
+        entryCreationKeyState.RefreshQRGameplaySuppression(true)
+        if not entryCreationKeyState.challengeDormant then
+            CreateQRFrame()
+            entryCreationKeyState.SyncAutoHiInitialGroupState()
+            entryCreationKeyState.RequestLeaderKeystone(true)
+        end
         -- Recover a lease interrupted by /reload. The next actual capture
         -- reacquires JPG/quality immediately before Screenshot().
         RestoreScreenshotCVars()
@@ -7159,7 +7387,9 @@ local EVENT_HANDLERS = {
             -- SavedVariables are available when this addon's ADDON_LOADED fires.
             -- Normalize them before any setup or transport path can read the DB.
             InitDB()
+            entryCreationKeyState.RefreshQRGameplaySuppression()
         end
+        if entryCreationKeyState.challengeDormant then return end
         _SetupLFGEntryCreationHooks()
         _TryHookInfoPanels()
         entryCreationKeyState.RequestLeaderKeystone(false)
@@ -7177,11 +7407,19 @@ local EVENT_HANDLERS = {
         end
     end,
     PARTY_LEADER_CHANGED             = function()
+        if entryCreationKeyState.challengeDormant then
+            entryCreationKeyState.challengeDormantRosterDirty = true
+            return
+        end
         entryCreationKeyState.ClearLeaderKeystone()
         entryCreationKeyState.RequestLeaderKeystone(true)
         MarkDirty("ldrchg")
     end,
     GROUP_ROSTER_UPDATE              = function()
+        if entryCreationKeyState.challengeDormant then
+            entryCreationKeyState.challengeDormantRosterDirty = true
+            return
+        end
         entryCreationKeyState.ReconcileRosterInspectMembership()
         entryCreationKeyState.MarkRosterCompositionChanged()
         MarkDirty("roster")
@@ -7190,6 +7428,10 @@ local EVENT_HANDLERS = {
         entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()
     end,
     GROUP_LEFT                       = function()
+        if entryCreationKeyState.challengeDormant then
+            entryCreationKeyState.challengeDormantRosterDirty = true
+            return
+        end
         entryCreationKeyState.AdvanceGroupTransportGeneration()
         entryCreationKeyState.ClearLeaderKeystone()
         entryCreationKeyState.MarkRosterCompositionChanged()
@@ -7197,9 +7439,14 @@ local EVENT_HANDLERS = {
         entryCreationKeyState.ScheduleAutoHiIfGroupJoined()
     end,
     CHAT_MSG_ADDON                  = function(_, prefix, msg, channel, sender)
+        if entryCreationKeyState.challengeDormant then return end
         entryCreationKeyState.LibKeystoneShimHandleAddonMessage(prefix, msg, channel, sender)
     end,
     PLAYER_SPECIALIZATION_CHANGED      = function(_, unit)
+        if entryCreationKeyState.challengeDormant then
+            entryCreationKeyState.challengeDormantRosterDirty = true
+            return
+        end
         _InvalidateRosterSpecCacheForUnit(unit)
         entryCreationKeyState.ClearRosterLoadRetryState()
         MarkDirty("spec")
@@ -7213,6 +7460,7 @@ local EVENT_HANDLERS = {
         entryCreationKeyState.qrGameplayCombatEventActive = false
         entryCreationKeyState.qrGameplayCombatAPIConfirmedActive = false
         entryCreationKeyState.RefreshQRGameplaySuppression()
+        if entryCreationKeyState.challengeDormant then return end
         if entryCreationKeyState.leaderKeystoneContextCombatDeferred then
             entryCreationKeyState.leaderKeystoneContextCombatDeferred = false
             if entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup) == true then
@@ -7233,6 +7481,7 @@ local EVENT_HANDLERS = {
         end
     end,
     CHALLENGE_MODE_START              = function()
+        entryCreationKeyState.CancelChallengeDormancyResumeCheck()
         entryCreationKeyState.qrGameplayChallengeEventActive = true
         entryCreationKeyState.qrGameplayChallengeAPIConfirmedActive = false
         entryCreationKeyState.RefreshQRGameplaySuppression()
@@ -7241,11 +7490,13 @@ local EVENT_HANDLERS = {
         entryCreationKeyState.qrGameplayChallengeEventActive = false
         entryCreationKeyState.qrGameplayChallengeAPIConfirmedActive = false
         entryCreationKeyState.RefreshQRGameplaySuppression()
+        entryCreationKeyState.ScheduleChallengeDormancyResumeCheck()
     end,
     CHALLENGE_MODE_RESET              = function()
         entryCreationKeyState.qrGameplayChallengeEventActive = false
         entryCreationKeyState.qrGameplayChallengeAPIConfirmedActive = false
         entryCreationKeyState.RefreshQRGameplaySuppression()
+        entryCreationKeyState.ScheduleChallengeDormancyResumeCheck()
     end,
     ENCOUNTER_START                   = function()
         entryCreationKeyState.qrGameplayEncounterEventActive = true
@@ -7258,6 +7509,7 @@ local EVENT_HANDLERS = {
         entryCreationKeyState.RefreshQRGameplaySuppression()
     end,
     INSPECT_READY                    = function(_, guid)
+        if entryCreationKeyState.challengeDormant then return end
         if _OnRosterInspectReady(guid) then
             entryCreationKeyState.ClearRosterLoadRetryState()
         end
@@ -7279,6 +7531,7 @@ for evt in pairs(INTERACTION_EVENTS) do
 end
 
 local frame = CreateFrame("Frame")
+entryCreationKeyState.eventFrame = frame
 for event in pairs(EVENT_HANDLERS) do frame:RegisterEvent(event) end
 frame:SetScript("OnEvent", function(_, event, ...)
     local h = EVENT_HANDLERS[event]
@@ -7295,7 +7548,7 @@ end)
 -- Lockdown short-circuit: skip scheduler-driven C_LFGList reads during
 -- ChatMessagingLockdown. Roster-only group transport still runs because it
 -- uses Unit* reads plus Screenshot(), not chat sends or active-listing reads.
-C_Timer.NewTicker(0.25, function()
+entryCreationKeyState.RunScanTick = function()
     local now = GetTime()
     entryCreationKeyState.RecoverStalledQRTransport(now)
 
@@ -7378,7 +7631,36 @@ C_Timer.NewTicker(0.25, function()
             false, entry, nil, lfgReadsAllowed, listingStateKnown
         )
     end
-end)
+end
+
+entryCreationKeyState.StopScanTicker = function()
+    local ticker = entryCreationKeyState.scanTicker
+    if not ticker then return false end
+    entryCreationKeyState.scanTicker = nil
+    entryCreationKeyState.scanTickerStopCount =
+        (entryCreationKeyState.scanTickerStopCount or 0) + 1
+    if type(ticker.Cancel) == "function" then
+        pcall(ticker.Cancel, ticker)
+    end
+    return true
+end
+
+entryCreationKeyState.StartScanTicker = function()
+    if entryCreationKeyState.scanTicker
+       or entryCreationKeyState.challengeDormant
+       or not (C_Timer and type(C_Timer.NewTicker) == "function") then
+        return false
+    end
+    entryCreationKeyState.scanTicker = C_Timer.NewTicker(
+        0.25,
+        entryCreationKeyState.RunScanTick
+    )
+    entryCreationKeyState.scanTickerStartCount =
+        (entryCreationKeyState.scanTickerStartCount or 0) + 1
+    return true
+end
+
+entryCreationKeyState.StartScanTicker()
 
 
 -- ───────────────────────────────────────────────────────────
@@ -7608,6 +7890,7 @@ end
 -- Defensive ADDON_LOADED watcher fallback for the unlikely case PVEFrame is
 -- loaded on demand (12.x retail compiles it in, but custom clients may differ).
 _AttachSettingsPanel = function()
+    if entryCreationKeyState.challengeDormant then return end
     -- Function-scoped because no callback or other subsystem consumes these
     -- values. Keeping layout-only names out of the chunk restores Lua 5.1
     -- top-level local headroom without changing the settings widget contract.
@@ -7949,6 +8232,8 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
     -- QR transport diagnostics
     print("|cff00ff7f---|r QR transport:")
     print("  QR library loaded: " .. tostring(_qrencode ~= nil))
+    print("  QR encode frame-sliced: " ..
+          tostring(type(entryCreationKeyState.qrencodeAsync) == "function"))
     print("  QR frame created: " .. tostring(qrFrameCreated))
     if qrFrame then
         print("  QR frame visible: " .. tostring(qrFrame:IsShown()) ..
@@ -8141,6 +8426,12 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
           .. tostring(entryCreationKeyState.qrGameplayChallengeActive) .. "/"
           .. tostring(entryCreationKeyState.qrGameplayEncounterActive) .. "/"
           .. tostring(entryCreationKeyState.qrGameplayLoadingActive))
+    print("  M+ dormant / scan ticker active: "
+          .. tostring(entryCreationKeyState.challengeDormant == true) .. "/"
+          .. tostring(entryCreationKeyState.scanTicker ~= nil)
+          .. " (starts/stops "
+          .. tostring(entryCreationKeyState.scanTickerStartCount or 0) .. "/"
+          .. tostring(entryCreationKeyState.scanTickerStopCount or 0) .. ")")
     local interactionDeferralActive =
         entryCreationKeyState.ShouldDeferQRForInteraction()
     local interactionDeferralReason = "none"

@@ -53,6 +53,8 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "gameplay-start-edge-lag-challenge"
        or fixture_mode == "gameplay-start-edge-lag-encounter"
        or fixture_mode == "gameplay-challenge-reload"
+       or fixture_mode == "gameplay-challenge-complete-lag"
+       or fixture_mode == "gameplay-challenge-reset-lag"
        or fixture_mode == "gameplay-raid-encounter"
        or fixture_mode == "gameplay-loading-initial"
        or fixture_mode == "gameplay-loading-during-paint"
@@ -146,6 +148,8 @@ local gameplay_start_edge_lag_axis = fixture_mode:match(
 )
 local gameplay_start_edge_lag = gameplay_start_edge_lag_axis ~= nil
 local gameplay_challenge_reload = fixture_mode == "gameplay-challenge-reload"
+    or fixture_mode == "gameplay-challenge-complete-lag"
+    or fixture_mode == "gameplay-challenge-reset-lag"
 local gameplay_raid_encounter = fixture_mode == "gameplay-raid-encounter"
 local gameplay_loading_initial = fixture_mode == "gameplay-loading-initial"
 local gameplay_loading_during_paint =
@@ -169,7 +173,9 @@ if not roster_only then
     env.unit_data.party3 = nil
     env.unit_data.party4 = nil
 end
+gameplay_group_member_count_calls = 0
 GetNumGroupMembers = function()
+    gameplay_group_member_count_calls = gameplay_group_member_count_calls + 1
     if roster_only then return 5 end
     if lfg_read_transient or lfg_read_partial_identity then return 0 end
     return 2
@@ -568,6 +574,36 @@ qr_namespace.QR.qrcode = function(...)
     if ok then qr_encode_successes = qr_encode_successes + 1 end
     return ok, result
 end
+local original_qrcode_async = assert(qr_namespace.QR.qrcodeAsync)
+qr_namespace.QR.qrcodeAsync = function(
+    data,
+    ec_level,
+    mode,
+    schedule,
+    is_cancelled,
+    on_complete
+)
+    qr_encode_calls = qr_encode_calls + 1
+    if terminal_pre_capture_kind == "build-failure"
+       and regression_state.terminalPreCapture.started
+       and not regression_state.terminalPreCapture.injectionReleased then
+        schedule(function()
+            on_complete(false, "injected terminal pre-capture QR build failure")
+        end)
+        return
+    end
+    return original_qrcode_async(
+        data,
+        ec_level,
+        mode,
+        schedule,
+        is_cancelled,
+        function(ok, result)
+            if ok then qr_encode_successes = qr_encode_successes + 1 end
+            return on_complete(ok, result)
+        end
+    )
+end
 harness = env.load_addon(qr_namespace.QR)
 
 for _, frame in ipairs(frames) do
@@ -673,6 +709,30 @@ if gameplay_combat or gameplay_challenge_reload then
         state = harness.QRTransportState()
         assert(state.screenshotPendingForce and #screenshot_times == 0,
             "manual force capture was not deferred during combat")
+    else
+        assert(state.challengeDormant and not state.scanTickerActive,
+            "active challenge reload did not stop the scan ticker")
+        assert(not state.challengeDormantOptionalEventsRegistered
+               and not event_frame.events.GROUP_ROSTER_UPDATE
+               and not event_frame.events.CHAT_MSG_ADDON
+               and not event_frame.events.PLAYER_INTERACTION_MANAGER_FRAME_SHOW,
+            "active challenge reload kept optional background events registered")
+        assert(event_frame.events.CHALLENGE_MODE_COMPLETED
+               and event_frame.events.PLAYER_REGEN_ENABLED
+               and event_frame.events.SCREENSHOT_SUCCEEDED,
+            "active challenge reload removed a required recovery event")
+        regression_state.groupMemberCountCallsBefore =
+            gameplay_group_member_count_calls
+        event_frame.scripts.OnEvent(event_frame, "GROUP_ROSTER_UPDATE")
+        state = harness.QRTransportState()
+        assert(gameplay_group_member_count_calls
+                   == regression_state.groupMemberCountCallsBefore
+               and state.challengeDormantRosterDirty,
+            "dormant roster event performed group work instead of deferring once")
+        event_frame.scripts.OnEvent(event_frame, "PLAYER_REGEN_ENABLED")
+        state = harness.QRTransportState()
+        assert(state.challengeDormant and not state.scanTickerActive,
+            "combat-end event restarted work during an active challenge")
     end
 end
 
@@ -851,7 +911,12 @@ local function stage_terminal_restart_callback()
         stale_callback = assert(take_earliest_timer()).callback
     elseif restart_phase == "row-scan" then
         local success_before = qr_encode_successes
-        run_earliest_timer()
+        local safety = 1000
+        while qr_encode_successes == success_before do
+            run_earliest_timer()
+            safety = safety - 1
+            assert(safety > 0, "terminal QR encode did not reach row-scan staging")
+        end
         assert(qr_encode_successes > success_before,
             "terminal QR encode did not reach row-scan staging")
         stale_callback = assert(take_earliest_timer()).callback
@@ -1474,7 +1539,8 @@ for _ = 1, (overflow_interaction_close
        and not interaction_opened
        and #screenshot_times == 2
        and not harness.QRTransportState().paintInProgress
-       and not harness.QRTransportState().captureInProgress then
+       and not harness.QRTransportState().captureInProgress
+       and not harness.QRTransportState().pendingShotDirty then
         interaction_opened = true
         interaction_shots_before = #screenshot_times
         send_interaction_event("MERCHANT_SHOW")
@@ -1486,7 +1552,12 @@ for _ = 1, (overflow_interaction_close
         assert(not closed.suppressedByInteraction
                and closed.deliverySnapshotSendCount == 2
                and not closed.pendingShotDirty,
-            "quick panel close rearmed a snapshot without a panel-open capture")
+            string.format(
+                "quick panel close rearmed a snapshot without a panel-open capture: suppressed=%s delivery=%s pending=%s",
+                tostring(closed.suppressedByInteraction),
+                tostring(closed.deliverySnapshotSendCount),
+                tostring(closed.pendingShotDirty)
+            ))
     end
     if overflow_interaction_close_awaiting and not interaction_closed then
         local state = harness.QRTransportState()
@@ -1759,6 +1830,8 @@ for _ = 1, (overflow_interaction_close
                and qr_encode_calls == 0
                and gameplay_lfg_read_calls == 0
                and state.suppressedByGameplay
+               and (not gameplay_challenge_reload
+                    or (state.challengeDormant and not state.scanTickerActive))
                and not state.paintInProgress
                and not state.captureInProgress
                and not state.qrFrameShown,
@@ -1769,10 +1842,18 @@ for _ = 1, (overflow_interaction_close
                 "PLAYER_REGEN_ENABLED was not registered")
             event_frame.scripts.OnEvent(event_frame, "PLAYER_REGEN_ENABLED")
         else
-            challenge_active = false
-            assert(event_frame.events.CHALLENGE_MODE_COMPLETED,
-                "CHALLENGE_MODE_COMPLETED was not registered")
-            event_frame.scripts.OnEvent(event_frame, "CHALLENGE_MODE_COMPLETED")
+            challenge_active = fixture_mode ~= "gameplay-challenge-reload"
+            regression_state.challengeEndEvent =
+                fixture_mode == "gameplay-challenge-reset-lag"
+                    and "CHALLENGE_MODE_RESET" or "CHALLENGE_MODE_COMPLETED"
+            assert(event_frame.events[regression_state.challengeEndEvent],
+                "challenge recovery event was not registered")
+            event_frame.scripts.OnEvent(event_frame, regression_state.challengeEndEvent)
+            if challenge_active then
+                assert(harness.QRTransportState().challengeDormant,
+                    "challenge exit ignored the still-active current-state API")
+                C_Timer.After(0.1, function() challenge_active = false end)
+            end
         end
         gameplay_released = true
     end
@@ -2453,7 +2534,11 @@ elseif terminal_pre_capture_mode then
         "terminal pre-capture recovery did not settle in an idle ended session")
     assert(state.terminalClearDispatchCount == 2
            and state.terminalClearPreCaptureFailureCount == 1,
-        "terminal pre-capture failure consumed the physical clear budget")
+        string.format(
+            "terminal pre-capture failure consumed the physical clear budget: dispatch=%s pre-capture=%s",
+            tostring(state.terminalClearDispatchCount),
+            tostring(state.terminalClearPreCaptureFailureCount)
+        ))
     assert(state.lastSnapshotHash ~= nil
            and state.lastSnapshotHash ~= pre_terminal_hash
            and state.deliverySnapshotHash == nil
@@ -2648,6 +2733,14 @@ elseif gameplay_combat or gameplay_challenge_reload then
             screenshot_attempts
         ))
     assert(not state.suppressedByGameplay
+           and (not gameplay_challenge_reload
+                or (not state.challengeDormant and state.scanTickerActive
+                    and state.challengeDormantOptionalEventsRegistered
+                    and state.scanTickerStartCount >= 2
+                    and state.scanTickerStopCount >= 1
+                    and event_frame.events.GROUP_ROSTER_UPDATE
+                    and event_frame.events.CHAT_MSG_ADDON
+                    and event_frame.events.PLAYER_INTERACTION_MANAGER_FRAME_SHOW))
            and not state.pendingShotDirty
            and not state.paintInProgress
            and not state.captureInProgress

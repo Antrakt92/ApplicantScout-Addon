@@ -20,11 +20,18 @@ PixelUtil = {
 local encoded_matrix = nil
 local encode_calls = 0
 local encode_should_fail = false
+local function fixture_qrcode()
+    encode_calls = encode_calls + 1
+    if encode_should_fail then return false, "fixture encode failure" end
+    return true, encoded_matrix
+end
 local harness = env.load_addon({
-    qrcode = function()
-        encode_calls = encode_calls + 1
-        if encode_should_fail then return false, "fixture encode failure" end
-        return true, encoded_matrix
+    qrcode = fixture_qrcode,
+    qrcodeAsync = function(_, _, _, schedule, is_cancelled, on_complete)
+        schedule(function()
+            if is_cancelled and is_cancelled() then return end
+            on_complete(fixture_qrcode())
+        end)
     end,
 })
 assert(type(harness.BuildQRBlackRunsAsync) == "function", "missing async QR run builder")

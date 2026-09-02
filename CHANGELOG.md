@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 0.9.12 - 02-Sep-2026 - Quieter Mythic+ runs
+
+### Improved
+
+- Active Mythic+ runs now stop the background scanner and optional roster,
+  inspect, keystone, and greeting work. Tracking resumes from fresh party state
+  when the run ends.
+- QR encoding is spread across frames, and error-correction calculations do
+  less redundant work while preserving the encoded result.
+
+### Fixed
+
+- Loading transitions retain gameplay suppression when the game temporarily
+  cannot report combat, encounter, or challenge state.
+- A delayed challenge-state update after completion or reset receives bounded
+  recovery checks, without restarting background polling inside the key.
+- Disabling tracking or enabling it during a key no longer starts Auto Hi
+  roster sampling or its retry timers.
+
+### Notes
+
+- Paired with ApplicantScout Companion `0.14.6`.
+- APS1 payload compatibility is unchanged. These changes reduce addon work;
+  they do not establish the cause of every in-game freeze.
+
 ## 0.9.11 - 30-Aug-2026 - Reliable companion recovery
 
 This paired patch makes companion-side screenshot discovery recover cleanly

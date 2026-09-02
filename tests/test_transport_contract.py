@@ -21,8 +21,20 @@ LUA_LIBKEYSTONE_PROVIDER_OWNERSHIP_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_libkeystone_provider_ownership.lua"
 )
 LUA_QR_RUN_CHUNKING_CHECK = REPO_ROOT / "tests" / "lua" / "check_qr_run_chunking.lua"
+LUA_QR_ENCODE_FRAME_SLICING_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_qr_encode_frame_slicing.lua"
+)
+LUA_QR_ERROR_CORRECTION_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_qr_error_correction.lua"
+)
 LUA_QR_CAPTURE_LIFECYCLE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_qr_capture_lifecycle.lua"
+)
+LUA_CHALLENGE_RESUME_RETRY_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_challenge_resume_retry.lua"
+)
+LUA_GAMEPLAY_WORLD_TRANSITION_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_gameplay_world_transition.lua"
 )
 LUA_QR_OVERFLOW_ENVELOPE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_qr_overflow_envelope.lua"
@@ -99,6 +111,9 @@ LUA_NUMERIC_BOUNDARIES_CHECK = (
 )
 LUA_AUTO_HI_PARTY_SAMPLING_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_auto_hi_party_sampling.lua"
+)
+LUA_AUTO_HI_TRACKING_PAUSE_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_auto_hi_tracking_pause.lua"
 )
 LUA_AUTO_HI_MESSAGE_BYTES_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_auto_hi_message_bytes.lua"
@@ -241,6 +256,14 @@ def _status_helper_body(source: str) -> str:
     return _slice_between(source, STATUS_HELPER_ANCHOR, "local function PrintHelp()")
 
 
+def _scan_tick_body(source: str) -> str:
+    return _slice_between(
+        source,
+        "entryCreationKeyState.RunScanTick = function()",
+        "entryCreationKeyState.StopScanTicker = function()",
+    )
+
+
 def _forced_snapshot_helper_body(source: str) -> str:
     return _slice_between(
         source,
@@ -354,14 +377,14 @@ def test_gameplay_suppression_uses_current_state_and_all_recovery_events():
     resolver_body = _slice_between(
         source,
         "entryCreationKeyState.ResolveGameplayActivityState = function(",
-        "entryCreationKeyState.RefreshQRGameplaySuppression = function()",
+        "entryCreationKeyState.RefreshQRGameplaySuppression = function(worldTransition)",
     )
     refresh_body = _slice_between(
         source,
-        "entryCreationKeyState.RefreshQRGameplaySuppression = function()",
+        "entryCreationKeyState.RefreshQRGameplaySuppression = function(worldTransition)",
         "-- Aggregator: walks events table + tracked info panels",
     )
-    ticker_body = _slice_between(source, "C_Timer.NewTicker(0.25, function()", "end)\n\n\n--")
+    ticker_body = _scan_tick_body(source)
 
     assert "entryCreationKeyState.qrGameplayCombatEventActive" in refresh_body
     assert "InCombatLockdown" in refresh_body
@@ -421,6 +444,8 @@ def test_gameplay_suppression_uses_current_state_and_all_recovery_events():
         "PLAYER_LEAVING_WORLD",
     )
     assert "qrGameplayLoadingActive = false" not in pew_body
+    assert "entryCreationKeyState.RefreshQRGameplaySuppression(true)" in pew_body
+    assert "APIConfirmedActive = false" not in pew_body
 
 
 def test_gameplay_suppression_defers_every_capture_before_payload_and_async_edges():
@@ -478,7 +503,7 @@ def test_gameplay_cancellation_does_not_consume_a_pre_capture_terminal_attempt()
     suspend_body = _slice_between(
         source,
         "entryCreationKeyState.SuspendQRTransportForGameplay = function()",
-        "entryCreationKeyState.RefreshQRGameplaySuppression = function()",
+        "entryCreationKeyState.RefreshQRGameplaySuppression = function(worldTransition)",
     )
 
     refund_guard_idx = refund_body.index(
@@ -510,6 +535,92 @@ def test_gameplay_cancellation_does_not_consume_a_pre_capture_terminal_attempt()
 
     assert refund_guard_idx < decrement_idx < refunded_idx
     assert refund_call_idx < awaiting_idx < cancel_idx < clear_idx
+
+
+def test_challenge_end_recovery_is_bounded_and_new_start_cancels_it(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_CHALLENGE_RESUME_RETRY_CHECK).strip()
+    assert output == "ok challenge-resume-retry bounded=4 stale-cancelled=1"
+
+
+@pytest.mark.parametrize("activity", ["challenge", "combat", "encounter"])
+@pytest.mark.parametrize("unavailable", ["nil", "error", "secret", "missing"])
+def test_world_transition_preserves_activity_until_authoritative_end(
+    pytestconfig, activity, unavailable
+):
+    output = _run_lua_script(
+        pytestconfig, LUA_GAMEPLAY_WORLD_TRANSITION_CHECK, activity, unavailable
+    ).strip()
+    assert output == (
+        f"ok gameplay-world-transition activity={activity} "
+        f"unavailable={unavailable} cases=4"
+    )
+
+
+def test_active_mplus_stops_scanner_and_invalidates_optional_background_work():
+    source = _lua_source()
+    enter_body = _slice_between(
+        source,
+        "entryCreationKeyState.EnterChallengeDormancy = function()",
+        "entryCreationKeyState.ExitChallengeDormancy = function()",
+    )
+    exit_body = _slice_between(
+        source,
+        "entryCreationKeyState.ExitChallengeDormancy = function()",
+        "entryCreationKeyState.ResolveGameplayActivityState = function(",
+    )
+    ticker_lifecycle = _slice_between(
+        source,
+        "entryCreationKeyState.StopScanTicker = function()",
+        "-- Settings panel:",
+    )
+    event_body = _slice_between(
+        source,
+        "local EVENT_HANDLERS = {",
+        "-- Bind every interaction event to _OnInteractionEvent.",
+    )
+
+    assert "entryCreationKeyState.StopScanTicker()" in enter_body
+    assert (
+        "entryCreationKeyState.SetChallengeDormantOptionalEventsRegistered(false)"
+        in enter_body
+    )
+    for invalidation in (
+        "ClearAutoHiRuntimeState()",
+        "ClearRosterInspectBatchState()",
+        "ClearRosterLoadRetryState()",
+        "ClearRosterCompositionChanged()",
+        "AdvanceGroupTransportGeneration()",
+        "ClearLeaderKeystone()",
+    ):
+        assert invalidation in enter_body
+    assert "entryCreationKeyState.StartScanTicker()" in exit_body
+    assert (
+        "entryCreationKeyState.SetChallengeDormantOptionalEventsRegistered(true)"
+        in exit_body
+    )
+    assert "MarkDirty(\"challenge-resume\")" in exit_body
+    assert "pcall(ticker.Cancel, ticker)" in ticker_lifecycle
+    assert "or entryCreationKeyState.challengeDormant" in ticker_lifecycle
+    assert "C_Timer.NewTicker(" in ticker_lifecycle
+
+    regen_enabled = _slice_between(
+        event_body,
+        "PLAYER_REGEN_ENABLED              = function()",
+        "CHALLENGE_MODE_START",
+    )
+    assert "entryCreationKeyState.RefreshQRGameplaySuppression()" in regen_enabled
+    assert "if entryCreationKeyState.challengeDormant then return end" in regen_enabled
+    for event in (
+        "PARTY_LEADER_CHANGED",
+        "GROUP_ROSTER_UPDATE",
+        "GROUP_LEFT",
+        "CHAT_MSG_ADDON",
+        "PLAYER_SPECIALIZATION_CHANGED",
+        "INSPECT_READY",
+    ):
+        event_idx = event_body.index(event)
+        next_end = event_body.index("end,", event_idx)
+        assert "challengeDormant" in event_body[event_idx:next_end]
 
 
 def test_interaction_suppression_defers_non_force_payloads_before_dedup():
@@ -852,6 +963,29 @@ def test_qr_library_resolution_is_nil_safe_before_missing_lib_diagnostic():
     assert "local _addonNS = select(2, ...)" in source
     assert "_addonNS.QR and _addonNS.QR.qrcode" in init_line
     assert "_addonNS and" not in init_line
+    assert "entryCreationKeyState.qrencodeAsync =" in source[qr_init_idx:build_idx]
+    assert "_addonNS.QR and _addonNS.QR.qrcodeAsync" in source[qr_init_idx:build_idx]
+
+
+def test_qr_build_uses_frame_sliced_encoder_with_generation_cancellation():
+    source = _lua_source()
+    build_body = _slice_between(
+        source,
+        "local function BuildQRMatrix(",
+        "-- State for trigger throttling + dedup",
+    )
+    async_body = _slice_between(
+        source,
+        "entryCreationKeyState.TryQrEncodeAsync = function(",
+        "local function BuildQRMatrix(",
+    )
+
+    assert "entryCreationKeyState.TryQrEncodeAsync(" in build_body
+    assert "local function IsCancelled()" in async_body
+    assert "entryCreationKeyState.qrPaintJobGen ~= jobGen" in async_body
+    assert "C_Timer.After(0, callback)" in async_body
+    assert "frame-sliced QR encoder unavailable" in async_body
+    assert "_TryQrEncode" not in source
 
 
 def test_party_roster_starts_transport_without_lfg_listing():
@@ -886,11 +1020,7 @@ def test_party_roster_transport_can_run_during_chat_messaging_lockdown():
         MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
-    ticker_body = _slice_between(
-        source,
-        "C_Timer.NewTicker(0.25, function()",
-        "-- Settings panel:",
-    )
+    ticker_body = _scan_tick_body(source)
 
     assert "lfgReadsAllowed" in transition_body
     assert "if lfgReadsAllowed then" in transition_body
@@ -1013,11 +1143,7 @@ def test_pending_entry_creation_cache_has_short_promotion_window():
 
 def test_scan_ticker_polls_transport_state_when_events_are_missed():
     source = _lua_source()
-    ticker_body = _slice_between(
-        source,
-        "C_Timer.NewTicker(0.25, function()",
-        "-- Settings panel:",
-    )
+    ticker_body = _scan_tick_body(source)
 
     disabled_idle_idx = ticker_body.index(
         "if not addonEnabled and not disabledTransportCleanupActive then"
@@ -1168,11 +1294,7 @@ def test_roster_composition_change_owns_single_load_retry_invalidation():
 
 def test_transport_poll_does_not_force_unchanged_snapshots():
     source = _lua_source()
-    ticker_body = _slice_between(
-        source,
-        "C_Timer.NewTicker(0.25, function()",
-        "-- Settings panel:",
-    )
+    ticker_body = _scan_tick_body(source)
 
     poll_idx = ticker_body.index("TRANSPORT_POLL_S")
     transition_idx = ticker_body.index("local entry, listingStateKnown = CheckSessionTransition(lfgReadsAllowed)", poll_idx)
@@ -1187,11 +1309,7 @@ def test_transport_poll_does_not_force_unchanged_snapshots():
 
 def test_transport_poll_does_not_heartbeat_stable_snapshots():
     source = _lua_source()
-    ticker_body = _slice_between(
-        source,
-        "C_Timer.NewTicker(0.25, function()",
-        "-- Settings panel:",
-    )
+    ticker_body = _scan_tick_body(source)
 
     poll_idx = ticker_body.index("TRANSPORT_POLL_S")
     transition_idx = ticker_body.index("local entry, listingStateKnown = CheckSessionTransition(lfgReadsAllowed)", poll_idx)
@@ -2391,11 +2509,7 @@ def test_lockdown_active_roster_snapshot_marks_lfg_unavailable_not_terminal():
 
 def test_solo_active_listing_poll_runs_during_lockdown_without_lfg_reads():
     source = _lua_source()
-    ticker_body = _slice_between(
-        source,
-        "C_Timer.NewTicker(0.25, function()",
-        "-- Settings panel:",
-    )
+    ticker_body = _scan_tick_body(source)
 
     transport_ready = (
         "local transportReady = "
@@ -3101,6 +3215,14 @@ def test_auto_hi_party_sampling_preserves_baseline_until_complete(pytestconfig):
     assert output == "auto-hi-party-sampling-ok"
 
 
+@pytest.mark.parametrize("mode", ["disabled", "reenable-in-challenge", "resume-disabled"])
+def test_auto_hi_tracking_stays_paused_and_resumes_without_duplicate_greetings(
+    pytestconfig, mode
+):
+    output = _run_lua_script(pytestconfig, LUA_AUTO_HI_TRACKING_PAUSE_CHECK, mode).strip()
+    assert output == f"ok auto-hi-tracking-pause mode={mode} resumed-greetings=1"
+
+
 def test_auto_hi_new_party_member_send_retries_bounded_when_lockdown_blocks_send():
     source = _lua_source()
     auto_hi_body = _slice_between(
@@ -3762,11 +3884,7 @@ def test_lfg_updates_are_polled_instead_of_registered_on_tainted_event_stack():
         "local EVENT_HANDLERS = {",
         "-- Bind every interaction event to _OnInteractionEvent.",
     )
-    ticker_body = _slice_between(
-        source,
-        "C_Timer.NewTicker(0.25, function()",
-        "-- Settings panel:",
-    )
+    ticker_body = _scan_tick_body(source)
 
     assert "LFG_LIST_APPLICANT_LIST_UPDATED" not in event_body
     assert "LFG_LIST_APPLICANT_UPDATED" not in event_body
@@ -3786,11 +3904,7 @@ def test_info_panel_suppression_is_polled_instead_of_hooking_blizzard_frames():
         "-- Frames without dedicated events.",
         "-- PVEFrame movement (Alt+drag, persistent across /reload)",
     )
-    ticker_body = _slice_between(
-        source,
-        "C_Timer.NewTicker(0.25, function()",
-        "-- Settings panel:",
-    )
+    ticker_body = _scan_tick_body(source)
     status_body = _status_helper_body(source)
 
     assert ':HookScript("OnShow"' not in interaction_body
@@ -3808,11 +3922,7 @@ def test_pveframe_position_restore_does_not_hook_groupfinder_show_stack():
         "-- PVEFrame movement (Alt+drag, persistent across /reload)",
         "-- Lease screenshot format.",
     )
-    ticker_body = _slice_between(
-        source,
-        "C_Timer.NewTicker(0.25, function()",
-        "-- Settings panel:",
-    )
+    ticker_body = _scan_tick_body(source)
 
     assert 'PVEFrame:HookScript("OnShow"' not in movement_body
     assert "entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker = function()" in movement_body
@@ -3832,7 +3942,7 @@ def test_qr_render_uses_script_safe_texture_budget():
     scan_chunk_idx = qr_body.index("entryCreationKeyState.QR_RUN_SCAN_ROWS_PER_FRAME = 12")
     async_builder_idx = qr_body.index("local function _BuildQRBlackRunsAsync(")
     scan_timer_idx = qr_body.index("C_Timer.After(0, ContinueBuild)", async_builder_idx)
-    build_call_idx = qr_body.index("_BuildQRBlackRunsAsync(\n                matrix,")
+    build_call_idx = qr_body.index("_BuildQRBlackRunsAsync(\n                        matrix,")
     paint_budget_idx = qr_body.index(
         "if qrTextureUsed >= entryCreationKeyState.QR_TEXTURE_RENDER_BUDGET then"
     )
@@ -3894,11 +4004,7 @@ def test_qr_capture_settle_window_is_locked_and_watchdog_recoverable():
         MAYBE_TRIGGER_SCREENSHOT_ANCHOR,
         "-- LFG entry creation",
     )
-    ticker_body = _slice_between(
-        source,
-        "C_Timer.NewTicker(0.25, function()",
-        "-- Settings panel:",
-    )
+    ticker_body = _scan_tick_body(source)
 
     capture_guard_idx = screenshot_body.index(
         "or entryCreationKeyState.qrCaptureInProgress) and not force then"
@@ -3992,7 +4098,12 @@ def test_grouped_listing_recreate_retires_stale_overflow_without_reload(pytestco
 
 @pytest.mark.parametrize(
     "mode",
-    ["gameplay-combat", "gameplay-challenge-reload"],
+    [
+        "gameplay-combat",
+        "gameplay-challenge-reload",
+        "gameplay-challenge-complete-lag",
+        "gameplay-challenge-reset-lag",
+    ],
 )
 def test_gameplay_suppression_blocks_all_qr_work_then_resumes_latest_snapshot(
     pytestconfig,
@@ -4651,6 +4762,20 @@ def test_large_qr_run_analysis_is_chunked_in_lua51(pytestconfig):
     )
 
 
+def test_qr_error_correction_matches_reference_with_bounded_work(pytestconfig):
+    assert _run_lua_script(
+        pytestconfig,
+        LUA_QR_ERROR_CORRECTION_CHECK,
+    ).strip() == "ok qr-error-correction cases=312 bounded=1"
+
+
+def test_qr_encode_masks_are_frame_sliced_without_changing_matrix(pytestconfig):
+    assert _run_lua_script(
+        pytestconfig,
+        LUA_QR_ENCODE_FRAME_SLICING_CHECK,
+    ).strip() == "ok qr-encode-frame-slicing cases=8 max-slices=9"
+
+
 def test_large_qr_budget_accepts_observed_applicant_payload_size(pytestconfig):
     assert _run_lua_script(pytestconfig, LUA_LARGE_QR_BUDGET_CHECK).strip() == (
         "ok large-qr-budget"
@@ -4894,8 +5019,9 @@ def test_roster_dirty_events_are_registered():
 
 
 @pytest.mark.requires_companion
-def test_roster_member_rejoin_refreshes_cached_payload_identity(pytestconfig):
-    output = _run_lua_script(pytestconfig, LUA_ROSTER_INSPECT_REJOIN_CHECK)
+@pytest.mark.parametrize("mode", ["rejoin", "challenge"])
+def test_roster_member_rejoin_refreshes_cached_payload_identity(pytestconfig, mode):
+    output = _run_lua_script(pytestconfig, LUA_ROSTER_INSPECT_REJOIN_CHECK, mode)
     payloads = [bytes.fromhex(line.strip()) for line in output.splitlines() if line.strip()]
     assert len(payloads) == 2
 
@@ -5333,11 +5459,7 @@ def test_lfg_entry_creation_hooks_defer_addon_work_off_blizzard_stack():
         "entryCreationKeyState.QueueLFGEntryCreationDeferredWork = function(",
         "_MaybeAutoSelectDefaultPlaystyle = function(panel, reason)",
     )
-    ticker_body = _slice_between(
-        source,
-        "C_Timer.NewTicker(0.25, function()",
-        "-- Settings panel:",
-    )
+    ticker_body = _scan_tick_body(source)
     assert "entryCreationKeyState.QueueLFGEntryCreationDeferredWork" in hook_body
     assert "function(panel" not in hook_body
     assert "_HookEntryCreationKeyCapture(panel)" not in hook_body

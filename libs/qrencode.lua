@@ -468,7 +468,7 @@ local function calculate_error_correction(data,num_ec_codewords)
 	local len_message = #mp
 
 	local highest_exponent = len_message + num_ec_codewords - 1
-	local gp_alpha
+	local polynomial = generator_polynomial[num_ec_codewords]
 	local mp_int = {}
 	-- create message shifted to left (highest exponent)
 	for i=1,len_message do
@@ -480,26 +480,16 @@ local function calculate_error_correction(data,num_ec_codewords)
 	mp_int[0] = 0
 
 	while highest_exponent >= num_ec_codewords do
-		gp_alpha = get_generator_polynomial_adjusted(num_ec_codewords,highest_exponent)
-
-		-- Multiply generator polynomial by first coefficient of the above polynomial
-
-		-- take the highest exponent from the message polynom (alpha) and add
-		-- it to the generator polynom
 		local exp = int_alpha[mp_int[highest_exponent]]
-		for i=highest_exponent,highest_exponent - num_ec_codewords,-1 do
-			if exp ~= 256 then
-				gp_alpha[i] = (gp_alpha[i] + exp) % 255
-			else
-				gp_alpha[i] = 256
+		if exp ~= 256 then
+			-- Only the shifted generator's degree + 1 coefficients are nonzero.
+			-- Lower message terms are XORed with zero and must remain untouched;
+			-- do not allocate a padded polynomial or traverse that zero tail.
+			local shift = highest_exponent - num_ec_codewords
+			for i=highest_exponent,shift,-1 do
+				local coefficient = alpha_int[(polynomial[i - shift + 1] + exp) % 255]
+				mp_int[i] = xor_lookup[coefficient][mp_int[i]]
 			end
-		end
-		for i=highest_exponent - num_ec_codewords - 1,0,-1 do
-			gp_alpha[i] = 256
-		end
-
-		for i=highest_exponent,0,-1 do
-			mp_int[i] = xor_lookup[alpha_int[gp_alpha[i]]][mp_int[i]]
 		end
 		-- remove leading 0's
 		for i=highest_exponent,num_ec_codewords,-1 do
@@ -1125,11 +1115,10 @@ end
 --- 1. Generate 8 matrices with different masks and calculate the penalty
 --- 1. Return qrcode with least penalty
 
--- Return
---     on success: true, number matrix (only has ±1&±2. positive means black, ±2 means mandatory, in case if you didn't read comments above)
---     on failed: false, error message string
--- If ec_level or mode is given, use the ones for generating the qrcode. (mode option is not implemented yet, but it will be determined automatically)
-local function qrcode(str,ec_level,mode_enc)
+-- Prepare the mask-independent QR data once. The synchronous and frame-sliced
+-- entrypoints intentionally share this path so they produce byte-identical
+-- matrices for the same input.
+local function prepare_qrcode_data(str,ec_level,mode_enc)
 	local arranged_data, version, data_raw, mode, len_bitstring
 	version, ec_level, data_raw, mode, len_bitstring = get_version_eclevel_mode_bistringlength(str,ec_level,mode_enc)
 	data_raw = data_raw .. len_bitstring
@@ -1137,11 +1126,101 @@ local function qrcode(str,ec_level,mode_enc)
 	data_raw = add_pad_data(version,ec_level,data_raw)
 	arranged_data = arrange_codewords_and_calculate_ec(version,ec_level,data_raw)
 	if #arranged_data % 8 ~= 0 then
-		return false, format("Arranged data %% 8 != 0: data length = %d, mod 8 = %d",#arranged_data, #arranged_data % 8)
+		return nil, nil, nil, format(
+			"Arranged data %% 8 != 0: data length = %d, mod 8 = %d",
+			#arranged_data,
+			#arranged_data % 8
+		)
 	end
 	arranged_data = arranged_data .. rep("0",remainder[version])
+	return arranged_data, version, ec_level
+end
+
+-- Return
+--     on success: true, number matrix (only has ±1&±2. positive means black, ±2 means mandatory, in case if you didn't read comments above)
+--     on failed: false, error message string
+-- If ec_level or mode is given, use the ones for generating the qrcode. (mode option is not implemented yet, but it will be determined automatically)
+local function qrcode(str,ec_level,mode_enc)
+	local arranged_data, version, err
+	arranged_data, version, ec_level, err = prepare_qrcode_data(str,ec_level,mode_enc)
+	if not arranged_data then return false, err end
 	local tab = get_matrix_with_lowest_penalty(version,ec_level,arranged_data)
 	return true, tab
+end
+
+-- Generate the exact same standards-compliant matrix as qrcode(), but give each
+-- of the eight mask candidates its own scheduler slice. ApplicantScout passes a
+-- next-frame scheduler here so one large QR can no longer monopolize a WoW Lua
+-- callback while all masks are built and scored back-to-back.
+local function qrcode_async(str,ec_level,mode_enc,schedule,is_cancelled,on_complete)
+	assert(type(schedule)=="function", "qrcode_async requires a scheduler")
+	assert(type(on_complete)=="function", "qrcode_async requires a completion callback")
+
+	local finished = false
+	local function finish(ok,result)
+		if finished then return end
+		finished = true
+		on_complete(ok,result)
+	end
+
+	local function cancelled()
+		if type(is_cancelled)~="function" then return false end
+		local ok, result = pcall(is_cancelled)
+		if not ok then
+			finish(false,tostring(result))
+			return true
+		end
+		return result == true
+	end
+
+	local function enqueue(callback)
+		if finished then return end
+		local ok, err = pcall(schedule,callback)
+		if not ok then finish(false,tostring(err)) end
+	end
+
+	enqueue(function()
+		if cancelled() then return end
+		local ok, arranged_data, version, resolved_ec_level, prepare_error =
+			pcall(prepare_qrcode_data,str,ec_level,mode_enc)
+		if not ok then
+			finish(false,tostring(arranged_data))
+			return
+		end
+		if not arranged_data then
+			finish(false,tostring(prepare_error))
+			return
+		end
+
+		local mask = 0
+		local best_matrix, best_penalty
+		local function try_next_mask()
+			if cancelled() then return end
+			local mask_ok, matrix, penalty = pcall(
+				get_matrix_and_penalty,
+				version,
+				resolved_ec_level,
+				arranged_data,
+				mask
+			)
+			if not mask_ok then
+				finish(false,tostring(matrix))
+				return
+			end
+			if best_penalty == nil or penalty < best_penalty then
+				best_matrix = matrix
+				best_penalty = penalty
+			end
+			mask = mask + 1
+			if mask <= 7 then
+				enqueue(try_next_mask)
+			else
+				finish(true,best_matrix)
+			end
+		end
+
+		enqueue(try_next_mask)
+	end)
 end
 
 if testing then
@@ -1159,6 +1238,7 @@ if testing then
 		prepare_matrix_with_mask = prepare_matrix_with_mask,
 		add_data_to_matrix = add_data_to_matrix,
 		qrcode = qrcode,
+		qrcode_async = qrcode_async,
 		binary = binary,
 		get_mode = get_mode,
 		get_length = get_length,
@@ -1182,8 +1262,9 @@ end
 -- receives `(addonName, ns)` via varargs from the loader; we stash the encoder
 -- on `ns.QR` so the main chunk can read it via the same namespace.
 local _, ns = ...
-ns.QR = { qrcode = qrcode }
+ns.QR = { qrcode = qrcode, qrcodeAsync = qrcode_async }
 
 return {
-	qrcode = qrcode
+	qrcode = qrcode,
+	qrcode_async = qrcode_async
 }
