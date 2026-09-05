@@ -63,6 +63,9 @@ LUA_ROSTER_UNKNOWN_IDENTITY_RECOVERY_CHECK = (
 LUA_ROSTER_INSPECT_REJOIN_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_inspect_rejoin.lua"
 )
+LUA_ROSTER_ILVL_REFRESH_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_roster_ilvl_refresh.lua"
+)
 LUA_LEADER_KEY_REFRESH_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_leader_keystone_refresh.lua"
 )
@@ -1601,7 +1604,6 @@ def test_leader_keystone_soft_dep_uses_libkeystone_party_protocol():
     )
     events_body = _slice_between(source, "local EVENT_HANDLERS = {", "for event in pairs")
 
-    assert 'pcall(libStub, "LibKeystone", true)' in leader_body
     assert "lib.Register(" in leader_body
     assert 'type(lib.Request) == "function"' in leader_body
     assert "leaderKeystoneLib = nil" in source
@@ -1746,10 +1748,12 @@ def test_libkeystone_callback_registration_reselects_late_external_provider():
     assert cancel_retry_idx < select_idx
 
 
-def test_libkeystone_provider_ownership_in_lua51(pytestconfig):
+@pytest.mark.parametrize("provider_kind", ["table", "function"])
+def test_libkeystone_provider_ownership_in_lua51(pytestconfig, provider_kind):
     output = _run_lua_script(
         pytestconfig,
         LUA_LIBKEYSTONE_PROVIDER_OWNERSHIP_CHECK,
+        provider_kind,
     ).strip()
 
     assert output == "ok libkeystone-provider-ownership"
@@ -2823,7 +2827,7 @@ def test_roster_spec_resolution_requests_inspect_when_spec_is_unknown():
     assert inspect_idx < request_idx < fallback_idx
 
 
-def test_roster_item_level_uses_inspect_cache_for_non_self_units():
+def test_roster_item_level_uses_cache_after_fresh_read_before_requesting_inspect():
     source = _lua_source()
     item_level_body = _slice_between(
         source,
@@ -2858,7 +2862,7 @@ def test_roster_item_level_uses_inspect_cache_for_non_self_units():
         in request_body
     )
     assert "entryCreationKeyState.RosterUnitHasResolvedSpec" not in source
-    assert cache_idx < read_idx < request_idx
+    assert read_idx < cache_idx < request_idx
 
 
 def test_inspect_ready_marks_roster_dirty_after_caching_spec():
@@ -5038,6 +5042,21 @@ def test_roster_member_rejoin_refreshes_cached_payload_identity(pytestconfig, mo
 
     assert (before.spec_id, before.ilvl, before.role) == (256, 704, 1)
     assert (after.spec_id, after.ilvl, after.role) == (258, 799, 2)
+
+
+@pytest.mark.requires_companion
+def test_roster_item_level_refresh_preserves_last_clean_during_unavailable_reads(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_ROSTER_ILVL_REFRESH_CHECK)
+    parse_payload = _companion_payload_parser(pytestconfig)
+    members = []
+    for line in output.splitlines():
+        snapshot, error = parse_payload(bytes.fromhex(line))
+        assert error is None
+        assert snapshot is not None
+        members.append(next(member for member in snapshot.roster if member.name == "Friend-Realm"))
+
+    assert [member.ilvl for member in members] == [704, 799, 691, 691, 691, 691, 691, 711]
+    assert all((member.spec_id, member.role) == (63, 2) for member in members)
 
 
 @pytest.mark.requires_companion

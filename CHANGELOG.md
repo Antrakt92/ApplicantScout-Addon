@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## 0.9.14 - 05-Sep-2026 - Clearer key scouting
+
+### Improved
+
+- Paired with ApplicantScout Companion `0.15.0`, with more accurate Mythic+
+  evidence scoring and clearer applicant details while keeping familiar colors.
+- Party item level now uses fresh readable equipment data, retaining the last
+  known value when inspection data is temporarily unavailable.
+
+### Fixed
+
+- Recognize standard LibStub libraries so an external LibKeystone provider is
+  used correctly, including when it loads later.
+- A same-name player from another realm can no longer replace or clear the
+  group leader's key information.
+
+### Notes
+
+- The paired companion also improves first-run setup and preserves applicant
+  state correctly through rapid listing or character changes.
+- APS1 payload compatibility and combat/Mythic+ background-work suppression
+  are unchanged.
+
 ## 0.9.13 - 02-Sep-2026 - Companion security update
 
 ### Improved

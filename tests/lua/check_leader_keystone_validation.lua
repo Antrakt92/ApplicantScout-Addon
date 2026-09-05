@@ -3,6 +3,11 @@ local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 GetTime = function() return 1000 end
 IsInGroup = function() return true end
 ApplicantScoutDB = { enabled = true, debug = false }
+local cleanAmbiguate = function(name, context)
+    assert(context == "none", "leader aliases must retain foreign realms")
+    return name:gsub("%-Realm$", "")
+end
+Ambiguate = cleanAmbiguate
 
 local harness = env.load_addon()
 
@@ -38,5 +43,37 @@ assert(harness.ResolveLeaderKeystoneContext() == nil, "exact clear payload remai
 
 harness.OnLeaderKeystoneData(50, 65535, 0, "Host-Realm", "PARTY")
 assert_key(50, 65535, "legal upper boundaries")
+
+-- LibKeystone shortens only local-realm senders; identical foreign names
+-- must not gain ownership of the actual leader's key (including clear frames).
+env.unit_data.party1.name = "Host"
+env.unit_data.party1.realm = "OtherRealm"
+UnitIsGroupLeader = function(unit) return unit == "party1" end
+harness.OnLeaderKeystoneData(18, 504, 0, "Host-OtherRealm", "PARTY")
+assert_key(18, 504, "fully qualified foreign leader")
+assert_rejected(20, 505, "Host", "same short name on local realm")
+assert_rejected(0, 0, "Host", "same short name cannot clear foreign leader")
+assert_rejected(20, 505, "Host-Realm", "qualified local namesake")
+harness.OnLeaderKeystoneData(19, 506, 0, "Host-OtherRealm", "PARTY")
+assert_key(19, 506, "foreign leader refresh still accepted")
+
+UnitIsGroupLeader = function(unit) return unit == "player" end
+harness.OnLeaderKeystoneData(18, 504, 0, "Host", "PARTY")
+assert_key(18, 504, "local leader short alias")
+assert_rejected(20, 505, "Host-OtherRealm", "foreign namesake cannot replace local leader")
+
+Ambiguate = function() error("name normalization unavailable") end
+assert_rejected(20, 505, "Host", "failed name normalization")
+local secretName = {}
+issecretvalue = function(value) return value == secretName end
+Ambiguate = function() return secretName end
+assert_rejected(20, 505, "Host", "secret normalized name")
+Ambiguate = nil
+assert_rejected(20, 505, "Host", "missing name normalization")
+harness.OnLeaderKeystoneData(19, 506, 0, "Host-Realm", "PARTY")
+assert_key(19, 506, "exact identity needs no name normalization")
+Ambiguate = cleanAmbiguate
+harness.OnLeaderKeystoneData(0, 0, 0, "Host", "PARTY")
+assert(harness.ResolveLeaderKeystoneContext() == nil, "local short alias can clear its own key")
 
 io.write("ok leader-keystone-validation\n")

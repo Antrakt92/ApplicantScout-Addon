@@ -82,6 +82,14 @@ folder name for WoW.
 - Current party/raid roster context after invites or after joining a group.
 - Optional playstyle and Auto Hi controls for in-game quality-of-life.
 
+Mythic+ Fit estimates how the available evidence matches the target key; it is
+not a success probability or a Warcraft Logs percentile. The companion combines
+named RaiderIO and WCL evidence once per dungeon and shows key experience
+separately from evidence strength and dungeon coverage. Existing percentile
+colours remain the visual scale.
+M+ WCL values measure damage for every role, including tanks and healers; they
+do not measure healing, survival, or utility.
+
 ## How It Works
 
 WoW addons cannot query Warcraft Logs directly from inside the game client.

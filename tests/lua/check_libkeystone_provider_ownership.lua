@@ -9,6 +9,17 @@ local rating_reads = 0
 local lockdown = false
 local external_registers = 0
 local external_callback = nil
+local providerKind = arg and arg[1] or "table"
+
+local function MakeLibStub(lookup)
+    if providerKind == "function" then return lookup end
+    local stub = {}
+    function stub:GetLibrary(name, silent)
+        assert_equal("LibStub lookup receiver", self, stub)
+        return lookup(name, silent)
+    end
+    return setmetatable(stub, { __call = stub.GetLibrary })
+end
 
 local function reset_observed()
     sends = {}
@@ -77,11 +88,11 @@ local external_lib = {
     Request = function() end,
 }
 
-LibStub = function(name, silent)
+LibStub = MakeLibStub(function(name, silent)
     assert_equal("external library name", name, "LibKeystone")
     assert_equal("external library silent lookup", silent, true)
     return external_lib
-end
+end)
 
 ApplicantScoutDB = { enabled = true, debug = false }
 local external_harness = env.load_addon()
@@ -178,11 +189,11 @@ assert_equal("late-provider pending shim retry", #timers, 1)
 
 external_registers = 0
 external_callback = nil
-LibStub = function(name, silent)
+LibStub = MakeLibStub(function(name, silent)
     assert_equal("late external library name", name, "LibKeystone")
     assert_equal("late external library silent lookup", silent, true)
     return external_lib
-end
+end)
 lockdown = false
 shim_harness.FireEvent("ADDON_LOADED", "LateLibKeystone")
 assert_equal("late external callback registrations", external_registers, 1)
@@ -223,5 +234,31 @@ assert_equal("disabled shim response sends", #sends, 0)
 assert_equal("disabled shim response timers", #timers, 0)
 assert_equal("disabled shim owned-key reads", owned_key_reads, 0)
 assert_equal("disabled shim rating reads", rating_reads, 0)
+
+-- A missing or broken optional provider must leave the standalone path usable.
+local unavailableStubs = {
+    false,
+    42,
+    {},
+    { GetLibrary = true },
+    MakeLibStub(function() return nil end),
+    MakeLibStub(function() return false end),
+    MakeLibStub(function() return {} end),
+    MakeLibStub(function() return { Register = function() end } end),
+    MakeLibStub(function() error("optional provider lookup failed") end),
+}
+for _, stub in ipairs(unavailableStubs) do
+    LibStub = stub
+    ApplicantScoutDB = { enabled = true, debug = false }
+    reset_observed()
+    reset_timers()
+    local fallbackHarness = env.load_addon()
+    fallbackHarness.RequestLeaderKeystone(true)
+    assert_equal("unavailable provider checked request", #sends, 1)
+    reset_observed()
+    fallbackHarness.FireEvent("CHAT_MSG_ADDON", "LibKS", "R", "PARTY", "Friend-Realm")
+    assert_equal("unavailable provider shim response", #sends, 1)
+    assert_equal("unavailable provider shim payload", sends[1].payload, "17,503,3333")
+end
 
 print("ok libkeystone-provider-ownership")

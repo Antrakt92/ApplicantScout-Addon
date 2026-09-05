@@ -4261,14 +4261,14 @@ end
 local function _UnitItemLevelForRoster(unit, guid, isSelf)
     if not isSelf then
         if guid ~= "" then
-            local cachedIlvl = entryCreationKeyState.CachedRosterInspectItemLevel(guid)
-            if cachedIlvl > 0 then return cachedIlvl end
-
+            -- Gear can change without a new GUID or specialization event.
             local ilvl = entryCreationKeyState.ReadRosterInspectItemLevel(unit)
             if ilvl > 0 then
                 entryCreationKeyState.rosterInspectIlvlByGUID[guid] = ilvl
                 return ilvl
             end
+            local cachedIlvl = entryCreationKeyState.CachedRosterInspectItemLevel(guid)
+            if cachedIlvl > 0 then return cachedIlvl end
             _MaybeRequestRosterInspect(unit, guid, isSelf)
         end
         return 0
@@ -4323,8 +4323,17 @@ end
 
 entryCreationKeyState.GetLibKeystone = function()
     local libStub = _G and _G.LibStub
-    if type(libStub) == "function" then
-        local ok, lib = pcall(libStub, "LibKeystone", true)
+    if type(libStub) == "table" or type(libStub) == "function" then
+        local ok, lib = pcall(function()
+            -- LibStub exposes GetLibrary on a callable table in normal installs.
+            if type(libStub) == "table" then
+                if type(libStub.GetLibrary) == "function" then
+                    return libStub:GetLibrary("LibKeystone", true)
+                end
+                return nil
+            end
+            return libStub("LibKeystone", true)
+        end)
         if ok
            and type(lib) == "table"
            and type(lib.Register) == "function"
@@ -4590,8 +4599,14 @@ entryCreationKeyState.PlayerNamesMatch = function(leftName, rightName)
     local rightFull, rightShort = entryCreationKeyState.CanonicalPlayerName(rightName)
     if leftFull == "" or rightFull == "" then return false end
     if leftFull == rightFull then return true end
+    if leftShort ~= rightShort then return false end
     if not leftFull:find("-", 1, true) or not rightFull:find("-", 1, true) then
-        return leftShort ~= "" and leftShort == rightShort
+        -- Only WoW's local-realm alias may omit the realm. A same-name member
+        -- from another realm must not replace or clear the leader's keystone.
+        if type(Ambiguate) ~= "function" then return false end
+        local fullName = leftFull:find("-", 1, true) and leftFull or rightFull
+        local ok, normalized = pcall(Ambiguate, fullName, "none")
+        return ok and SafeStr(normalized, "") == leftShort
     end
     return false
 end
