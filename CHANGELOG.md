@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-## 0.9.14 - 05-Sep-2026 - Clearer key scouting
+## 0.9.15 - 05-Sep-2026 - Clearer key scouting
 
 ### Improved
 
-- Paired with ApplicantScout Companion `0.15.0`, with more accurate Mythic+
+- Paired with ApplicantScout Companion `0.15.1`, with more accurate Mythic+
   evidence scoring and clearer applicant details while keeping familiar colors.
 - Party item level now uses fresh readable equipment data, retaining the last
   known value when inspection data is temporarily unavailable.
