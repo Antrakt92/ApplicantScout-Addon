@@ -36,6 +36,9 @@ LUA_CHALLENGE_RESUME_RETRY_CHECK = (
 LUA_GAMEPLAY_WORLD_TRANSITION_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_gameplay_world_transition.lua"
 )
+LUA_CHALLENGE_WORLD_RESUME_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_challenge_world_resume.lua"
+)
 LUA_QR_OVERFLOW_ENVELOPE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_qr_overflow_envelope.lua"
 )
@@ -543,6 +546,19 @@ def test_gameplay_cancellation_does_not_consume_a_pre_capture_terminal_attempt()
 def test_challenge_end_recovery_is_bounded_and_new_start_cancels_it(pytestconfig):
     output = _run_lua_script(pytestconfig, LUA_CHALLENGE_RESUME_RETRY_CHECK).strip()
     assert output == "ok challenge-resume-retry bounded=4 stale-cancelled=1"
+
+
+@pytest.mark.parametrize("unavailable", ["nil", "error", "secret", "missing"])
+@pytest.mark.parametrize("outcome", ["ended", "unreadable", "active", "new-start"])
+def test_challenge_world_arrival_retries_late_api_without_waking_active_run(
+    pytestconfig, unavailable, outcome
+):
+    output = _run_lua_script(
+        pytestconfig, LUA_CHALLENGE_WORLD_RESUME_CHECK, unavailable, outcome
+    ).strip()
+    assert output == (
+        f"ok challenge-world-resume unavailable={unavailable} outcome={outcome}"
+    )
 
 
 @pytest.mark.parametrize("activity", ["challenge", "combat", "encounter"])

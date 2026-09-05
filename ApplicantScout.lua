@@ -2235,6 +2235,9 @@ entryCreationKeyState.SetQRLoadingScreenActive = function(active)
         end
         entryCreationKeyState.qrGameplayLoadingActive = false
         entryCreationKeyState.RefreshQRGameplaySuppression()
+        -- The new world's challenge API can settle after the loading overlay.
+        -- Dormancy has stopped the scanner, so this edge owns bounded recovery.
+        entryCreationKeyState.ScheduleChallengeDormancyResumeCheck()
     end)
 end
 

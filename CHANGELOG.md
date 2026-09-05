@@ -13,6 +13,8 @@
 
 ### Fixed
 
+- Resume scouting after a world transition when the active-key status is
+  temporarily unavailable, without enabling background work during a key.
 - Recognize standard LibStub libraries so an external LibKeystone provider is
   used correctly, including when it loads later.
 - A same-name player from another realm can no longer replace or clear the
@@ -22,6 +24,8 @@
 
 - The paired companion also improves first-run setup and preserves applicant
   state correctly through rapid listing or character changes.
+- Narrow applicant cards keep detail actions readable, and app-control
+  acknowledgments are handled reliably during Settings and update handoff.
 - APS1 payload compatibility and combat/Mythic+ background-work suppression
   are unchanged.
 
