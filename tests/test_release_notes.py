@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 
@@ -52,6 +53,42 @@ def test_release_notes_writer_normalizes_newlines(tmp_path: Path):
     ).encode()
 
 
+@pytest.mark.parametrize("with_older_release", [False, True])
+def test_release_notes_accept_promoted_changelog_without_unreleased(with_older_release):
+    changelog = _changelog().replace("## Unreleased\n\n- Future work.\n\n", "")
+    if not with_older_release:
+        changelog = changelog.split("## 1.2.2", 1)[0]
+
+    notes = extract_release_notes(changelog, "v1.2.3")
+
+    assert notes == (
+        "## 1.2.3 - 22-Jul-2026 - Current release\n\n"
+        "- Fixed the current release.\n"
+    )
+
+
+def test_release_notes_accept_empty_unreleased_section():
+    changelog = _changelog().replace("- Future work.\n\n", "")
+    assert extract_release_notes(changelog, "v1.2.3") == extract_release_notes(
+        _changelog(), "v1.2.3"
+    )
+
+
+def test_real_repository_changelog_produces_only_current_toc_release(tmp_path: Path):
+    root = Path(__file__).resolve().parents[1]
+    toc = (root / "ApplicantScout.toc").read_text(encoding="utf-8")
+    version = re.search(r"(?m)^## Version: ([0-9]+\.[0-9]+\.[0-9]+)$", toc)
+    assert version is not None
+    output = tmp_path / "release-notes.md"
+
+    write_release_notes(root / "CHANGELOG.md", output, f"v{version.group(1)}")
+
+    notes = output.read_text(encoding="utf-8")
+    assert notes.startswith(f"## {version.group(1)} - ")
+    assert len(re.findall(r"(?m)^## ", notes)) == 1
+    assert "Paired release with ApplicantScout Companion" in notes
+
+
 @pytest.mark.parametrize("tag", ["1.2.3", "v01.2.3", "v1.2.3-beta"])
 def test_release_notes_reject_noncanonical_tag(tag: str):
     with pytest.raises(ReleaseNotesError, match="exact vMAJOR"):
@@ -78,7 +115,31 @@ def test_release_notes_reject_noncanonical_tag(tag: str):
         (
             _changelog().replace("## Unreleased", "## Planned"),
             "v1.2.3",
-            "exactly one level-two Unreleased",
+            "every level-two section",
+        ),
+        (
+            _changelog() + "\n## Unreleased\n\n- More future work.\n",
+            "v1.2.3",
+            "at most one level-two Unreleased",
+        ),
+        (
+            _changelog().replace("## Unreleased\n\n- Future work.\n\n", "")
+            + "\n## Unreleased\n\n- Future work.\n",
+            "v1.2.3",
+            "Unreleased must be the first",
+        ),
+        ("# Changelog\n", "v1.2.3", "no released version"),
+        ("# Changelog\n\n## Unreleased\n", "v1.2.3", "no released version"),
+        (
+            _changelog().replace("## Unreleased\n\n- Future work.\n\n", ""),
+            "v1.2.2",
+            "top release is 1.2.3",
+        ),
+        (
+            _changelog().replace("## Unreleased\n\n- Future work.\n\n", "")
+            + "\n## 1.2.3 - 20-Jul-2026 - Duplicate\n\n- Copy.\n",
+            "v1.2.3",
+            "exactly one release section",
         ),
         (
             _changelog().replace(

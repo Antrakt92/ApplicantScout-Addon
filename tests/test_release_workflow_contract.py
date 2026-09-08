@@ -700,17 +700,23 @@ def test_release_and_recovery_share_max_non_cancelling_concurrency_queue():
 
 def test_release_and_recovery_publish_only_generated_exact_version_notes():
     cases = (
-        (_workflow_source(), "release", "$env:GITHUB_REF_NAME"),
-        (_recovery_workflow_source(), "recover-github-release", "$env:RELEASE_TAG"),
+        (
+            _workflow_source(), "release", "$env:GITHUB_REF_NAME",
+            "scripts/create_release_notes.py",
+        ),
+        (
+            _recovery_workflow_source(), "recover-github-release", "$env:RELEASE_TAG",
+            ".release-tools/scripts/create_release_notes.py",
+        ),
     )
 
-    for workflow, job_name, tag_expression in cases:
+    for workflow, job_name, tag_expression, notes_tool in cases:
         publish = _step_block(
             _job_block(workflow, job_name),
             "Publish verified immutable GitHub release",
         )
         assert "$ReleaseNotesPath = Join-Path $env:RUNNER_TEMP" in publish
-        assert "python3 scripts/create_release_notes.py" in publish
+        assert f"python3 {notes_tool}" in publish
         assert "--changelog CHANGELOG.md" in publish
         assert "--output $ReleaseNotesPath" in publish
         assert f"--tag {tag_expression}" in publish
@@ -750,6 +756,34 @@ def test_preupload_recovery_is_manual_exact_run_only_and_serialized():
         r"(?m)^    permissions:\n      actions: read\n      contents: write\s*$",
         recovery,
     )
+
+
+def test_recovery_repairs_tooling_without_replacing_immutable_release_inputs():
+    recovery = _job_block(_recovery_workflow_source(), "recover-github-release")
+    tooling = _step_block(recovery, "Checkout pinned release note tooling")
+    publish = _step_block(recovery, "Publish verified immutable GitHub release")
+    assert "ref: ${{ github.workflow_sha }}" in tooling
+    assert "path: .release-tools" in tooling
+    assert "persist-credentials: false" in tooling
+    assert "sparse-checkout: scripts/create_release_notes.py" in tooling
+    assert "sparse-checkout-cone-mode: false" in tooling
+    assert "python3 .release-tools/scripts/create_release_notes.py" in publish
+    assert "--changelog CHANGELOG.md" in publish
+    assert "--changelog .release-tools/" not in publish
+    assert "--tag $env:RELEASE_TAG" in publish
+    assert recovery.index("Checkout pinned release note tooling") < recovery.index(
+        "Publish verified immutable GitHub release"
+    )
+
+
+def test_recovery_marketplace_rerun_stops_before_checkout_and_upload():
+    marketplace = _job_block(_recovery_workflow_source(), "marketplace-release")
+    guard = _step_block(marketplace, "Reject ambiguous marketplace rerun")
+    assert "if: ${{ github.run_attempt != 1 }}" in guard
+    assert "exit 1" in guard
+    assert marketplace.index("Reject ambiguous marketplace rerun") < marketplace.index(
+        "Checkout exact immutable release tag"
+    ) < marketplace.index("Publish exact tag to marketplaces")
 
 
 def test_auto_recovery_dispatcher_is_bounded_fail_closed_and_writer_free():
@@ -984,7 +1018,7 @@ def test_preupload_recovery_pins_external_actions_to_commit_shas():
 
     assert Counter(action for action, _ in action_refs) == Counter(
         {
-            "actions/checkout": 4,
+            "actions/checkout": 5,
             "actions/setup-python": 2,
             "BigWigsMods/packager": 1,
             "actions/upload-artifact": 1,

@@ -275,6 +275,16 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Checkout pinned release note tooling
+        # WHY: repair release tooling without changing the immutable tag or its changelog.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-tools
+          persist-credentials: false
+          sparse-checkout: scripts/create_release_notes.py
+          sparse-checkout-cone-mode: false
+
       - name: Publish verified immutable GitHub release
         shell: pwsh
         env:
@@ -320,7 +330,7 @@ jobs:
           }
 
           $ReleaseNotesPath = Join-Path $env:RUNNER_TEMP "applicantscout-addon-release-notes.md"
-          python3 scripts/create_release_notes.py `
+          python3 .release-tools/scripts/create_release_notes.py `
             --changelog CHANGELOG.md `
             --output $ReleaseNotesPath `
             --tag $env:RELEASE_TAG
@@ -428,6 +438,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Reject ambiguous marketplace rerun
+        if: ${{ github.run_attempt != 1 }}
+        run: |
+          echo "::error::Marketplace recovery reruns are blocked because prior upload outcomes may be partial or ambiguous."
+          exit 1
+
       - name: Checkout exact immutable release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

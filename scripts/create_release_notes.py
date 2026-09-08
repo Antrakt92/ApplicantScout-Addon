@@ -35,21 +35,23 @@ def extract_release_notes(changelog: str, tag: str) -> str:
     unreleased = [
         heading for heading in headings if heading.group("title") == "Unreleased"
     ]
-    if len(unreleased) != 1:
+    if len(unreleased) > 1:
         raise ReleaseNotesError(
-            "CHANGELOG must contain exactly one level-two Unreleased section"
+            "CHANGELOG may contain at most one level-two Unreleased section"
         )
-    if not headings or headings[0] is not unreleased[0]:
+    if unreleased and headings[0] is not unreleased[0]:
         raise ReleaseNotesError(
             "Unreleased must be the first level-two CHANGELOG section"
         )
 
     releases: list[tuple[re.Match[str], re.Match[str]]] = []
-    for heading in headings[1:]:
+    # Release preparation may promote Unreleased directly into the dated entry.
+    # When retained, future work stays excluded from the exact release copy.
+    for heading in headings[1 if unreleased else 0 :]:
         release = _RELEASE_HEADING.fullmatch(heading.group("title"))
         if release is None:
             raise ReleaseNotesError(
-                "every level-two section after Unreleased must be a versioned release"
+                "every level-two section except optional Unreleased must be a versioned release"
             )
         releases.append((heading, release))
 
@@ -68,7 +70,7 @@ def extract_release_notes(changelog: str, tag: str) -> str:
             f"CHANGELOG must contain exactly one release section for {target_version}"
         )
 
-    end = headings[2].start() if len(headings) > 2 else len(normalized)
+    end = releases[1][0].start() if len(releases) > 1 else len(normalized)
     section = normalized[current_heading.start() : end].strip()
     content_lines = section.splitlines()[1:]
     visible_copy = re.sub(
