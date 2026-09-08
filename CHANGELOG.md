@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.1 - 09-Sep-2026 - Compact scouting and reliable updates
+
+Paired release with ApplicantScout Companion `0.17.0`.
+
+- The paired companion uses compact numeric results, neutral Fit estimates,
+  listing-specific parse sorting and an adaptive, scrollable detail card.
+- Raid results match the applying specialization, and displayed percentiles
+  stay consistent with their WCL colours.
+- Refresh overlay screenshots and descriptions for the compact layout.
+
 ## 0.10.0 - 08-Sep-2026 - Clearer scouting and setup
 
 Paired release with ApplicantScout Companion `0.16.0`.

@@ -76,17 +76,17 @@ folder name for WoW.
 - RaiderIO current score, optional main-score context, and local RaiderIO
   dungeon/raid evidence when the RaiderIO addon data is available.
 - Role, item level, grouped-applicant packages, and per-player rows.
-- A separate Fit column for the target key or raid, alongside coloured Normal,
-  Heroic, Mythic, and M+ WCL results with a visible metric legend.
+- A neutral Fit estimate such as **~65** for the target key or raid, alongside
+  coloured Normal, Heroic, Mythic, and M+ WCL results for the applying specialization.
+  Compact headers and tooltips explain the values without filling the table with text.
 - Target-key fit, dungeon history, and low-evidence markers for Mythic+.
 - Current party/raid roster context after invites or after joining a group.
 - Optional playstyle and Auto Hi controls for in-game quality-of-life.
 
 Mythic+ Fit estimates how the available evidence matches the target key; it is
 not a success probability or a Warcraft Logs percentile. The companion combines
-named RaiderIO and WCL evidence once per dungeon and shows key experience
-separately from evidence strength and dungeon coverage. Existing percentile
-colours remain the visual scale.
+named RaiderIO and WCL evidence once per dungeon. Hover Fit for evidence strength,
+dungeon coverage and limitations. WCL results keep their percentile colours.
 M+ WCL values measure damage for every role, including tanks and healers; they
 do not measure healing, survival, or utility.
 
