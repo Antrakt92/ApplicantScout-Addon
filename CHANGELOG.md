@@ -1,11 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 - 08-Sep-2026 - Clearer scouting and setup
+
+Paired release with ApplicantScout Companion `0.16.0`.
+
+### Improved
+
+- The paired companion keeps raid and Mythic+ parses colored in every context
+  and shows target Fit separately from raw WCL results.
+- Clear difficulty names and visible metric legends explain best/median
+  results, boss kills, item-level comparisons and limited dungeon samples.
 
 - Explain the required Windows companion on first use, with a selectable
   download link. Reopen the guide with `/apscout setup`.
 - Keep the guide out of combat, active keys, encounters and loading screens.
 - Clarify setup and downloads in the paired addon and companion documentation.
+
+### Fixed
+
 - Restore screenshot settings reliably when the client delays or rejects a
   restoration attempt.
 

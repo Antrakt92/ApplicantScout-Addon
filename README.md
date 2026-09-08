@@ -76,7 +76,8 @@ folder name for WoW.
 - RaiderIO current score, optional main-score context, and local RaiderIO
   dungeon/raid evidence when the RaiderIO addon data is available.
 - Role, item level, grouped-applicant packages, and per-player rows.
-- Raid-fit cells for Normal/Heroic/Mythic raid listings.
+- A separate Fit column for the target key or raid, alongside coloured Normal,
+  Heroic, Mythic, and M+ WCL results with a visible metric legend.
 - Target-key fit, dungeon history, and low-evidence markers for Mythic+.
 - Current party/raid roster context after invites or after joining a group.
 - Optional playstyle and Auto Hi controls for in-game quality-of-life.
