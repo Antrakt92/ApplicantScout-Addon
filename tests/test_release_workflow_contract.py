@@ -2077,12 +2077,12 @@ def test_readme_uses_local_anonymized_public_overlay_media():
             b"\xff\xd8\xff"
         )
     assert (
-        'alt="ApplicantScout raid applicant overlay with Warcraft Logs, RaiderIO, '
-        'raid progress, and role context" width="45%"'
+        'alt="Windows companion: raid applicants with Warcraft Logs performance '
+        'and raid progress" width="45%"'
     ) in readme
     assert (
-        'alt="ApplicantScout Mythic Plus applicant overlay with key fit, WCL '
-        'percentiles, and RaiderIO score context" width="45%"'
+        'alt="Windows companion: Mythic+ applicants with key fit, Warcraft Logs '
+        'damage percentiles, and RaiderIO scores" width="45%"'
     ) in readme
 
 
@@ -2134,7 +2134,8 @@ def test_readme_slash_command_blocks_match_lua_help_and_companion_readme(
     pytestconfig,
 ):
     expected_lines = _lua_print_help_command_lines(_read_repo_text("ApplicantScout.lua"))
-    assert len(expected_lines) == 13
+    assert len(expected_lines) == 14
+    assert "/apscout setup          show companion download and setup" in expected_lines
     assert "/apscout toggle         flip enabled state" in expected_lines
     assert "/apscout taintcheck     probe C_LFGList field secret-tagging" in expected_lines
 

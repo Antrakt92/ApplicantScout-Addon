@@ -7,51 +7,48 @@
   <img alt="Warcraft Logs plus RaiderIO" src="https://img.shields.io/badge/WCL%20%2B%20RaiderIO-overlay-00b8ff?style=for-the-badge">
 </p>
 
-> Pick applicants faster. Know the group you just joined.
+**Check applicants before you invite.**
 
-ApplicantScout is the in-game half of a Warcraft Logs + RaiderIO overlay for
-WoW Group Finder. It captures applicant and current party/raid roster snapshots
-from Blizzard's UI, sends them through normal WoW screenshots, and pairs with
-the Windows companion overlay for the actual WCL/RaiderIO table.
+See Warcraft Logs performance, RaiderIO scores, and dungeon or raid experience
+beside Group Finder. Compare applicants in one table, inspect players who
+applied together, or switch to Party view to review your current group.
 
-It is built for two moments that usually cost time: choosing who to invite while
-your listing fills, and understanding a group you just joined before the key
-starts or the first raid pull happens.
+**You need both this WoW addon and the free ApplicantScout Companion for
+Windows.** The addon collects group information. The Windows app displays the
+overlay shown below.
+
+**[Get the Windows companion](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest)**
+· **[Follow the setup guide](https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/GETTING_STARTED.md)**
+
+On the download page, choose `ApplicantScoutCompanionSetup-*.exe` under
+**Assets**. Setup also requires a free Warcraft Logs account and API client;
+the guide walks through creating one. You do not need your Blizzard password.
 
 <p align="center">
-  <img src="docs/visual/applicantscout-curseforge-raid-party-overlay.jpg" alt="ApplicantScout raid applicant overlay with Warcraft Logs, RaiderIO, raid progress, and role context" width="45%">
-  <img src="docs/visual/applicantscout-curseforge-mplus-overlay.jpg" alt="ApplicantScout Mythic Plus applicant overlay with key fit, WCL percentiles, and RaiderIO score context" width="45%">
+  <img src="docs/visual/applicantscout-curseforge-raid-party-overlay.jpg" alt="Windows companion: raid applicants with Warcraft Logs performance and raid progress" width="45%">
+  <img src="docs/visual/applicantscout-curseforge-mplus-overlay.jpg" alt="Windows companion: Mythic+ applicants with key fit, Warcraft Logs damage percentiles, and RaiderIO scores" width="45%">
 </p>
 
-> [!IMPORTANT]
-> ApplicantScout is a two-part tool. Installing only the WoW addon will not show
-> Warcraft Logs or RaiderIO context. You need the addon plus
-> [ApplicantScout Companion](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest).
+*The Windows companion displays these tables beside WoW. Installing the addon
+alone does not display them.*
 
-## Why People Install It
+## What You Can Check
 
-### When you host
+- **Applicants:** compare Warcraft Logs performance, RaiderIO score, role, and
+  item level without opening a separate profile for every player.
+- **Grouped applications:** see each member's results as well as a combined
+  Fit estimate for the group applying together.
+- **Your current party or raid:** review the roster after inviting players or
+  joining someone else's group.
+- **Relevant experience:** see dungeon history for Mythic+ and progress for
+  raid listings where the data is available.
 
-- See applicant evidence beside the invite decision instead of rebuilding a
-  mini spreadsheet from Warcraft Logs, RaiderIO, and the default LFG list.
-- Keep grouped applicants visible as a package while still seeing each member's
-  own WCL/RaiderIO signal.
-- Keep raid evidence primary for raid listings and M+ evidence primary for
-  Mythic+ listings.
-- Treat missing logs as missing evidence, not as secretly good or secretly bad.
-- Use familiar Warcraft Logs-style colors for faster scanning.
+Missing logs are marked as missing. ApplicantScout does not auto-invite players
+or automate gameplay; you choose whom to invite.
 
-### When you join
-
-- Open Party view and get roster context a few moments after you join someone
-  else's group.
-- See score spread, raid progress, dungeon context, missing evidence, and role
-  mix before the run really starts.
-- Use leader-key calibration from ApplicantScout's built-in LibKS-compatible
-  shim, without requiring BigWigs or another key-tracker addon.
-
-ApplicantScout is not an auto-invite bot and does not automate gameplay. It is
-a decision surface for humans.
+The companion offers optional usage statistics, off by default. Reports contain
+a random installation ID, version and daily milestones, not names, screenshots
+or credentials. [Details and how to turn sharing off](https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/PRIVACY.md).
 
 ## Quick Setup
 
@@ -62,6 +59,8 @@ a decision surface for humans.
    Use `ApplicantScoutCompanionSetup-*.exe`; the portable ZIP is mainly for
    manual/dev use.
 3. Launch the companion and enter your Warcraft Logs Client ID/Secret.
+   The [setup guide](https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/GETTING_STARTED.md)
+   explains where to create these and how to use **Test WCL**.
 4. Set the active WoW `_retail_\Screenshots` folder in companion Settings.
 5. Reload WoW, then host a Mythic+ or raid listing, or join a group and use
    Party view to review the current roster.
@@ -99,7 +98,7 @@ ApplicantScout keeps the in-game addon small and uses public UI/screenshot APIs:
    roster.
 2. It renders compact QR snapshots and triggers normal WoW screenshots.
 3. The companion watches the configured Screenshots folder, decodes
-   ApplicantScout `APS1` payloads, fetches WCL data, reads optional local
+   ApplicantScout snapshots, fetches WCL data, reads optional local
    RaiderIO data, and updates the overlay.
 4. The QR frame appears only during the screenshot capture window so it stays
    out of the way between snapshots.
@@ -160,6 +159,7 @@ through the slash commands below.
 /apscout on | off       enable/disable capture
 /apscout toggle         flip enabled state
 /apscout config         open/close settings panel
+/apscout setup          show companion download and setup
 /apscout status         show current state + QR diagnostics
 /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle
 /apscout reset          clear transport cache, queue fresh snapshot
