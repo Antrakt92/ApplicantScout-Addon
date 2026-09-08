@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Explain the required Windows companion on first use, with a selectable
+  download link. Reopen the guide with `/apscout setup`.
+- Keep the guide out of combat, active keys, encounters and loading screens.
+- Clarify setup and downloads in the paired addon and companion documentation.
+
 ## 0.9.16 - 08-Sep-2026 - Reliable applicant snapshots
 
 Paired release with ApplicantScout Companion `0.15.2`.

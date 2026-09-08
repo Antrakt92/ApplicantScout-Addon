@@ -49,6 +49,7 @@ local AUTO_MPLUS_PLAYSTYLE_ALIASES = {
 local DB_DEFAULTS = {
     enabled = true,
     debug = false,
+    setupDismissed = false,
     autoMPlusPlaystyle = AUTO_MPLUS_PLAYSTYLE_DEFAULT,
     -- Empty string disables auto greeting. User text is normalized on load and
     -- when edited; the addon never sends a default chat message silently.
@@ -809,6 +810,8 @@ InitDB = function()
         entryCreationKeyState.NormalizeAutoHiMessage(ApplicantScoutDB.autoHiMessage)
     ApplicantScoutDB.enabled =
         entryCreationKeyState.NormalizeSavedBoolean(ApplicantScoutDB.enabled)
+    ApplicantScoutDB.setupDismissed =
+        entryCreationKeyState.NormalizeSavedBoolean(ApplicantScoutDB.setupDismissed)
     ApplicantScoutDB.debug =
         entryCreationKeyState.NormalizeSavedBoolean(ApplicantScoutDB.debug)
     ApplicantScoutDB.autoHiGreetNewPartyMembers =
@@ -8505,6 +8508,7 @@ local function PrintHelp()
     print("  /apscout on | off       enable/disable capture")
     print("  /apscout toggle         flip enabled state")
     print("  /apscout config         open/close settings panel")
+    print("  /apscout setup          show companion download and setup")
     print("  /apscout status         show current state + QR diagnostics")
     print("  /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle")
     print("  /apscout reset          clear transport cache, queue fresh snapshot")
@@ -8550,6 +8554,8 @@ SlashCmdList.APSCOUT = function(msg)
         _SetAutoMPlusPlaystyle(AUTO_MPLUS_PLAYSTYLE_DISABLED)
     elseif msg == "config" or msg == "settings" then
         entryCreationKeyState.ToggleSettingsPanel()
+    elseif msg == "setup" then
+        entryCreationKeyState.ShowCompanionSetup()
     elseif msg == "status" then
         entryCreationKeyState.PrintTroubleshootingStatus()
     elseif msg == "taintcheck" then
@@ -8638,4 +8644,165 @@ SlashCmdList.APSCOUT = function(msg)
     else
         PrintHelp()
     end
+end
+
+
+-- Setup is account-wide and independent of transport: QR has no return channel
+-- that could establish whether the Windows app is installed or running.
+do
+    local downloadURL = "https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest"
+    local panel, urlBox
+    local requested, ready, loading, queued = false, false, true, false
+    local paused = {}
+
+    local function hide()
+        if panel then
+            urlBox:ClearFocus()
+            panel:Hide()
+        end
+    end
+
+    local function dismiss()
+        ApplicantScoutDB.setupDismissed = true
+        requested = false
+        hide()
+    end
+
+    local function createPanel()
+        panel = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        panel:SetSize(620, 368)
+        panel:SetPoint("CENTER")
+        panel:SetFrameStrata("DIALOG")
+        panel:SetClampedToScreen(true)
+        panel:EnableMouse(true)
+        panel:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        panel:SetBackdropColor(0.06, 0.07, 0.09, 0.98)
+        panel:SetBackdropBorderColor(0.35, 0.45, 0.5, 1)
+        local function label(text, y, template, height)
+            local line = panel:CreateFontString(nil, "OVERLAY", template)
+            line:SetPoint("TOPLEFT", 24, y)
+            line:SetSize(572, height)
+            line:SetJustifyH("LEFT")
+            line:SetJustifyV("TOP")
+            line:SetText(text)
+            return line
+        end
+        label("ApplicantScout: set up the companion", -24, "GameFontNormalLarge", 26)
+        label("This addon needs the free ApplicantScout Companion for Windows. "
+            .. "The Windows app shows Warcraft Logs and RaiderIO beside Group Finder.",
+            -64, "GameFontHighlight", 48)
+        label("1. Copy the link below into your browser and download the Windows installer.\n"
+            .. "2. Open the app. Follow its setup guide for Warcraft Logs and your WoW Screenshots folder.\n"
+            .. "3. Keep the app running, then open a listing or join a group in WoW.",
+            -118, "GameFontHighlight", 92)
+        urlBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+        urlBox:SetSize(560, 28)
+        urlBox:SetPoint("TOPLEFT", 30, -222)
+        urlBox:SetFontObject("GameFontHighlightSmall")
+        urlBox:SetAutoFocus(false)
+        urlBox:SetMaxLetters(256)
+        urlBox:SetText(downloadURL)
+        urlBox:SetCursorPosition(0)
+        urlBox:SetScript("OnEscapePressed", dismiss)
+        urlBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+        urlBox:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+        -- Keep the copied address trustworthy after an accidental keypress/paste.
+        urlBox:SetScript("OnTextChanged", function(self, userInput)
+            if userInput then
+                self:SetText(downloadURL)
+                self:HighlightText()
+            end
+        end)
+        label("Select the link, then press Ctrl+C. Open this guide again with /apscout setup.",
+            -260, "GameFontHighlightSmall", 32)
+        local select = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+        select:SetSize(140, 28)
+        select:SetPoint("BOTTOMLEFT", 24, 24)
+        select:SetText("Select download link")
+        select:SetScript("OnClick", function()
+            urlBox:SetFocus()
+            urlBox:HighlightText()
+        end)
+        local close = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+        close:SetSize(110, 28)
+        close:SetPoint("BOTTOMRIGHT", -24, 24)
+        close:SetText("Close")
+        close:SetScript("OnClick", dismiss)
+        local cross = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
+        cross:SetPoint("TOPRIGHT", -2, -2)
+        cross:SetScript("OnClick", dismiss)
+        panel:Hide()
+    end
+
+    local function tryShow()
+        queued = false
+        if not ready or loading or next(paused)
+           or entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) ~= false
+           or entryCreationKeyState.qrGameplaySuppressed then
+            hide()
+            return
+        end
+        if not requested and (ApplicantScoutDB.setupDismissed
+                              or not ApplicantScoutDB.enabled) then return end
+        if not panel then createPanel() end
+        panel:Show()
+    end
+
+    local function queue()
+        if queued then return end
+        queued = true
+        -- Let the gameplay event handler update its combat/M+/encounter gates.
+        C_Timer.After(0.2, tryShow)
+    end
+
+    entryCreationKeyState.ShowCompanionSetup = function()
+        requested = true
+        queue()
+        if loading or next(paused)
+           or entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) ~= false
+           or entryCreationKeyState.qrGameplaySuppressed then
+            APSPrint("Setup will open when loading, combat or the current encounter/key ends.")
+        end
+    end
+
+    local watcher = CreateFrame("Frame")
+    local starts = {
+        PLAYER_REGEN_DISABLED = "combat", ENCOUNTER_START = "encounter",
+        CHALLENGE_MODE_START = "challenge",
+    }
+    local stops = {
+        PLAYER_REGEN_ENABLED = "combat", ENCOUNTER_END = "encounter",
+        CHALLENGE_MODE_COMPLETED = "challenge", CHALLENGE_MODE_RESET = "challenge",
+    }
+    for _, event in ipairs({ "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD",
+        "PLAYER_LEAVING_WORLD", "LOADING_SCREEN_ENABLED", "LOADING_SCREEN_DISABLED",
+        "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "ENCOUNTER_START",
+        "ENCOUNTER_END", "CHALLENGE_MODE_START", "CHALLENGE_MODE_COMPLETED",
+        "CHALLENGE_MODE_RESET" }) do watcher:RegisterEvent(event) end
+    watcher:SetScript("OnEvent", function(_, event)
+        if event == "PLAYER_LOGIN" then
+            InitDB()
+            ready = true
+        elseif event == "PLAYER_LEAVING_WORLD" or event == "LOADING_SCREEN_ENABLED" then
+            loading = true
+            hide()
+        elseif event == "PLAYER_ENTERING_WORLD" then
+            -- World transitions clear stale event-only gates; the transport's
+            -- reconciled gameplay state still prevents a combat/key popup.
+            paused = {}
+        elseif event == "LOADING_SCREEN_DISABLED" then
+            loading = false
+        elseif starts[event] then
+            paused[starts[event]] = true
+            hide()
+        elseif stops[event] then
+            paused[stops[event]] = nil
+        end
+        queue()
+    end)
 end
