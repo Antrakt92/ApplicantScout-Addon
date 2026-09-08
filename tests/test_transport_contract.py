@@ -4703,7 +4703,7 @@ def test_disable_discards_manual_force_queued_behind_physical_result(pytestconfi
     )
 
 
-@pytest.mark.parametrize("mode", ["idle", "active", "logout"])
+@pytest.mark.parametrize("mode", ["idle", "active", "logout", "restore-failure"])
 def test_screenshot_cvar_recovery_and_logout_lease_cleanup_in_lua51(
     pytestconfig, mode
 ):

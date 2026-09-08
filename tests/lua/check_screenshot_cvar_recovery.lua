@@ -1,6 +1,6 @@
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 local mode = arg and arg[1] or ""
-assert(mode == "idle" or mode == "active" or mode == "logout",
+assert(mode == "idle" or mode == "active" or mode == "logout" or mode == "restore-failure",
     "unsupported recovery mode")
 
 local cvars = {
@@ -30,6 +30,58 @@ ApplicantScoutDB = {
 }
 
 local harness = env.load_addon()
+if mode == "restore-failure" then
+    local normalSetCVar = SetCVar
+    local normalGetCVar = GetCVar
+    for _, failedName in ipairs({ "screenshotQuality", "screenshotFormat" }) do
+        for _, failure in ipairs({ "ignored-write", "write-error", "read-error", "nil-read",
+            "malformed-read", "boolean-read", "table-read", "fractional-read", "nonfinite-read" }) do
+            cvars.screenshotQuality = "8"
+            cvars.screenshotFormat = "jpg"
+            ApplicantScoutDB.priorScreenshotQuality = 3
+            ApplicantScoutDB.priorScreenshotFormat = "png"
+            SetCVar = function(name, value)
+                if name == failedName and (failure == "ignored-write" or failure == "write-error") then
+                    if failure == "write-error" then error("CVar temporarily unavailable") end
+                    return
+                end
+                normalSetCVar(name, value)
+            end
+            GetCVar = function(name)
+                if name == failedName and failure == "read-error" then
+                    error("CVar temporarily unavailable")
+                end
+                if name == failedName and failure == "nil-read" then return nil end
+                if name == failedName and failure == "malformed-read" then return "unavailable" end
+                if name == failedName and failure == "boolean-read" then return false end
+                if name == failedName and failure == "table-read" then return {} end
+                if name == failedName and failure == "fractional-read" then return "3.5" end
+                if name == failedName and failure == "nonfinite-read" then return math.huge end
+                return normalGetCVar(name)
+            end
+            local ok = pcall(harness.ReleaseScreenshotCVarLease, 0, 0)
+            assert(ok, "one failed CVar restoration interrupted independent cleanup")
+            local failedStash = failedName == "screenshotQuality"
+                and "priorScreenshotQuality" or "priorScreenshotFormat"
+            local otherStash = failedName == "screenshotQuality"
+                and "priorScreenshotFormat" or "priorScreenshotQuality"
+            assert(ApplicantScoutDB[failedStash] ~= nil,
+                "failed restore discarded the only persisted pre-capture value")
+            assert(ApplicantScoutDB[otherStash] == nil,
+                "failed restore blocked the other screenshot CVar")
+            SetCVar = normalSetCVar
+            GetCVar = normalGetCVar
+            harness.ReleaseScreenshotCVarLease(0, 0)
+            assert(cvars.screenshotQuality == "3" and cvars.screenshotFormat == "png",
+                "later recovery did not restore the original screenshot preferences")
+            assert(ApplicantScoutDB.priorScreenshotQuality == nil
+                and ApplicantScoutDB.priorScreenshotFormat == nil,
+                "successful recovery did not retire both persisted values")
+        end
+    end
+    io.write("ok screenshot-cvar-recovery mode=" .. mode .. "\n")
+    return
+end
 if mode == "logout" then
     UIParent.GetWidth = function() return 1280 end
     UIParent.GetHeight = function() return 1080 end

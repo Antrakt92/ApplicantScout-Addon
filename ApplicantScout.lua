@@ -2661,45 +2661,67 @@ local function RestoreScreenshotCVars(quiet)
     if not (SetCVar and GetCVar) then return end
     if not ApplicantScoutDB then return end
 
+    -- Keep the persisted value until readback confirms restoration. A failed
+    -- read/write must not prevent the other CVar from recovering independently.
+    local function RestoreOwnedValue(name, prior, forcedValue)
+        local ok, restored = pcall(function()
+            local numeric = type(prior) == "number"
+            local function ReadValue()
+                local value = GetCVar(name)
+                if numeric then
+                    value = SafeNumber(value, -1)
+                    if value >= 1 and value <= 10 and value == math.floor(value) then
+                        return value
+                    end
+                else
+                    value = SafeEnumKey(value, "")
+                    if type(value) ~= "string" then return nil end
+                    value = value:lower()
+                    if value == "jpg" or value == "jpeg" or value == "png" or value == "tga" then
+                        return value
+                    end
+                end
+                return nil
+            end
+            local current = ReadValue()
+            if current == nil then return false end
+            if current ~= forcedValue then
+                if APSPrint and not quiet then
+                    APSPrint("kept " .. name .. "=" .. tostring(current) ..
+                             " (changed after ApplicantScout forced " .. forcedValue .. ")")
+                end
+                return true
+            end
+            SetCVar(name, tostring(prior))
+            if ReadValue() ~= prior then return false end
+            if APSPrint and not quiet then
+                APSPrint("restored " .. name .. "=" .. prior .. " (pre-ApplicantScout value)")
+            end
+            return true
+        end)
+        return ok and restored
+    end
+
     if ApplicantScoutDB.priorScreenshotQuality ~= nil then
         local prior = SafeNumber(ApplicantScoutDB.priorScreenshotQuality, -1)
-        local currentQuality = tonumber(GetCVar("screenshotQuality")) or 0
-        if prior >= 1 and prior <= 10 and prior == math.floor(prior) then
-            if currentQuality == 8 then
-                SetCVar("screenshotQuality", tostring(prior))
-                if APSPrint and not quiet then
-                    APSPrint("restored screenshotQuality=" .. prior .. " (pre-ApplicantScout value)")
-                end
-            elseif APSPrint and not quiet then
-                APSPrint("kept screenshotQuality=" .. currentQuality ..
-                         " (changed after ApplicantScout forced 8)")
-            end
+        local valid = prior >= 1 and prior <= 10 and prior == math.floor(prior)
+        if not valid or RestoreOwnedValue("screenshotQuality", prior, 8) then
+            ApplicantScoutDB.priorScreenshotQuality = nil
         end
-        ApplicantScoutDB.priorScreenshotQuality = nil
     end
 
     if ApplicantScoutDB.priorScreenshotFormat ~= nil then
         local rawPriorFormat = ApplicantScoutDB.priorScreenshotFormat
         local priorFormat = type(rawPriorFormat) == "string"
             and rawPriorFormat:lower() or ""
-        local currentFormat = tostring(GetCVar("screenshotFormat") or "")
         local validPriorFormat = priorFormat == "jpg"
             or priorFormat == "jpeg"
             or priorFormat == "png"
             or priorFormat == "tga"
-        if validPriorFormat then
-            if currentFormat:lower() == "jpg" then
-                SetCVar("screenshotFormat", priorFormat)
-                if APSPrint and not quiet then
-                    APSPrint("restored screenshotFormat=" .. priorFormat ..
-                             " (pre-ApplicantScout value)")
-                end
-            elseif APSPrint and not quiet then
-                APSPrint("kept screenshotFormat=" .. currentFormat ..
-                         " (changed after ApplicantScout forced jpg)")
-            end
+        if not validPriorFormat
+           or RestoreOwnedValue("screenshotFormat", priorFormat, "jpg") then
+            ApplicantScoutDB.priorScreenshotFormat = nil
         end
-        ApplicantScoutDB.priorScreenshotFormat = nil
     end
 end
 
