@@ -1,11 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.9.16 - 08-Sep-2026 - Reliable applicant snapshots
+
+Paired release with ApplicantScout Companion `0.15.2`.
+
+### Fixed
 
 - Preserve applicant data while Group Finder temporarily withholds application
   status, then resume normal updates when it becomes readable.
 - Prevent invalid item levels and specialization IDs from wrapping into large
   values in applicant snapshots.
+- The paired companion safely handles malformed cached data and failed file
+  writes, and shows the raid evidence actually used by its Fit calculation.
 
 ## 0.9.15 - 05-Sep-2026 - Clearer key scouting
 
