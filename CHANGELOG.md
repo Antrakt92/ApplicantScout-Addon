@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Preserve applicant data while Group Finder temporarily withholds application
+  status, then resume normal updates when it becomes readable.
+- Prevent invalid item levels and specialization IDs from wrapping into large
+  values in applicant snapshots.
+
 ## 0.9.15 - 05-Sep-2026 - Clearer key scouting
 
 ### Improved

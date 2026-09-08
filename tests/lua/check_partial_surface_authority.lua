@@ -80,6 +80,52 @@ local dead = assert(harness.BuildPayload(entry, { 42 }, false))
 assert(wire_version(dead) == 0x09, "dead-status omission changed wire version")
 assert(flags(dead) == 0, "dead-status omission must remain authoritative")
 
+local secretStatus = {}
+local originalSecretProbe = issecretvalue
+issecretvalue = function(value)
+    return value == secretStatus or originalSecretProbe(value)
+end
+for _, statusCase in ipairs({ {}, { "" }, { false }, { secretStatus }, { 42 } }) do
+    harness.SetApplicantTransportAdapters(
+        function(rawID)
+            return rawID, {
+                applicantID = rawID,
+                applicationStatus = statusCase[1],
+                numMembers = 1,
+            }, rawID
+        end,
+        function()
+            return true, "UnknownStatus-Realm", "MAGE", 700, "DAMAGER", 2500, 63
+        end
+    )
+    local unknown = assert(harness.BuildPayload(entry, { 42 }, false))
+    assert(wire_version(unknown) == 0x0B and flags(unknown) == 0x08,
+        "unreadable applicant status was published as authoritative")
+    assert(not unknown:find("UnknownStatus-Realm", 1, true),
+        "an unreadable status was interpreted as an active applicant")
+end
+issecretvalue = originalSecretProbe
+
+-- Preserve both the legacy API spelling and forward-compatible status strings.
+harness.SetApplicantTransportAdapters(
+    function(rawID)
+        return rawID, {
+            applicantID = rawID, applicantStatus = "applied", numMembers = 1,
+        }, rawID
+    end,
+    function()
+        return true, "LegacyStatus-Realm", "MAGE", 700, "DAMAGER", 2500, 63
+    end
+)
+local legacy = assert(harness.BuildPayload(entry, { 42 }, false))
+assert(wire_version(legacy) == 0x09 and flags(legacy) == 0,
+    "the legacy applicant status fallback stopped being authoritative")
+assert(legacy:find("LegacyStatus-Realm", 1, true), "legacy applicant status lost its row")
+install_applicant(1, nil, "future_active_status")
+local future = assert(harness.BuildPayload(entry, { 42 }, false))
+assert(wire_version(future) == 0x09 and flags(future) == 0,
+    "a new readable status must keep forward-compatible active handling")
+
 local unavailable = assert(harness.BuildPayload(entry, nil, false))
 assert(wire_version(unavailable) == 0x0B, "unavailable applicant list must use v11")
 assert(flags(unavailable) == 0x08, "unavailable applicant list flag missing")

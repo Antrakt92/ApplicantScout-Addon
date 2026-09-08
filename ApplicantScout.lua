@@ -5148,7 +5148,12 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
         local id, info, apiID = entryCreationKeyState.GetApplicantInfoForTransport(rawID)
         if id and info then
             local status = _GetApplicantApplicationStatus(info)
-            if not APP_DEAD_STATUSES[status] then
+            if type(status) ~= "string" or status == "" then
+                -- Unknown status cannot establish that an applicant is still
+                -- active. Preserve the companion's prior applicant domain until
+                -- a complete read can confirm invite/removal transitions.
+                applicantsIncomplete = true
+            elseif not APP_DEAD_STATUSES[status] then
                 local rawMemberCount = math.floor(SafeNumber(info.numMembers, 0))
                 if rawMemberCount < 1 or rawMemberCount > 5 then
                     applicantsIncomplete = true
@@ -5205,8 +5210,10 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
                 table.insert(memberOut, _Uint32BE(appID))
                 table.insert(memberOut, string.char(m))
                 table.insert(memberOut, string.char(CLASS_NAME_TO_ID[classToken] or 0))
-                table.insert(memberOut, _Uint16BE(SafeNumber(memberSpecID, 0)))
-                table.insert(memberOut, _Uint16BE(SafeRoundedNumber(memberILvl, 0)))
+                table.insert(memberOut, _Uint16BE(_ClampUInt16(memberSpecID)))
+                table.insert(memberOut, _Uint16BE(_ClampUInt16(
+                    SafeRoundedNumber(memberILvl, 0)
+                )))
                 table.insert(memberOut, _Uint16BE(_ClampUInt16(
                     SafeRoundedNumber(memberScore, 0)
                 )))

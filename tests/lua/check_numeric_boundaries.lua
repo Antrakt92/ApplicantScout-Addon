@@ -62,4 +62,32 @@ assert_equal(
     "uint16 numeric string wrap"
 )
 
+-- Validate actual applicant bytes as well as the low-level packers: modulo
+-- packing is correct for hashes but must not turn unknown/negative item levels
+-- into convincing high gear values in the companion.
+GetNumGroupMembers = function() return 0 end
+local memberSpec, memberIlvl = 0, 0
+harness.SetApplicantTransportAdapters(
+    function(id)
+        return id, { applicantID = id, applicationStatus = "applied", numMembers = 1 }, id
+    end,
+    function()
+        return true, "Boundary-Realm", "MAGE", memberIlvl, "DAMAGER", 0, memberSpec
+    end
+)
+for _, case in ipairs({
+    { -1, -1, 0, 0 },
+    { 65536, 65536, 65535, 65535 },
+    { 63, 700.6, 63, 701 },
+    { math.huge, nan, 0, 0 },
+}) do
+    memberSpec, memberIlvl = case[1], case[2]
+    local payload = assert(harness.BuildPayload(nil, { 42 }, false))
+    local start = assert(payload:find(string.char(0, 0, 0, 42, 1, 8), 1, true))
+    local spec = payload:byte(start + 6) * 256 + payload:byte(start + 7)
+    local ilvl = payload:byte(start + 8) * 256 + payload:byte(start + 9)
+    assert_equal(spec, case[3], "serialized applicant specialization")
+    assert_equal(ilvl, case[4], "serialized applicant item level")
+end
+
 io.write("ok numeric-boundaries\n")
