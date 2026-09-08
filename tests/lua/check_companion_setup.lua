@@ -1,9 +1,18 @@
 local scenario = assert(arg[1], "scenario required")
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 local frames, pending = {}, {}
+local now = 1000
 local combat = false
+local challenge, encounter = false, false
 InCombatLockdown = function() return combat end
-C_Timer.After = function(_, callback) pending[#pending + 1] = callback end
+C_ChallengeMode = { IsChallengeModeActive = function() return challenge end }
+C_InstanceEncounter = { IsEncounterInProgress = function() return encounter end }
+GetNumGroupMembers = function() return 0 end
+IsInGroup = function() return false end
+GetTime = function() return now end
+C_Timer.After = function(delay, callback)
+    pending[#pending + 1] = { due = now + delay, callback = callback }
+end
 local function widget()
     local frame = { scripts = {}, events = {}, shown = true, text = "", focused = false }
     local noop = function() end
@@ -14,6 +23,9 @@ local function widget()
         Show = function(self) self.shown = true end,
         Hide = function(self) self.shown = false end,
         IsShown = function(self) return self.shown end,
+        GetWidth = function() return 1920 end,
+        GetHeight = function() return 1080 end,
+        GetEffectiveScale = function() return 1 end,
         SetText = function(self, text) self.text = text end,
         GetText = function(self) return self.text end,
         SetFocus = function(self) self.focused = true end,
@@ -38,17 +50,29 @@ ApplicantScoutDB = scenario == "disabled" and {enabled = false, autoHiMessage = 
     or {}
 local harness = env.load_addon({})
 local watcher = frames[#frames]
-assert(watcher.events.LOADING_SCREEN_DISABLED, "setup lifecycle watcher missing")
+assert(watcher.events.PLAYER_LOGIN, "setup lifecycle watcher missing")
 local function event(name)
-    assert(watcher.events[name], "missing lifecycle event " .. name)
-    watcher.scripts.OnEvent(watcher, name)
+    if scenario == "watcher-first" and watcher.events[name] then
+        watcher.scripts.OnEvent(watcher, name)
+    end
+    harness.FireEvent(name)
+    if scenario ~= "watcher-first" and watcher.events[name] then
+        watcher.scripts.OnEvent(watcher, name)
+    end
 end
-local function drain()
+local function drain(untilTime)
     local count = 0
     while #pending > 0 do
         count = count + 1
-        assert(count < 30, "unbounded setup retry")
-        table.remove(pending, 1)()
+        assert(count < 60, "unbounded setup retry")
+        table.sort(pending, function(a, b) return a.due < b.due end)
+        if untilTime and pending[1].due > untilTime then
+            now = untilTime
+            return
+        end
+        local timer = table.remove(pending, 1)
+        now = timer.due
+        timer.callback()
     end
 end
 local function panel()
@@ -67,6 +91,8 @@ local function login()
     drain()
     assert(not shown(), "setup appeared before loading ended")
     event("LOADING_SCREEN_DISABLED")
+    drain(now + 0.25)
+    assert(not shown(), "setup bypassed the transport's loading-screen grace")
     drain()
 end
 if scenario == "combat" then combat = true end
@@ -115,6 +141,25 @@ for _, pair in ipairs({ {"PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED"},
     assert(shown(), "setup did not resume after gameplay/loading")
     assert(panel() == initialPanel, "setup allocated a duplicate panel")
 end
+for _, activity in ipairs({ "challenge", "encounter" }) do
+    if activity == "challenge" then challenge = true else encounter = true end
+    event(activity == "challenge" and "CHALLENGE_MODE_START" or "ENCOUNTER_START")
+    drain()
+    assert(not shown(), "active gameplay left setup visible")
+    -- A missing end event is recovered by the existing current-state resolver.
+    -- An unreadable API must preserve the active state until clean evidence.
+    if activity == "challenge" then challenge = nil else encounter = nil end
+    event("PLAYER_REGEN_ENABLED")
+    drain()
+    assert(not shown() and harness.QRTransportState().suppressedByGameplay,
+        "an unreadable activity API prematurely reopened setup")
+    if activity == "challenge" then challenge = false else encounter = false end
+    event("PLAYER_REGEN_ENABLED")
+    drain()
+    assert(not harness.QRTransportState().suppressedByGameplay,
+        "transport did not reconcile the missed activity end")
+    assert(shown(), "setup retained a stale activity latch after transport recovery")
+end
 button("Close").scripts.OnClick()
 assert(ApplicantScoutDB.setupDismissed == true and not shown(), "explicit close did not persist")
 for _ = 1, 3 do
@@ -130,7 +175,7 @@ url.scripts.OnEscapePressed(url)
 assert(not shown(), "Escape in address field did not close")
 -- A fresh addon chunk represents a reload with the same account SavedVariables.
 frames, pending = {}, {}
-env.load_addon({})
+harness = env.load_addon({})
 watcher = frames[#frames]
 login()
 assert(not shown(), "reload forgot account-wide dismissal")

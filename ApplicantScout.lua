@@ -2217,6 +2217,9 @@ entryCreationKeyState.RefreshQRGameplaySuppression = function(worldTransition)
     elseif entryCreationKeyState.challengeDormant then
         entryCreationKeyState.ExitChallengeDormancy()
     end
+    if entryCreationKeyState.RefreshCompanionSetupForGameplay then
+        entryCreationKeyState.RefreshCompanionSetupForGameplay()
+    end
     return suppressed
 end
 
@@ -8674,8 +8677,7 @@ end
 do
     local downloadURL = "https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest"
     local panel, urlBox
-    local requested, ready, loading, queued = false, false, true, false
-    local paused = {}
+    local requested, ready, queued = false, false, false
 
     local function hide()
         if panel then
@@ -8761,16 +8763,19 @@ do
         panel:Hide()
     end
 
+    local function canShow()
+        return ready and not entryCreationKeyState.qrGameplayLoadingActive
+            and not entryCreationKeyState.qrGameplaySuppressed
+            and entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) == false
+            and (requested or (not ApplicantScoutDB.setupDismissed and ApplicantScoutDB.enabled))
+    end
+
     local function tryShow()
         queued = false
-        if not ready or loading or next(paused)
-           or entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) ~= false
-           or entryCreationKeyState.qrGameplaySuppressed then
+        if not canShow() then
             hide()
             return
         end
-        if not requested and (ApplicantScoutDB.setupDismissed
-                              or not ApplicantScoutDB.enabled) then return end
         if not panel then createPanel() end
         panel:Show()
     end
@@ -8778,53 +8783,33 @@ do
     local function queue()
         if queued then return end
         queued = true
-        -- Let the gameplay event handler update its combat/M+/encounter gates.
+        -- Recheck current gameplay state after this short presentation delay.
         C_Timer.After(0.2, tryShow)
+    end
+
+    -- Use the transport's reconciled state, including delayed loading recovery
+    -- and clean API evidence after missed end events; do not latch those twice.
+    entryCreationKeyState.RefreshCompanionSetupForGameplay = function()
+        if not canShow() then
+            hide()
+            return
+        end
+        if not panel or not panel:IsShown() then queue() end
     end
 
     entryCreationKeyState.ShowCompanionSetup = function()
         requested = true
         queue()
-        if loading or next(paused)
-           or entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) ~= false
-           or entryCreationKeyState.qrGameplaySuppressed then
+        if not canShow() then
             APSPrint("Setup will open when loading, combat or the current encounter/key ends.")
         end
     end
 
     local watcher = CreateFrame("Frame")
-    local starts = {
-        PLAYER_REGEN_DISABLED = "combat", ENCOUNTER_START = "encounter",
-        CHALLENGE_MODE_START = "challenge",
-    }
-    local stops = {
-        PLAYER_REGEN_ENABLED = "combat", ENCOUNTER_END = "encounter",
-        CHALLENGE_MODE_COMPLETED = "challenge", CHALLENGE_MODE_RESET = "challenge",
-    }
-    for _, event in ipairs({ "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD",
-        "PLAYER_LEAVING_WORLD", "LOADING_SCREEN_ENABLED", "LOADING_SCREEN_DISABLED",
-        "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "ENCOUNTER_START",
-        "ENCOUNTER_END", "CHALLENGE_MODE_START", "CHALLENGE_MODE_COMPLETED",
-        "CHALLENGE_MODE_RESET" }) do watcher:RegisterEvent(event) end
-    watcher:SetScript("OnEvent", function(_, event)
-        if event == "PLAYER_LOGIN" then
-            InitDB()
-            ready = true
-        elseif event == "PLAYER_LEAVING_WORLD" or event == "LOADING_SCREEN_ENABLED" then
-            loading = true
-            hide()
-        elseif event == "PLAYER_ENTERING_WORLD" then
-            -- World transitions clear stale event-only gates; the transport's
-            -- reconciled gameplay state still prevents a combat/key popup.
-            paused = {}
-        elseif event == "LOADING_SCREEN_DISABLED" then
-            loading = false
-        elseif starts[event] then
-            paused[starts[event]] = true
-            hide()
-        elseif stops[event] then
-            paused[stops[event]] = nil
-        end
+    watcher:RegisterEvent("PLAYER_LOGIN")
+    watcher:SetScript("OnEvent", function()
+        InitDB()
+        ready = true
         queue()
     end)
 end

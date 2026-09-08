@@ -9,7 +9,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize("scenario", ["first-run", "dismissed", "disabled", "corrupt", "combat"])
+@pytest.mark.parametrize(
+    "scenario", ["first-run", "watcher-first", "dismissed", "disabled", "corrupt", "combat"]
+)
 def test_companion_setup_lifecycle(pytestconfig, scenario):
     lua = pytestconfig.getoption("--lua51") or shutil.which("lua5.1")
     assert lua, "Lua 5.1 is required for setup lifecycle tests"
