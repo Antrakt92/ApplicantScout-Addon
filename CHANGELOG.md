@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.10.1 - 09-Sep-2026 - Compact scouting and reliable updates
+## 0.10.2 - 09-Sep-2026 - Compact scouting and reliable updates
 
-Paired release with ApplicantScout Companion `0.17.0`.
+Paired release with ApplicantScout Companion `0.17.1`.
 
 - The paired companion uses compact numeric results, neutral Fit estimates,
   listing-specific parse sorting and an adaptive, scrollable detail card.
