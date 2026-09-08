@@ -469,7 +469,7 @@ def test_release_preflight_checks_paired_companion_ref_before_packaging():
     assert "working-directory: ApplicantScout-Addon" in published_companion_step
     assert "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in published_companion_step
     assert "-RequirePublishedPairedCompanionAssets" in published_companion_step
-    assert "-PublishedReleaseWaitSeconds 180" in published_companion_step
+    assert "-PublishedReleaseWaitSeconds 900" in published_companion_step
 
     _assert_order(
         preflight,
@@ -993,7 +993,8 @@ def test_preupload_recovery_publishes_marketplaces_only_after_github():
     assert "--project-id 1541576" in curseforge_verify
     assert "--toc ApplicantScout.toc" in curseforge_verify
     assert "--game-version" not in curseforge_verify
-    assert "--wait-seconds 900" in curseforge_verify
+    assert "timeout-minutes: 25" in curseforge_verifier
+    assert "--wait-seconds 1200" in curseforge_verify
     assert "needs: marketplace-release" in wago_verifier
     assert "actions: read" in wago_verifier
     assert "contents: read" in wago_verifier
@@ -1116,7 +1117,8 @@ def test_curseforge_verifier_is_separate_read_only_post_release_job():
     assert "--project-id 1541576" in verify_step
     assert "--toc ApplicantScout.toc" in verify_step
     assert "--game-version" not in verify_step
-    assert "--wait-seconds 900" in verify_step
+    assert "timeout-minutes: 25" in verifier
+    assert "--wait-seconds 1200" in verify_step
 
 
 def test_wago_verifier_is_separate_read_only_exact_package_proof():

@@ -493,7 +493,8 @@ jobs:
   verify-curseforge:
     needs: marketplace-release
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Match the normal release's read-only propagation window.
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -513,7 +514,7 @@ jobs:
           --tag "$RELEASE_TAG"
           --project-id 1541576
           --toc ApplicantScout.toc
-          --wait-seconds 900
+          --wait-seconds 1200
 
   verify-wago:
     needs: marketplace-release

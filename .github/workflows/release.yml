@@ -153,7 +153,9 @@ jobs:
         working-directory: ApplicantScout-Addon
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: .\scripts\check-release-version.ps1 -Tag $env:GITHUB_REF_NAME -RequirePublishedPairedCompanionAssets -PublishedReleaseWaitSeconds 180
+        # Companion publication follows separate artifact verification and
+        # updater smoke checks; allow that gate to finish before recovery is needed.
+        run: .\scripts\check-release-version.ps1 -Tag $env:GITHUB_REF_NAME -RequirePublishedPairedCompanionAssets -PublishedReleaseWaitSeconds 900
 
   marketplace-package:
     if: ${{ github.event.created == true && github.event.forced == false && github.event.deleted == false }}
@@ -506,7 +508,8 @@ jobs:
     needs: marketplace-release
     if: ${{ github.event.created == true && github.event.forced == false && github.event.deleted == false }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Allow indexing lag in this read-only job without retrying the upload.
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -526,7 +529,7 @@ jobs:
           --tag "$GITHUB_REF_NAME"
           --project-id 1541576
           --toc ApplicantScout.toc
-          --wait-seconds 900
+          --wait-seconds 1200
 
   verify-wago:
     needs: marketplace-release
