@@ -13,19 +13,22 @@ from scripts.check_addon_archive import (
 )
 
 
-def _write_archive(path: Path, *, extra: tuple[str, ...] = (), omit: str = "") -> None:
+def _write_archive(path: Path, *, extra: tuple[str, ...] = (), omit: str = "", changelog: bytes | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
         for entry in sorted(str(item) for item in REQUIRED_ENTRIES):
             if entry != omit:
-                archive.writestr(entry, b"fixture")
+                content = b"fixture"
+                if entry == "ApplicantScout/CHANGELOG.md":
+                    content = changelog if changelog is not None else (Path(__file__).parents[1] / "CHANGELOG.md").read_bytes()
+                archive.writestr(entry, content)
         for entry in extra:
             archive.writestr(entry, b"fixture")
 
 
 def test_marketplace_archive_accepts_runtime_files_and_changelog(tmp_path: Path):
     archive_path = tmp_path / "ApplicantScout-0.5.3.zip"
-    _write_archive(archive_path, extra=("ApplicantScout/CHANGELOG.md",))
+    _write_archive(archive_path)
 
     validate_marketplace_archive(archive_path)
 
@@ -52,6 +55,20 @@ def test_marketplace_archive_rejects_dev_and_private_paths(
     _write_archive(archive_path, extra=(forbidden,))
 
     with pytest.raises(ArchiveContractError, match="forbidden paths"):
+        validate_marketplace_archive(archive_path)
+
+
+def test_marketplace_archive_rejects_truncated_history(tmp_path: Path):
+    archive_path = tmp_path / "ApplicantScout-0.5.3.zip"
+    _write_archive(archive_path, changelog=b"# Changelog\n\n## 0.5.3\n\n- Only latest.\n")
+    with pytest.raises(ArchiveContractError, match="full changelog history"):
+        validate_marketplace_archive(archive_path)
+
+
+def test_marketplace_archive_rejects_missing_changelog(tmp_path: Path):
+    archive_path = tmp_path / "ApplicantScout-0.5.3.zip"
+    _write_archive(archive_path, omit="ApplicantScout/CHANGELOG.md")
+    with pytest.raises(ArchiveContractError, match="is missing"):
         validate_marketplace_archive(archive_path)
 
 

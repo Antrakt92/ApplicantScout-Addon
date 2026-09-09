@@ -13,6 +13,7 @@ REQUIRED_ENTRIES = frozenset(
         PurePosixPath(f"{ADDON_NAME}/ApplicantScout.toc"),
         PurePosixPath(f"{ADDON_NAME}/ApplicantScout.lua"),
         PurePosixPath(f"{ADDON_NAME}/LICENSE"),
+        PurePosixPath(f"{ADDON_NAME}/CHANGELOG.md"),
         PurePosixPath(f"{ADDON_NAME}/THIRD-PARTY-NOTICES.md"),
         PurePosixPath(f"{ADDON_NAME}/media/logo.png"),
         PurePosixPath(f"{ADDON_NAME}/libs/qrencode.lua"),
@@ -88,6 +89,11 @@ def validate_marketplace_archive(archive_path: Path) -> None:
         raise ArchiveContractError(
             f"marketplace archive contains forbidden paths: {forbidden}"
         )
+    source = (Path(__file__).resolve().parents[1] / "CHANGELOG.md").read_text(encoding="utf-8-sig")
+    with zipfile.ZipFile(archive_path) as archive:
+        changelog = archive.read(f"{ADDON_NAME}/CHANGELOG.md").decode("utf-8-sig")
+    if changelog.replace("\r\n", "\n").replace("\r", "\n") != source:
+        raise ArchiveContractError("marketplace archive must preserve the full changelog history")
 
 
 def parse_args() -> argparse.Namespace:

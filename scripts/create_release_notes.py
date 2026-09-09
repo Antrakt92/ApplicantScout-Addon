@@ -1,4 +1,4 @@
-"""Create GitHub release notes for one exact ApplicantScout release tag."""
+"""Create cumulative GitHub release notes from an exact ApplicantScout tag."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class ReleaseNotesError(ValueError):
 
 
 def extract_release_notes(changelog: str, tag: str) -> str:
-    """Return only the current version section for an exact release tag."""
+    """Return the current release and all history, excluding future work."""
     tag_match = _SEMVER_TAG.fullmatch(tag)
     if tag_match is None:
         raise ReleaseNotesError(
@@ -88,7 +88,7 @@ def extract_release_notes(changelog: str, tag: str) -> str:
         raise ReleaseNotesError(
             f"CHANGELOG release section {target_version} has no release copy"
         )
-    return section + "\n"
+    return normalized[current_heading.start() :].strip() + "\n"
 
 
 def write_release_notes(
