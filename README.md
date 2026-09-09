@@ -46,9 +46,11 @@ alone does not display them.*
 Missing logs are marked as missing. ApplicantScout does not auto-invite players
 or automate gameplay; you choose whom to invite.
 
-The companion offers optional usage statistics, off by default. Reports contain
-a random installation ID, version and daily milestones, not names, screenshots
-or credentials. [Details and how to turn sharing off](https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/PRIVACY.md).
+The companion offers optional usage statistics, enabled when no preference has
+been saved. Existing choices are preserved. Reports contain a random installation
+ID, version and daily milestones; names, screenshots and credentials are excluded.
+The current build has no configured collection service and sends no usage reports.
+[Details and how to turn sharing off](https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/PRIVACY.md).
 
 ## Quick Setup
 
