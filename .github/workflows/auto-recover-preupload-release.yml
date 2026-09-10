@@ -39,9 +39,9 @@ jobs:
             return $Matches[0]
           }
 
-          $Response = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/release.yml/runs?event=push&status=completed&per_page=20" | ConvertFrom-Json
+          $Response = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/release.yml/runs?event=push&per_page=20" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0 -or $null -eq $Response) {
-            throw "Could not inspect completed release workflow runs."
+            throw "Could not inspect release workflow runs."
           }
           $Runs = @(
             $Response.workflow_runs |
@@ -49,19 +49,23 @@ jobs:
                 [string]$_.name -ceq 'Package and release' -and
                 [string]$_.path -ceq '.github/workflows/release.yml' -and
                 [string]$_.event -ceq 'push' -and
-                [string]$_.status -ceq 'completed' -and
-                [string]$_.conclusion -ceq 'failure' -and
                 [string]$_.head_branch -match '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
               } |
               Sort-Object { [DateTimeOffset]$_.created_at } -Descending |
               Select-Object -First 1
           )
           if ($Runs.Count -eq 0) {
-            Write-Host "No failed canonical release run needs inspection."
+            Write-Host "No canonical release run needs inspection."
             exit 0
           }
 
           $Run = $Runs[0]
+          # A newer release attempt supersedes older failures, even while pending.
+          # Never revive an old tag after the release train has moved forward.
+          if ([string]$Run.status -cne 'completed' -or [string]$Run.conclusion -cne 'failure') {
+            Write-Host "Latest canonical release run does not need recovery."
+            exit 0
+          }
           if ([DateTimeOffset]$Run.created_at -lt [DateTimeOffset]::UtcNow.AddDays(-6)) {
             Write-Host "Latest failed canonical release run is outside the retained-artifact recovery window."
             exit 0
@@ -97,7 +101,8 @@ jobs:
           $Package = Get-SingleJob $AttemptOne 'marketplace-package'
           if ([string]$Preflight.conclusion -cne 'failure' -or
               [string]$Package.conclusion -cne 'success') {
-            throw "Failed run is not a recoverable preflight/package split."
+            Write-Host "Failed run is not a recoverable preflight/package split; no recovery is needed."
+            exit 0
           }
           $PairedWait = Get-SingleStep $Preflight 'Verify paired companion published release assets'
           $UnexpectedFailures = @(
@@ -108,7 +113,8 @@ jobs:
           )
           if ([string]$PairedWait.conclusion -cne 'failure' -or
               $UnexpectedFailures.Count -ne 0) {
-            throw "Failed run did not stop exclusively at the paired publication wait."
+            Write-Host "Failed run did not stop exclusively at the paired publication wait; no recovery is needed."
+            exit 0
           }
           foreach ($StepName in @(
             'Checkout addon',

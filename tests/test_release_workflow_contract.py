@@ -806,8 +806,8 @@ def test_auto_recovery_dispatcher_is_bounded_fail_closed_and_writer_free():
     assert "Package and release" in discover
     assert ".github/workflows/release.yml" in discover
     assert "[string]$_.event -ceq 'push'" in discover
-    assert "[string]$_.status -ceq 'completed'" in discover
-    assert "[string]$_.conclusion -ceq 'failure'" in discover
+    assert "[string]$Run.status -cne 'completed'" in discover
+    assert "[string]$Run.conclusion -cne 'failure'" in discover
     assert "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" in discover
     assert "AddDays(-6)" in discover
     assert "attempts/1/jobs?per_page=100" in discover
