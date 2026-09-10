@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.10.3 - 10-Sep-2026 - Simpler companion setup
+## 0.10.4 - 10-Sep-2026 - Simpler companion setup
 
-Paired release with ApplicantScout Companion `0.18.0`.
+Paired release with ApplicantScout Companion `0.18.1`.
 
 - The paired companion has more compact Settings and clearer setup controls.
 - Enable all scouting metrics and WoW start/stop synchronization when no choice
