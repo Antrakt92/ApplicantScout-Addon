@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.5 - 11-Sep-2026 - Connected optional usage statistics
+
+Paired release with ApplicantScout Companion `0.18.2`.
+
+- The paired companion connects optional usage statistics to its reporting
+  service, recording daily setup and overlay-use milestones for participants.
+- Existing sharing choices are preserved. Turn sharing off in Companion Settings
+  at any time; names, screenshots and credentials are excluded from reports.
+- Update privacy details for Cloudflare hosting, active retention and recovery
+  history. The addon's screenshot transport and gameplay behavior are unchanged.
+
 ## 0.10.4 - 10-Sep-2026 - Simpler companion setup
 
 Paired release with ApplicantScout Companion `0.18.1`.
