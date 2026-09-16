@@ -54,7 +54,7 @@ assert(
     )
 )
 assert(#payload == 3817, "payload finalization changed APS1 length")
-assert(builtHash == 2397122637, "payload finalization changed APS1 hash")
+assert(builtHash == 42405359, "payload finalization changed APS1 hash")
 assert(
     builtHash == harness.HashSnapshot(payload),
     "fused payload hash disagrees with independent oracle"

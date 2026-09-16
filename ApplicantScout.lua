@@ -2792,6 +2792,9 @@ end
 --   Roster:    uint16 count; per current party/raid member: uint8 unitIndex +
 --              uint8 flags + uint8 subgroup + same class/spec/score/RIO/role
 --              tail as applicant rows, then nameLen + utf8 name.
+--              Flags: 0x01 self, 0x02 raid, 0x10 raid context observed;
+--              0x0c difficulty bits: 0 unknown, 4 Normal, 8 Heroic, 12 Mythic.
+--              Older readers ignore the added bits; row sizes stay unchanged.
 --   Trailer:   uint32 CRC32 (IEEE 802.3) over [magic..last roster byte]
 --
 -- WHY keep the magic + CRC even though QR has its own ECC: the magic gives the
@@ -4891,19 +4894,45 @@ local function _RaidSubgroupForRoster(index)
     return _ClampUInt8(SafeNumber(subgroup, 1))
 end
 
+entryCreationKeyState.RaidDifficultyFlagsForRoster = function()
+    -- Instance difficulty wins over the menu selection. Never turn a PvP raid,
+    -- LFR, legacy raid, or an unreadable API result into a current raid target.
+    local flags = 0x10
+    if type(GetInstanceInfo) ~= "function" then return flags end
+    local ok, _name, instanceType, difficulty = pcall(GetInstanceInfo)
+    if not ok then return flags end
+    instanceType = SafeEnumKey(instanceType, "")
+    if instanceType == "none" then
+        if type(GetRaidDifficultyID) ~= "function" then return flags end
+        ok, difficulty = pcall(GetRaidDifficultyID)
+        if not ok then return flags end
+    elseif instanceType ~= "raid" then
+        return flags
+    end
+    difficulty = SafeNumber(difficulty, 0)
+    if difficulty == 14 then return flags + 0x04 end
+    if difficulty == 15 then return flags + 0x08 end
+    if difficulty == 16 then return flags + 0x0c end
+    return flags
+end
+
 local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)
     local rosterOut = {}
     local emittedCount = 0
     local rows = {}
     local rosterQuietHasUnknownSpec = false
     local groupCount = math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))
-    local inRaid = IsInRaid and IsInRaid() or false
+    local inRaid = entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid)
     local expectedRosterCount = 0
     if groupCount <= 0 then
         return "", emittedCount, "", false, inRaid, false
     end
+    if inRaid == nil then
+        return "", 0, "", false, false, true
+    end
 
     if inRaid then
+        local raidDifficultyFlags = entryCreationKeyState.RaidDifficultyFlagsForRoster()
         if groupCount > 40 then groupCount = 40 end
         expectedRosterCount = groupCount
         for i = 1, groupCount do
@@ -4913,7 +4942,10 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
                 _RaidSubgroupForRoster(i),
                 true
             )
-            if row then table.insert(rows, row) end
+            if row then
+                row.flags = row.flags + raidDifficultyFlags
+                table.insert(rows, row)
+            end
         end
     else
         expectedRosterCount = groupCount
@@ -7132,6 +7164,8 @@ if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
         end
     _addonNS.ApplicantScoutFixtureHarness.QRTransportState = function()
         return {
+            scanDirty = scanDirty == true,
+            dirtyGeneration = entryCreationKeyState.transportDirtyGeneration or 0,
             pendingShotDirty = pendingShotDirty == true,
             lastSnapshotHash = lastSnapshotHash,
             deliverySnapshotHash = entryCreationKeyState.lastDeliverySnapshotHash,
@@ -7479,6 +7513,12 @@ local EVENT_HANDLERS = {
         entryCreationKeyState.RequestLeaderKeystone(false)
         entryCreationKeyState.ScheduleAutoHiIfGroupJoined()
         entryCreationKeyState.ScheduleAutoHiForNewPartyMembers()
+    end,
+    PLAYER_DIFFICULTY_CHANGED        = function()
+        MarkDirty("difficulty")
+    end,
+    UPDATE_INSTANCE_INFO             = function()
+        MarkDirty("instance")
     end,
     GROUP_LEFT                       = function()
         if entryCreationKeyState.challengeDormant then

@@ -66,11 +66,16 @@ Normal, Heroic, Mythic, and M+ results use the applying specialization.
 WCL percentiles keep their usual colours. Missing logs are marked as missing;
 tooltips explain best/median values and limited samples.
 
-**Fit**, shown as a neutral estimate such as **~65**, describes how the available
+**Fit**, shown as an estimate such as **~65**, describes how the available
 data matches the target key or raid. It is not a success probability or a
-Warcraft Logs percentile. Hover Fit for evidence strength, dungeon coverage,
+Warcraft Logs percentile. Its colours use the same thresholds as WCL results.
+Hover Fit for evidence strength, dungeon coverage,
 and limitations. Optional local RaiderIO data adds dungeon, raid, and main-score
 context when available.
+
+Party also shows raid Fit without a Group Finder listing. Inside a raid it uses
+the instance difficulty; outside it uses the selected Normal, Heroic or Mythic
+raid difficulty. Click a column heading to sort and click again to reverse it.
 
 **M+ WCL values measure damage for every role**, including tanks and healers.
 They do not measure healing, survival, interrupts, or other utility.

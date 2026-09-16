@@ -1233,9 +1233,7 @@ def test_release_version_script_validates_paired_companion_minimum_addon(
                 "",
                 f"## {CURRENT_COMPANION_VERSION} - 30-May-2026",
                 "",
-                "### Release Assets",
-                "",
-                f"- Requires the ApplicantScout WoW addon `{CURRENT_ADDON_VERSION}`.",
+                f"Paired release with ApplicantScout addon `{CURRENT_ADDON_VERSION}`.",
                 "",
             ]
         ),
@@ -1264,6 +1262,41 @@ def test_release_version_script_validates_paired_companion_minimum_addon(
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize(
+    "paired_copy",
+    [
+        "",
+        "Paired release with ApplicantScout addon `0.11`.",
+        f"- Requires the ApplicantScout WoW addon `{CURRENT_ADDON_VERSION}`.",
+        (f"Paired release with ApplicantScout addon `{CURRENT_ADDON_VERSION}`.\n" * 2),
+        (
+            f"Paired release with ApplicantScout addon `{CURRENT_ADDON_VERSION}`.\n"
+            "Paired release with ApplicantScout addon `99.0.0`."
+        ),
+    ],
+)
+def test_release_version_script_rejects_missing_or_ambiguous_paired_addon(
+    tmp_path: Path, paired_copy: str,
+):
+    companion = tmp_path / "ApplicantScout-Companion"
+    companion.mkdir()
+    (companion / "RELEASE_NOTES.md").write_text(
+        f"## {CURRENT_COMPANION_VERSION} - 16-Sep-2026\n\n{paired_copy}\n\n"
+        "## 0.0.1 - 01-Jan-2026\n\n"
+        f"Paired release with ApplicantScout addon `{CURRENT_ADDON_VERSION}`.\n",
+        encoding="utf-8",
+    )
+
+    result = _run_release_check_in(
+        REPO_ROOT, "-Tag", CURRENT_ADDON_TAG, "-PairedCompanionRoot", str(companion),
+    )
+
+    assert result.returncode != 0
+    assert "exactly one paired ApplicantScout addon version" in (
+        result.stdout + result.stderr
+    )
+
+
 def test_release_version_script_rejects_companion_requiring_newer_addon(
     tmp_path: Path,
 ):
@@ -1277,9 +1310,7 @@ def test_release_version_script_rejects_companion_requiring_newer_addon(
                 "",
                 f"## {CURRENT_COMPANION_VERSION} - 30-May-2026",
                 "",
-                "### Release Assets",
-                "",
-                f"- Requires the ApplicantScout WoW addon `{newer_addon_version}`.",
+                f"Paired release with ApplicantScout addon `{newer_addon_version}`.",
                 "",
             ]
         ),

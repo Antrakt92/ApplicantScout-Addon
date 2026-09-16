@@ -55,7 +55,7 @@ assert(repeatedBuildGsubs <= 3952, string.format(
 assert(payload == repeatedPayload, "session reset changed stable payload bytes")
 assert(#payload == 3817, "placeholder label reuse changed APS1 payload length")
 assert(
-    harness.HashSnapshot(payload) == 2397122637,
+    harness.HashSnapshot(payload) == 42405359,
     "placeholder label reuse changed APS1 payload bytes"
 )
 

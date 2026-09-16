@@ -45,7 +45,7 @@ local wirePayload = assert(harness.BuildPayload)({
 }, {}, false)
 assert(#wirePayload == 2198, "roster reuse changed the APS1 payload length")
 assert(
-    harness.HashSnapshot(wirePayload) == 3451745577,
+    harness.HashSnapshot(wirePayload) == 1101351853,
     "roster reuse changed the APS1 payload bytes"
 )
 

@@ -39,7 +39,7 @@ assert(gsubCount <= 4000, string.format(
 ))
 assert(#payload == 3817, "sanitization reuse changed the APS1 payload length")
 assert(
-    harness.HashSnapshot(payload) == 2397122637,
+    harness.HashSnapshot(payload) == 42405359,
     "sanitization reuse changed the APS1 payload bytes"
 )
 

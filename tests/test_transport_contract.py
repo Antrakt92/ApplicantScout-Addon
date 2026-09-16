@@ -4817,6 +4817,44 @@ def test_roster_payload_serializes_each_row_once(pytestconfig):
     assert output.startswith("ok roster-serialization-reuse rows=40 inserts=800 bytes=")
 
 
+def test_roster_transmits_guarded_raid_difficulty_without_listing(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        REPO_ROOT / "tests" / "lua" / "check_roster_raid_difficulty.lua",
+    ).strip()
+    assert output == "ok roster-raid-difficulty"
+
+
+@pytest.mark.requires_companion
+@pytest.mark.parametrize(
+    ("instance_type", "actual", "selected", "expected"),
+    [
+        ("none", 0, 14, 14),
+        ("none", 0, 15, 15),
+        ("none", 0, 16, 16),
+        ("raid", 14, 16, 14),
+        ("raid", 17, 15, 0),
+        ("pvp", 0, 15, 0),
+    ],
+)
+def test_raid_context_survives_paired_transport(
+    pytestconfig, instance_type, actual, selected, expected
+):
+    output = _run_lua_script(
+        pytestconfig,
+        REPO_ROOT / "tests" / "lua" / "generate_raid_context_fixture.lua",
+        instance_type,
+        str(actual),
+        str(selected),
+    ).strip()
+    snapshot, error = _companion_payload_parser(pytestconfig)(bytes.fromhex(output))
+    assert error is None
+    assert snapshot is not None and snapshot.listing is None
+    assert len(snapshot.roster) == 3
+    assert all(row.is_raid_member for row in snapshot.roster)
+    assert {row.raid_difficulty_id for row in snapshot.roster} == {expected}
+
+
 def test_applicant_payload_appends_one_serialized_member_block(pytestconfig):
     output = _run_lua_script(
         pytestconfig,

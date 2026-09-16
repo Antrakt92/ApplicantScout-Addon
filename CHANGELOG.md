@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.11.0 - 16-Sep-2026 - Raid Fit and overlay controls
+
+Paired release with ApplicantScout Companion `0.19.0`.
+
+- Show raid Fit in Party without a Group Finder listing. Use the current raid's
+  difficulty inside an instance and the selected raid difficulty outside it.
+- Colour Fit estimates with the same thresholds as WCL results. Changing a
+  target key updates Fit; historical WCL percentiles remain unchanged.
+- Sort by any table column, including specialization, item level, Fit and
+  parses. Keep grouped applications together and missing results at the bottom.
+- Keep the selected Applicants or Party tab when group data refreshes.
+- Detect when Windows blocks Companion's background WoW watcher and offer a
+  repair button. The watcher opens Companion when WoW starts.
+- Fit the Warcraft Logs setup example inside its window, keeping Copy buttons
+  visible without horizontal scrolling.
+- Remove the square corners around the companion's floating launcher.
+- Keep release notes focused on changes without repeating download filenames.
+
 ## 0.10.6 - 16-Sep-2026 - Companion layout and source updates
 
 Paired release with ApplicantScout Companion `0.18.3`.

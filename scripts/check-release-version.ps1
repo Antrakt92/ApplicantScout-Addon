@@ -147,16 +147,16 @@ function Get-CompanionReleaseMetadata {
         throw "Missing top paired companion release notes entry in $ReleaseNotesPath"
     }
     $TopEntry = $TopMatch.Value
-    $RequiredAddonMatch = [regex]::Match(
+    $RequiredAddonMatches = [regex]::Matches(
         $TopEntry,
-        '(?m)^-\s+Requires the ApplicantScout WoW addon\s+`([0-9]+\.[0-9]+\.[0-9]+)`\.\s*$'
+        '(?m)^Paired release with ApplicantScout addon `([0-9]+\.[0-9]+\.[0-9]+)`\.[ \t]*\r?$'
     )
-    if (-not $RequiredAddonMatch.Success) {
-        throw "Paired companion release notes do not name the required ApplicantScout addon version."
+    if ($RequiredAddonMatches.Count -ne 1) {
+        throw "Paired companion release notes must name exactly one paired ApplicantScout addon version."
     }
     return @{
         Version = $TopMatch.Groups[1].Value
-        RequiredAddonVersion = $RequiredAddonMatch.Groups[1].Value
+        RequiredAddonVersion = $RequiredAddonMatches[0].Groups[1].Value
     }
 }
 
