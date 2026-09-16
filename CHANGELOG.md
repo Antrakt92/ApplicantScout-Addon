@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.6 - 16-Sep-2026 - Companion layout and source updates
+
+Paired release with ApplicantScout Companion `0.18.3`.
+
+- The paired companion preserves the overlay width when a queued screen-size
+  update runs.
+- The Windows companion package includes a verified QR decoder library build
+  and complete source and license records for its native dependencies.
+- Clarify addon setup and contributor instructions. The addon's screenshot
+  transport and gameplay behavior are unchanged.
+
 ## 0.10.5 - 11-Sep-2026 - Connected optional usage statistics
 
 Paired release with ApplicantScout Companion `0.18.2`.
