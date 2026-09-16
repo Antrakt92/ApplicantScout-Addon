@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.1 - 16-Sep-2026 - Raid Fit and overlay controls
+
+Paired release with ApplicantScout Companion `0.19.1`.
+
+- First public release of the raid Fit and overlay improvements listed below.
+  Version 0.11.0 was not published.
+
 ## 0.11.0 - 16-Sep-2026 - Raid Fit and overlay controls
 
 Paired release with ApplicantScout Companion `0.19.0`.
