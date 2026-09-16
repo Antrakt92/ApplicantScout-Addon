@@ -1927,6 +1927,7 @@ def test_pkgmeta_excludes_tests_and_dev_only_release_inputs_from_marketplace_zip
     for ignored in (
         ".github",
         "README.md",
+        "CONTRIBUTING.md",
         "scripts",
         "docs",
         "dist",
@@ -2039,12 +2040,15 @@ def test_package_script_rejects_private_directories_and_legacy_claude_docs():
     assert "(^|/)CLAUDE\\.md$" in package_script
 
 
-def test_readme_documents_current_wire_version_and_transient_qr_visibility():
+def test_contributor_guide_documents_wire_version_and_readme_describes_qr_visibility():
     readme = _read_repo_text("README.md")
+    contributing = _read_repo_text("CONTRIBUTING.md")
 
-    assert "Wire payload: compact v9" in readme
-    assert "A v11 frame" in readme
-    assert "v10 fragment" in readme
+    assert "[CONTRIBUTING.md](CONTRIBUTING.md)" in readme
+    assert "Wire payload: compact v9" in contributing
+    assert "A v11 frame" in contributing
+    assert "v10 fragment" in contributing
+    assert "Wire payload: compact v5" not in contributing
     assert "Wire payload: compact v5" not in readme
     assert "stays visible during an\nactive capture session" not in readme
     assert "screenshot capture window" in readme
@@ -2132,7 +2136,7 @@ def test_readme_documents_residual_qr_screenshot_cleanup_risk():
         _assert_copy_contains(readme, phrase)
 
 
-def test_readme_slash_command_blocks_match_lua_help_and_companion_readme(
+def test_documented_slash_commands_match_lua_help_across_both_repositories(
     pytestconfig,
 ):
     expected_lines = _lua_print_help_command_lines(_read_repo_text("ApplicantScout.lua"))
@@ -2151,8 +2155,10 @@ def test_readme_slash_command_blocks_match_lua_help_and_companion_readme(
         pytest.skip("--companion-root is required for cross-repo README sync")
     companion_readme = Path(companion_root) / "README.md"
     assert companion_readme.is_file(), f"Missing paired companion README: {companion_readme}"
+    assert "docs/REFERENCE.md" in companion_readme.read_text(encoding="utf-8")
+    companion_reference = Path(companion_root) / "docs" / "REFERENCE.md"
     assert _markdown_text_fence_lines(
-        companion_readme.read_text(encoding="utf-8"),
+        companion_reference.read_text(encoding="utf-8"),
         "In-Game Commands",
     ) == expected_lines
 

@@ -8,6 +8,7 @@ ignore:
   - .github
   - .gitignore
   - README.md
+  - CONTRIBUTING.md
   - .pkgmeta
   - scripts
   - docs
