@@ -51,6 +51,9 @@ LUA_SCREENSHOT_CVAR_RECOVERY_CHECK = (
 LUA_SETTINGS_ATTACH_WATCHER_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_settings_attach_watcher.lua"
 )
+LUA_PVE_FRAME_MOVEMENT_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_pve_frame_movement.lua"
+)
 LUA_ROSTER_INSPECT_EXHAUSTION_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_roster_inspect_exhaustion.lua"
 )
@@ -419,10 +422,10 @@ def test_gameplay_suppression_uses_current_state_and_all_recovery_events():
     )
     lfg_lockdown_idx = ticker_body.index("local lfgReadsAllowed")
     assert (
-        suppression_return_idx
+        pve_restore_idx
+        < suppression_return_idx
         < info_panel_idx
         < interaction_idx
-        < pve_restore_idx
         < deferred_lfg_idx
         < lfg_lockdown_idx
     )
@@ -1512,7 +1515,7 @@ def test_default_playstyle_checks_secret_activity_before_nil_comparison():
     assert activity_read_idx < secret_guard_idx < nil_compare_idx
 
 
-def test_pve_frame_drag_requires_alt_modifier():
+def test_pve_frame_title_drag_is_unmodified_and_combat_guarded():
     source = _lua_source()
     body = _slice_between(
         source,
@@ -1521,10 +1524,10 @@ def test_pve_frame_drag_requires_alt_modifier():
     )
 
     combat_guard_idx = body.index("InCombatLockdown()")
-    alt_guard_idx = body.index("not IsAltKeyDown()")
-    start_moving_idx = body.index("PVEFrame:StartMoving()")
+    start_moving_idx = body.index("pcall(PVEFrame.StartMoving, PVEFrame)")
 
-    assert combat_guard_idx < alt_guard_idx < start_moving_idx
+    assert combat_guard_idx < start_moving_idx
+    assert "IsAltKeyDown()" not in body
 
 
 def test_forced_snapshot_helper_rejects_unready_requests_before_dispatch():
@@ -3078,6 +3081,14 @@ def test_settings_panel_watcher_is_singleton_until_runtime_attachment(pytestconf
     )
 
 
+def test_group_finder_title_drag_and_relayout_recovery(pytestconfig):
+    output = _run_lua_script(pytestconfig, LUA_PVE_FRAME_MOVEMENT_CHECK).strip()
+
+    assert output.splitlines()[-1] == (
+        "ok pve-frame-movement plain-drag=1 repeated-relayout=2 combat=guarded"
+    )
+
+
 def test_settings_toggle_uses_blizzard_gate_before_showing_child():
     source = _lua_source()
     settings_body = _slice_between(
@@ -3922,7 +3933,7 @@ def test_info_panel_suppression_is_polled_instead_of_hooking_blizzard_frames():
     interaction_body = _slice_between(
         source,
         "-- Frames without dedicated events.",
-        "-- PVEFrame movement (Alt+drag, persistent across /reload)",
+        "-- PVEFrame movement (title drag, persistent across /reload)",
     )
     ticker_body = _scan_tick_body(source)
     status_body = _status_helper_body(source)
@@ -3939,7 +3950,7 @@ def test_pveframe_position_restore_does_not_hook_groupfinder_show_stack():
     source = _lua_source()
     movement_body = _slice_between(
         source,
-        "-- PVEFrame movement (Alt+drag, persistent across /reload)",
+        "-- PVEFrame movement (title drag, persistent across /reload)",
         "-- Lease screenshot format.",
     )
     ticker_body = _scan_tick_body(source)

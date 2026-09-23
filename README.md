@@ -130,6 +130,8 @@ the wrong folder, or the Screenshots folder is synced/shared before cleanup.
   It waits until combat, an active Mythic+ run, or a boss encounter ends.
 - **Move the QR frame:** run `/apscout qrmove`, Alt-drag the frame, then run the
   command again to lock it. `/apscout qrreset` restores its default position.
+- **Move the Group Finder window:** drag its title bar outside combat. Its
+  position is saved and restored after `/reload` and Blizzard UI rearrangements.
 
 ## Handy Slash Commands
 

@@ -73,10 +73,9 @@ local DB_DEFAULTS = {
     priorScreenshotQuality = nil,
     priorScreenshotFormat = nil,
     -- PVEFrame movement state. nil = never moved (use Blizzard's UIPanelLayout
-    -- default). Once user Alt+drags the LFG window, OnDragStop writes
-    -- {point, x, y} from GetPoint(); OnShow restore replays it next time
-    -- the panel opens. Defensive PLAYER_LOGOUT save catches positions changed
-    -- via slash macros / scripted moves.
+    -- default). Dragging the title writes {point, relativePoint, x, y}
+    -- from GetPoint(); the ticker restores it after Blizzard relayout.
+    -- PLAYER_LOGOUT can capture an initial externally moved position.
     pveFramePosition = nil,
     -- QR frame position. nil = default TOPLEFT. Stored as canonical top-left
     -- offsets relative to UIParent: {x=number, y=number}. y is normally <= 0.
@@ -2447,21 +2446,18 @@ _TryHookInfoPanels = function()
 end
 
 -- ───────────────────────────────────────────────────────────
--- PVEFrame movement (Alt+drag, persistent across /reload)
+-- PVEFrame movement (title drag, persistent across /reload)
 --
 -- WHY in-place HookScript instead of BlizzMove's PanelDragBarTemplate
 -- secure-handle: BlizzMove's complexity supports DOZENS of frames with
 -- shared combat-lockdown queues. We support exactly one frame (PVEFrame).
--- SetMovable / RegisterForDrag / OnDragStart / OnDragStop / SetPoint /
--- SetUserPlaced are all unprotected on PVEFrame in Midnight 12.x — verified
--- empirically by BlizzMove itself using these APIs directly. The only
--- protected path is Show/Hide from addon code, which we never call.
--- SetPoint mid-combat may error on protected frames; guard via
--- InCombatLockdown().
+-- StartMoving and SetPoint may error on protected frames or in combat;
+-- guard movement and deferred restoration without hooking Blizzard's
+-- Show/Hide stack.
 --
 -- WHY title-bar-only drag (NOT whole-frame): clicking applicant
 -- buttons / tabs inside PVEFrame must NOT initiate a window drag. Drag from
--- TitleContainer (or NineSlice fallback) keeps child clicks intact.
+-- TitleContainer keeps child clicks intact.
 --
 -- WHY pcall on initial SetMovable: future Blizzard policy change could
 -- protect this method on PVEFrame. Pcall fails soft → user falls back to
@@ -2488,15 +2484,21 @@ local PVE_VALID_POINTS = {
 }
 
 local function _NormalizePVEFramePosition(pos)
-    if type(pos) ~= "table" then return nil, 0, 0, false end
+    if type(pos) ~= "table" then return nil, nil, 0, 0, false end
     local point, x, y = pos.point, pos.x, pos.y
     if type(point) ~= "string" or not PVE_VALID_POINTS[point] then
-        return nil, 0, 0, false
+        return nil, nil, 0, 0, false
+    end
+    local relativePoint = pos.relativePoint
+    if relativePoint == nil then relativePoint = point end
+    if type(relativePoint) ~= "string"
+       or not PVE_VALID_POINTS[relativePoint] then
+        return nil, nil, 0, 0, false
     end
     if not (_IsFinitePositionNumber(x) and _IsFinitePositionNumber(y)) then
-        return nil, 0, 0, false
+        return nil, nil, 0, 0, false
     end
-    return point, x, y, true
+    return point, relativePoint, x, y, true
 end
 
 local function _ClearInvalidPVEFramePosition()
@@ -2509,72 +2511,116 @@ local function _SavePVEFramePositionFromFrame(frame)
     if not (frame and ApplicantScoutDB) then return end
     -- WARNING: GetPoint() returns nil if no anchor set. Invalid parts should
     -- not clobber a prior valid position or poison the next restore/status.
-    local point, _, _, x, y = frame:GetPoint()
-    local savedPoint, savedX, savedY, ok =
-        _NormalizePVEFramePosition({ point = point, x = x, y = y })
+    local point, relativeTo, relativePoint, x, y = frame:GetPoint()
+    if IsSecretValue(point) or IsSecretValue(relativeTo)
+       or IsSecretValue(relativePoint) or IsSecretValue(x)
+       or IsSecretValue(y) then return end
+    if relativeTo and relativeTo ~= UIParent and relativeTo ~= "UIParent" then
+        return
+    end
+    local savedPoint, savedRelativePoint, savedX, savedY, ok =
+        _NormalizePVEFramePosition({
+            point = point, relativePoint = relativePoint, x = x, y = y,
+        })
     if not ok then return end
     ApplicantScoutDB.pveFramePosition = {
         point = savedPoint,
+        relativePoint = savedRelativePoint,
         x = savedX,
         y = savedY,
     }
 end
 
-entryCreationKeyState.ClearPVEFrameRestoreMemo = function()
-    entryCreationKeyState.pveFrameRestoreShown = false
-    entryCreationKeyState.pveFrameRestorePoint = nil
-    entryCreationKeyState.pveFrameRestoreX = nil
-    entryCreationKeyState.pveFrameRestoreY = nil
-end
-
 entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker = function()
-    if not _G.PVEFrame then
-        entryCreationKeyState.ClearPVEFrameRestoreMemo()
-        return
+    if not _G.PVEFrame then return end
+    -- A failed or interrupted drag may leave StartMoving's native flag set.
+    -- Retry without changing any other UIPanel's state.
+    if PVEFrame.apsWasUserPlaced ~= nil and not PVEFrame.apsMoving then
+        if pcall(PVEFrame.SetUserPlaced, PVEFrame,
+                 PVEFrame.apsWasUserPlaced) then
+            PVEFrame.apsWasUserPlaced = nil
+        end
     end
-    if not PVEFrame:IsShown() then
-        entryCreationKeyState.ClearPVEFrameRestoreMemo()
+    if not (PVEFrame.apsMovementSetup and PVEFrame:IsShown()) then
         return
     end
 
     local saved = ApplicantScoutDB and ApplicantScoutDB.pveFramePosition
     if not saved then return end
-    local point, x, y, ok = _NormalizePVEFramePosition(saved)
+    local point, relativePoint, x, y, ok = _NormalizePVEFramePosition(saved)
     if not ok then
         _ClearInvalidPVEFramePosition()
-        entryCreationKeyState.ClearPVEFrameRestoreMemo()
         return
     end
-    if InCombatLockdown() then return end
-    if entryCreationKeyState.pveFrameRestoreShown
-       and entryCreationKeyState.pveFrameRestorePoint == point
-       and entryCreationKeyState.pveFrameRestoreX == x
-       and entryCreationKeyState.pveFrameRestoreY == y then
+    if InCombatLockdown() or PVEFrame.apsMoving then return end
+    -- Blizzard's UIPanel manager can re-anchor PVEFrame after every tab/show
+    -- layout. Compare the actual point, not the previous restore attempt.
+    local currentPoint, currentRelativeTo, currentRelativePoint, currentX,
+          currentY = PVEFrame:GetPoint()
+    if IsSecretValue(currentPoint) or IsSecretValue(currentRelativeTo)
+       or IsSecretValue(currentRelativePoint) or IsSecretValue(currentX)
+       or IsSecretValue(currentY) then return end
+    if currentPoint == point
+       and (currentRelativeTo == nil or currentRelativeTo == UIParent
+            or currentRelativeTo == "UIParent")
+       and (currentRelativePoint or currentPoint) == relativePoint
+       and _IsFinitePositionNumber(currentX)
+       and _IsFinitePositionNumber(currentY)
+       and math.abs(currentX - x) < 0.5
+       and math.abs(currentY - y) < 0.5 then
         return
     end
 
-    -- WARNING: keep order load-bearing: ClearAllPoints -> SetPoint -> SetUserPlaced.
-    PVEFrame:ClearAllPoints()
-    PVEFrame:SetPoint(point, UIParent, point, x, y)
-    PVEFrame:SetUserPlaced(true)
-    entryCreationKeyState.pveFrameRestoreShown = true
-    entryCreationKeyState.pveFrameRestorePoint = point
-    entryCreationKeyState.pveFrameRestoreX = x
-    entryCreationKeyState.pveFrameRestoreY = y
+    -- Anchor only this panel to UIParent. Never change UIPanelWindows/xoffset:
+    -- those values also position CharacterFrame and other Blizzard panels.
+    local restored = pcall(function()
+        PVEFrame:ClearAllPoints()
+        PVEFrame:SetPoint(point, UIParent, relativePoint, x, y)
+    end)
+    if not restored and currentPoint then
+        -- Restore the panel's previous anchor if the client rejects ours.
+        pcall(function()
+            PVEFrame:ClearAllPoints()
+            PVEFrame:SetPoint(currentPoint, currentRelativeTo,
+                              currentRelativePoint, currentX, currentY)
+        end)
+    end
+    -- Our DB owns this position; keep Blizzard's native panel flag unchanged.
 end
 
 local function _OnPVEFrameDragStart()
     if InCombatLockdown() then return end
-    if not IsAltKeyDown() then return end
-    PVEFrame:StartMoving()
+    local okPlaced, wasUserPlaced = pcall(PVEFrame.IsUserPlaced, PVEFrame)
+    if not okPlaced then return end
+    PVEFrame.apsWasUserPlaced = wasUserPlaced
+    if not pcall(PVEFrame.StartMoving, PVEFrame) then
+        if pcall(PVEFrame.SetUserPlaced, PVEFrame, wasUserPlaced) then
+            PVEFrame.apsWasUserPlaced = nil
+        end
+        return
+    end
+    -- StartMoving marks the panel user-placed. Keep Blizzard's original flag.
+    if not pcall(PVEFrame.SetUserPlaced, PVEFrame, wasUserPlaced) then
+        pcall(PVEFrame.StopMovingOrSizing, PVEFrame)
+        return
+    end
     PVEFrame.apsMoving = true
 end
 
 local function _OnPVEFrameDragStop()
     if not PVEFrame.apsMoving then return end
-    PVEFrame:StopMovingOrSizing()
+    local stopped = pcall(PVEFrame.StopMovingOrSizing, PVEFrame)
     PVEFrame.apsMoving = false
-    _SavePVEFramePositionFromFrame(PVEFrame)
+    if stopped and not InCombatLockdown() then
+        -- Capture the dragged point before restoring the native flag; that
+        -- restore may cause Blizzard to recalculate panel slots.
+        _SavePVEFramePositionFromFrame(PVEFrame)
+    end
+    if PVEFrame.apsWasUserPlaced ~= nil
+       and pcall(PVEFrame.SetUserPlaced, PVEFrame,
+                 PVEFrame.apsWasUserPlaced) then
+        PVEFrame.apsWasUserPlaced = nil
+    end
 end
 
 _SetupPVEFrameMovement = function()
@@ -2587,6 +2633,9 @@ _SetupPVEFrameMovement = function()
         return
     end
 
+    local titleRegion = PVEFrame.TitleContainer
+    if not titleRegion then return end
+
     -- Defensive: future Blizzard patch might protect SetMovable on PVEFrame.
     -- Pcall fail-soft so addon load doesn't crash.
     local ok, err = pcall(PVEFrame.SetMovable, PVEFrame, true)
@@ -2597,10 +2646,8 @@ _SetupPVEFrameMovement = function()
     end
     PVEFrame:SetClampedToScreen(true)
 
-    -- Three-tier title-region fallback. TitleContainer is the modern
-    -- (Dragonflight+) title bar widget; NineSlice is the chrome border;
-    -- whole frame is last-resort drag-from-anywhere mode.
-    local titleRegion = PVEFrame.TitleContainer or PVEFrame.NineSlice or PVEFrame
+    -- Only the actual title strip may initiate a plain drag. The NineSlice
+    -- and PVEFrame cover interactive tabs and applicant controls.
     titleRegion:EnableMouse(true)
     titleRegion:RegisterForDrag("LeftButton")
     -- HookScript chains atop any existing handler. PVEFrame's title widgets
@@ -5535,6 +5582,8 @@ end
 
 local _addonNS = select(2, ...)
 if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
+    _addonNS.ApplicantScoutFixtureHarness.SetupPVEFrameMovement =
+        _SetupPVEFrameMovement
     _addonNS.ApplicantScoutFixtureHarness.SafeNumber = SafeNumber
     _addonNS.ApplicantScoutFixtureHarness.Uint32BE = _Uint32BE
     _addonNS.ApplicantScoutFixtureHarness.Uint16BE = _Uint16BE
@@ -7489,7 +7538,11 @@ local EVENT_HANDLERS = {
         entryCreationKeyState.screenshotCVarLeaseGeneration =
             (entryCreationKeyState.screenshotCVarLeaseGeneration or 0) + 1
         RestoreScreenshotCVars(true)
-        if PVEFrame and PVEFrame:IsUserPlaced() and ApplicantScoutDB then
+        -- A Blizzard relayout just before logout must not replace the position
+        -- saved by our drag-stop handler with the panel's temporary slot.
+        if PVEFrame and ApplicantScoutDB
+           and not ApplicantScoutDB.pveFramePosition
+           and PVEFrame:IsUserPlaced() then
             _SavePVEFramePositionFromFrame(PVEFrame)
         end
     end,
@@ -7644,6 +7697,8 @@ end)
 entryCreationKeyState.RunScanTick = function()
     local now = GetTime()
     entryCreationKeyState.RecoverStalledQRTransport(now)
+    -- Window placement is independent of QR capture and its pause switches.
+    entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker()
 
     local addonEnabled = ApplicantScoutDB and ApplicantScoutDB.enabled
     local disabledTransportCleanupActive = not addonEnabled
@@ -7680,7 +7735,6 @@ entryCreationKeyState.RunScanTick = function()
 
     _TryHookInfoPanels()
     _RecomputeInteractionSuppression()
-    entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker()
     entryCreationKeyState.ProcessLFGEntryCreationDeferredWork()
     local lfgReadsAllowed = not IsChatMessagingLockdown()
     if entryCreationKeyState.screenshotPendingForce
@@ -8552,9 +8606,10 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
     print("  BlizzMove loaded: " .. tostring(hasBlizzMove))
     print("  movement setup: " .. tostring(PVEFrame
           and PVEFrame.apsMovementSetup or false))
+    print("  move Group Finder: drag its title bar outside combat")
     entryCreationKeyState.PrintDiagnostics()
     if ApplicantScoutDB.pveFramePosition then
-        local point, x, y, ok =
+        local point, _, x, y, ok =
             _NormalizePVEFramePosition(ApplicantScoutDB.pveFramePosition)
         if ok then
             print(string.format("  saved position: %s @ (%.0f, %.0f)",
@@ -8581,6 +8636,7 @@ local function PrintHelp()
     print("  /apscout qrvisible      toggle persistent QR always-visible mode; off clears it")
     print("  /apscout qrmove         toggle QR move mode (Alt+drag QR frame)")
     print("  /apscout qrreset        reset QR frame position to top-left")
+    print("  Group Finder window: drag its title bar to reposition")
     print("  /apscout taintcheck     probe C_LFGList field secret-tagging")
     print("  /apscout debug [on|off] toggle debug logging")
     print("  /apscout competitive [on|off] legacy alias for Competitive / Off")
