@@ -2,7 +2,7 @@
 
 ## 0.12.0 - 24-Sep-2026 - Group Finder movement and past-season ratings
 
-Paired release with ApplicantScout Companion `0.20.0`.
+Paired release with ApplicantScout Companion `0.20.1` (companion-only patch, no addon change needed).
 
 - Support Retail 12.1.0 and PTR 12.1.5 with the same package. In Companion
   Settings, choose the Screenshots folder of the client you want to use.

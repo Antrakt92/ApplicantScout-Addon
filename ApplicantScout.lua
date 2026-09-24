@@ -2776,6 +2776,7 @@ local function _OnPVEFrameDragStart()
         return
     end
     PVEFrame.apsMoving = true
+    entryCreationKeyState.pveDragWatcherPos = nil
     if entryCreationKeyState.pveDragWatcher then
         entryCreationKeyState.pveDragWatcher:Show()
     end
@@ -2801,6 +2802,7 @@ local function _OnPVEFrameDragStop()
        and entryCreationKeyState.RestorePVEDockedPanels(entryCreationKeyState.pveDragPanels) then
         entryCreationKeyState.pveDragPanels = nil
     end
+    entryCreationKeyState.pveDragWatcherPos = nil
     if entryCreationKeyState.pveDragWatcher then
         entryCreationKeyState.pveDragWatcher:Hide()
     end
@@ -2916,6 +2918,21 @@ _SetupPVEFrameMovement = function()
             watcher:Hide()
             return
         end
+        -- A full Capture+Restore pass over every docked panel each frame is
+        -- wasted while the dragged frame sits still (mouse held down at 60+
+        -- fps). Re-run the repair only once the dragged position changed;
+        -- unreadable positions fail open to the historical always-run path.
+        local left, top = PVEFrame:GetLeft(), PVEFrame:GetTop()
+        if not IsSecretValue(left) and not IsSecretValue(top)
+           and _IsFinitePositionNumber(left) and _IsFinitePositionNumber(top) then
+            local last = entryCreationKeyState.pveDragWatcherPos
+            if last and left == last.left and top == last.top then
+                return
+            end
+            entryCreationKeyState.pveDragWatcherPos = { left = left, top = top }
+        else
+            entryCreationKeyState.pveDragWatcherPos = nil
+        end
         entryCreationKeyState.pveDragPanels = entryCreationKeyState.CapturePVEDockedPanels(
             entryCreationKeyState.pveDragPanels
         )
@@ -2926,6 +2943,20 @@ _SetupPVEFrameMovement = function()
     entryCreationKeyState.pveDragWatcher = watcher
 
     PVEFrame.apsMovementSetup = true
+end
+
+-- Screenshot-CVar stick warnings fire from every capture while a CVar refuses
+-- to stick. Rate-limit them like QR encode failures so a locked CVar does not
+-- spam chat on every transport poll.
+entryCreationKeyState.ShouldPrintScreenshotCVarWarn = function()
+    local now = GetTime()
+    local lastPrintAt = entryCreationKeyState.lastScreenshotCVarWarnAt
+    if lastPrintAt
+       and now - lastPrintAt < entryCreationKeyState.QR_FAILURE_NOTICE_COOLDOWN_S then
+        return false
+    end
+    entryCreationKeyState.lastScreenshotCVarWarnAt = now
+    return true
 end
 
 -- Lease screenshot format. Reed-Solomon ECC handles JPG quantization noise on
@@ -2947,7 +2978,7 @@ local function EnsureScreenshotCVars(quiet)
         -- decoder reliability silently; loud warn lets user notice.
         local verify = tonumber(GetCVar("screenshotQuality")) or 0
         if verify < 8 then
-            if APSPrint then
+            if APSPrint and entryCreationKeyState.ShouldPrintScreenshotCVarWarn() then
                 APSPrint("WARN: screenshotQuality SetCVar didn't stick (read back " ..
                          verify .. "); QR decode reliability may suffer at 3-px modules")
             end
@@ -2964,7 +2995,7 @@ local function EnsureScreenshotCVars(quiet)
         SetCVar("screenshotFormat", "jpg")
         local verifyFormat = tostring(GetCVar("screenshotFormat") or "")
         if verifyFormat:lower() ~= "jpg" then
-            if APSPrint then
+            if APSPrint and entryCreationKeyState.ShouldPrintScreenshotCVarWarn() then
                 APSPrint("WARN: screenshotFormat SetCVar didn't stick (read back " ..
                          verifyFormat .. "); QR transport expects JPG screenshots")
             end
@@ -5554,6 +5585,31 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
         return validAppIDs[a] < validAppIDs[b]
     end)
 
+    -- Member-info cache: per-member Blizzard reads are stable for a fixed
+    -- applicant roster, so reuse them across 0.5s transport polls instead of
+    -- re-querying every member on every tick. Keyed by clean wire identity
+    -- (applicant ID + member index) — never by secret/opaque API tokens, which
+    -- must not drive table keys or comparisons. The whole cache drops when the
+    -- applicant-roster fingerprint changes. Numeric fingerprint on purpose:
+    -- reuse-contract tests pin the table.insert budget, so no inserts here.
+    local applicantRosterFingerprint = 0
+    for _, appIndex in ipairs(validAppOrder) do
+        applicantRosterFingerprint =
+            ((applicantRosterFingerprint * 33) + validAppIDs[appIndex]) % 4294967296
+        applicantRosterFingerprint =
+            ((applicantRosterFingerprint * 33) + validAppMemberCounts[appIndex]) % 4294967296
+    end
+    local memberInfoCache = entryCreationKeyState.applicantMemberInfoCache
+    if not memberInfoCache
+       or memberInfoCache.rosterFingerprint ~= applicantRosterFingerprint then
+        memberInfoCache = {
+            rosterFingerprint = applicantRosterFingerprint,
+            rows = {},
+        }
+        entryCreationKeyState.applicantMemberInfoCache = memberInfoCache
+    end
+    local memberInfoRows = memberInfoCache.rows
+
     -- Wire format v2: emit one block per group member (was: only the leader).
     -- Single-pass shadow-table approach — count is derived from successfully-
     -- emitted blocks, not from numMembers sum, so:
@@ -5577,8 +5633,23 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
         local apiToken = validAppAPITokens[appIndex]
         for m = 1, validAppMemberCounts[appIndex] do
             local memberOK, rawMemberName, memberClass, memberILvl,
-                  memberRole, memberScore, memberSpecID =
-                entryCreationKeyState.GetApplicantMemberInfoForTransport(apiToken, m)
+                  memberRole, memberScore, memberSpecID
+            local cachedMember = memberInfoRows[appID .. ":" .. m]
+            if cachedMember then
+                memberOK, rawMemberName, memberClass, memberILvl,
+                memberRole, memberScore, memberSpecID =
+                    cachedMember[1], cachedMember[2], cachedMember[3],
+                    cachedMember[4], cachedMember[5], cachedMember[6],
+                    cachedMember[7]
+            else
+                memberOK, rawMemberName, memberClass, memberILvl,
+                memberRole, memberScore, memberSpecID =
+                    entryCreationKeyState.GetApplicantMemberInfoForTransport(apiToken, m)
+                memberInfoRows[appID .. ":" .. m] = {
+                    memberOK, rawMemberName, memberClass, memberILvl,
+                    memberRole, memberScore, memberSpecID,
+                }
+            end
             local memberName = SafeStr(rawMemberName, "")
             if memberOK and not _IsPlaceholderCleanUnitName(memberName) then
                 local classToken = SafeEnumKey(memberClass, "")
@@ -5869,6 +5940,13 @@ if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
     )
         entryCreationKeyState.GetApplicantInfoForTransport = infoAdapter
         entryCreationKeyState.GetApplicantMemberInfoForTransport = memberAdapter
+        entryCreationKeyState.applicantMemberInfoCache = nil
+    end
+    -- Fixtures that mutate the member data source behind an unchanged
+    -- applicant roster must reset the member-info cache explicitly, mirroring
+    -- the production rule that only roster changes invalidate it.
+    _addonNS.ApplicantScoutFixtureHarness.ResetApplicantMemberInfoCache = function()
+        entryCreationKeyState.applicantMemberInfoCache = nil
     end
     _addonNS.ApplicantScoutFixtureHarness.BuildRosterPayloadRows = BuildRosterPayloadRows
     _addonNS.ApplicantScoutFixtureHarness.GetRaiderIOMPlusSummaryForCleanName =

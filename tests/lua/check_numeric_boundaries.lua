@@ -82,6 +82,10 @@ for _, case in ipairs({
     { math.huge, nan, 0, 0 },
 }) do
     memberSpec, memberIlvl = case[1], case[2]
+    -- The member-info cache only invalidates on roster changes, so a fixture
+    -- that mutates the data source behind the same roster must reset it to
+    -- serialize each fresh boundary value.
+    harness.ResetApplicantMemberInfoCache()
     local payload = assert(harness.BuildPayload(nil, { 42 }, false))
     local start = assert(payload:find(string.char(0, 0, 0, 42, 1, 8), 1, true))
     local spec = payload:byte(start + 6) * 256 + payload:byte(start + 7)
