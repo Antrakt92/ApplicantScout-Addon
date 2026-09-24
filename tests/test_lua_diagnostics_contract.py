@@ -54,7 +54,7 @@ def test_luals_gate_rejects_reported_problem_even_with_zero_exit(tmp_path):
             (
                 "@echo off",
                 'if "%~1"=="--version" (',
-                "  echo 3.18.2-dev",
+                "  echo 3.19.1-dev",
                 "  exit /b 0",
                 ")",
                 "echo Diagnosis completed, 1 problem found",
@@ -90,7 +90,7 @@ def test_luals_gate_rejects_an_insensitive_clean_reporter(tmp_path):
             (
                 "@echo off",
                 'if "%~1"=="--version" (',
-                "  echo 3.18.2-dev",
+                "  echo 3.19.1-dev",
                 "  exit /b 0",
                 ")",
                 "echo Diagnosis completed, no problems found",

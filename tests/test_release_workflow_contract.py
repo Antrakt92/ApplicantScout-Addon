@@ -530,7 +530,7 @@ def test_release_requires_verified_exact_tag_marketplace_package_before_upload()
     assert '"$commit" != "$GITHUB_SHA"' in identity
     assert 'echo "commit=$commit" >> "$GITHUB_OUTPUT"' in identity
     assert (
-        "uses: BigWigsMods/packager@6d50adb6e8517eefef63f4afb16a6518166a6b28"
+        "uses: BigWigsMods/packager@e50a250f8705041e40f2fa1ddcb280a686d65aa0"
         in dry_run
     )
     assert "args: -d" in dry_run
@@ -979,7 +979,7 @@ def test_preupload_recovery_publishes_marketplaces_only_after_github():
     assert "CF_API_KEY" in credentials
     assert "WAGO_API_TOKEN" in credentials
     assert (
-        "uses: BigWigsMods/packager@6d50adb6e8517eefef63f4afb16a6518166a6b28"
+        "uses: BigWigsMods/packager@e50a250f8705041e40f2fa1ddcb280a686d65aa0"
         in upload
     )
     assert "GITHUB_OAUTH" not in marketplace
@@ -1856,7 +1856,7 @@ def test_check_workflow_runs_non_release_preflight_without_publishing():
     assert "gh release" not in workflow
 
     dry_run = _step_block(marketplace_job, "Build marketplace package without uploading")
-    assert "uses: BigWigsMods/packager@6d50adb6e8517eefef63f4afb16a6518166a6b28" in dry_run
+    assert "uses: BigWigsMods/packager@e50a250f8705041e40f2fa1ddcb280a686d65aa0" in dry_run
     assert "args: -d" in dry_run
     assert "pandoc: false" in dry_run
     archive_check = _step_block(marketplace_job, "Validate marketplace archive contract")
