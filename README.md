@@ -131,7 +131,11 @@ the wrong folder, or the Screenshots folder is synced/shared before cleanup.
 - **Move the QR frame:** run `/apscout qrmove`, Alt-drag the frame, then run the
   command again to lock it. `/apscout qrreset` restores its default position.
 - **Move the Group Finder window:** drag its title bar outside combat. Its
-  position is saved and restored after `/reload` and Blizzard UI rearrangements.
+  position is kept while this UI session is running; `/reload` returns it to
+  Blizzard's default position.
+- **Character window moves with Group Finder:** EllesmereUIBlizzardSkin docks
+  the character window to Group Finder. Disable that addon and run `/reload`
+  to move the two windows independently.
 
 ## Handy Slash Commands
 

@@ -72,11 +72,6 @@ local DB_DEFAULTS = {
     -- nil = no value currently owned by ApplicantScout.
     priorScreenshotQuality = nil,
     priorScreenshotFormat = nil,
-    -- PVEFrame movement state. nil = never moved (use Blizzard's UIPanelLayout
-    -- default). Dragging the title writes {point, relativePoint, x, y}
-    -- from GetPoint(); the ticker restores it after Blizzard relayout.
-    -- PLAYER_LOGOUT can capture an initial externally moved position.
-    pveFramePosition = nil,
     -- QR frame position. nil = default TOPLEFT. Stored as canonical top-left
     -- offsets relative to UIParent: {x=number, y=number}. y is normally <= 0.
     qrFramePosition = nil,
@@ -790,6 +785,9 @@ end
 
 InitDB = function()
     if type(ApplicantScoutDB) ~= "table" then ApplicantScoutDB = {} end
+    -- Old releases saved this position across reloads. That made the native
+    -- panel appear in its default slot before our ticker moved it on screen.
+    ApplicantScoutDB.pveFramePosition = nil
     if ApplicantScoutDB.autoMPlusPlaystyle == nil
        and ApplicantScoutDB.autoCompetitivePlaystyle ~= nil then
         local legacyCompetitive =
@@ -2446,7 +2444,7 @@ _TryHookInfoPanels = function()
 end
 
 -- ───────────────────────────────────────────────────────────
--- PVEFrame movement (title drag, persistent across /reload)
+-- PVEFrame movement (title drag, current UI session only)
 --
 -- WHY in-place HookScript instead of BlizzMove's PanelDragBarTemplate
 -- secure-handle: BlizzMove's complexity supports DOZENS of frames with
@@ -2502,13 +2500,11 @@ local function _NormalizePVEFramePosition(pos)
 end
 
 local function _ClearInvalidPVEFramePosition()
-    if ApplicantScoutDB then
-        ApplicantScoutDB.pveFramePosition = nil
-    end
+    entryCreationKeyState.pveFramePosition = nil
 end
 
 local function _SavePVEFramePositionFromFrame(frame)
-    if not (frame and ApplicantScoutDB) then return end
+    if not frame then return end
     -- WARNING: GetPoint() returns nil if no anchor set. Invalid parts should
     -- not clobber a prior valid position or poison the next restore/status.
     local point, relativeTo, relativePoint, x, y = frame:GetPoint()
@@ -2523,7 +2519,7 @@ local function _SavePVEFramePositionFromFrame(frame)
             point = point, relativePoint = relativePoint, x = x, y = y,
         })
     if not ok then return end
-    ApplicantScoutDB.pveFramePosition = {
+    entryCreationKeyState.pveFramePosition = {
         point = savedPoint,
         relativePoint = savedRelativePoint,
         x = savedX,
@@ -2545,7 +2541,7 @@ entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker = function()
         return
     end
 
-    local saved = ApplicantScoutDB and ApplicantScoutDB.pveFramePosition
+    local saved = entryCreationKeyState.pveFramePosition
     if not saved then return end
     local point, relativePoint, x, y, ok = _NormalizePVEFramePosition(saved)
     if not ok then
@@ -2585,7 +2581,7 @@ entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker = function()
                               currentRelativePoint, currentX, currentY)
         end)
     end
-    -- Our DB owns this position; keep Blizzard's native panel flag unchanged.
+    -- Session state owns this position; keep Blizzard's native panel flag unchanged.
 end
 
 local function _OnPVEFrameDragStart()
@@ -7538,13 +7534,6 @@ local EVENT_HANDLERS = {
         entryCreationKeyState.screenshotCVarLeaseGeneration =
             (entryCreationKeyState.screenshotCVarLeaseGeneration or 0) + 1
         RestoreScreenshotCVars(true)
-        -- A Blizzard relayout just before logout must not replace the position
-        -- saved by our drag-stop handler with the panel's temporary slot.
-        if PVEFrame and ApplicantScoutDB
-           and not ApplicantScoutDB.pveFramePosition
-           and PVEFrame:IsUserPlaced() then
-            _SavePVEFramePositionFromFrame(PVEFrame)
-        end
     end,
     PARTY_LEADER_CHANGED             = function()
         if entryCreationKeyState.challengeDormant then
@@ -8608,18 +8597,18 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
           and PVEFrame.apsMovementSetup or false))
     print("  move Group Finder: drag its title bar outside combat")
     entryCreationKeyState.PrintDiagnostics()
-    if ApplicantScoutDB.pveFramePosition then
+    if entryCreationKeyState.pveFramePosition then
         local point, _, x, y, ok =
-            _NormalizePVEFramePosition(ApplicantScoutDB.pveFramePosition)
+            _NormalizePVEFramePosition(entryCreationKeyState.pveFramePosition)
         if ok then
-            print(string.format("  saved position: %s @ (%.0f, %.0f)",
+            print(string.format("  session position: %s @ (%.0f, %.0f)",
                   point, x, y))
         else
             _ClearInvalidPVEFramePosition()
-            print("  saved position: (default; invalid saved position cleared)")
+            print("  session position: (default; invalid position cleared)")
         end
     else
-        print("  saved position: (default)")
+        print("  session position: (default)")
     end
 end
 

@@ -3085,7 +3085,7 @@ def test_group_finder_title_drag_and_relayout_recovery(pytestconfig):
     output = _run_lua_script(pytestconfig, LUA_PVE_FRAME_MOVEMENT_CHECK).strip()
 
     assert output.splitlines()[-1] == (
-        "ok pve-frame-movement plain-drag=1 repeated-relayout=2 combat=guarded"
+        "ok pve-frame-movement session-only=1 point-pair=preserved combat=guarded"
     )
 
 
@@ -3933,7 +3933,7 @@ def test_info_panel_suppression_is_polled_instead_of_hooking_blizzard_frames():
     interaction_body = _slice_between(
         source,
         "-- Frames without dedicated events.",
-        "-- PVEFrame movement (title drag, persistent across /reload)",
+        "-- PVEFrame movement (",
     )
     ticker_body = _scan_tick_body(source)
     status_body = _status_helper_body(source)
@@ -3950,7 +3950,7 @@ def test_pveframe_position_restore_does_not_hook_groupfinder_show_stack():
     source = _lua_source()
     movement_body = _slice_between(
         source,
-        "-- PVEFrame movement (title drag, persistent across /reload)",
+        "-- PVEFrame movement (",
         "-- Lease screenshot format.",
     )
     ticker_body = _scan_tick_body(source)
