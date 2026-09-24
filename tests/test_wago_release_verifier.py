@@ -94,6 +94,12 @@ def test_toc_contract_derives_project_and_exact_retail_patches(tmp_path: Path):
 
     assert toc_wago_contract(toc) == (PROJECT_ID, PATCHES)
 
+    toc.write_text(
+        "## Interface: 120100, 120105\n## X-Wago-ID: ANzke264\n",
+        encoding="utf-8",
+    )
+    assert toc_wago_contract(toc) == (PROJECT_ID, frozenset({"12.1.0", "12.1.5"}))
+
     toc.write_text("## Interface: 120007\n## X-Wago-ID: wrong-id\n", encoding="utf-8")
     with pytest.raises(MarketplaceVerificationError, match="project id"):
         toc_wago_contract(toc)

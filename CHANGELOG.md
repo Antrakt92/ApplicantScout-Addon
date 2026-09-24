@@ -4,6 +4,8 @@
 
 Paired release with ApplicantScout Companion `0.20.0`.
 
+- Support Retail 12.1.0 and PTR 12.1.5 with the same package. In Companion
+  Settings, choose the Screenshots folder of the client you want to use.
 - Drag Group Finder from its background, title or buttons outside combat.
   Normal clicks, text fields, sliders and controls with their own drag actions
   keep working.

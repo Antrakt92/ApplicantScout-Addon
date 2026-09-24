@@ -87,10 +87,10 @@ def test_required_game_versions_follow_exact_tag_toc_changes(tmp_path: Path):
         {"12.1.0"}
     )
 
-    toc.write_text("## Interface: 120100, 120101\n", encoding="utf-8")
+    toc.write_text("## Interface: 120100, 120105\n", encoding="utf-8")
 
     assert required_game_versions_from_toc(toc) == frozenset(
-        {"12.1.0", "12.1.1"}
+        {"12.1.0", "12.1.5"}
     )
 
     toc.write_text("## Interface: 130000\n", encoding="utf-8")

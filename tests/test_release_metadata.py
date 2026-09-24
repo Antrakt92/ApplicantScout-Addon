@@ -47,20 +47,26 @@ def test_release_metadata_matches_packager_contract(tmp_path: Path):
     }
 
 
+@pytest.mark.parametrize(
+    "interfaces, versions",
+    [
+        ([120100, 120105], {"12.1.0", "12.1.5"}),
+        ([130005, 130100], {"13.0.5", "13.1.0"}),
+    ],
+)
 def test_toc_interface_mutation_updates_release_and_marketplace_metadata(
-    tmp_path: Path,
+    tmp_path: Path, interfaces: list[int], versions: set[str],
 ):
-    release_dir = _write_fixture(tmp_path, interface="130005, 130100")
+    release_dir = _write_fixture(tmp_path, interface=", ".join(map(str, interfaces)))
 
     metadata = build_release_metadata(tmp_path, release_dir, "v1.2.3")
 
     assert metadata["releases"][0]["metadata"] == [
-        {"flavor": "mainline", "interface": 130005},
-        {"flavor": "mainline", "interface": 130100},
+        {"flavor": "mainline", "interface": interface} for interface in interfaces
     ]
     assert required_game_versions_from_toc(
         tmp_path / "ApplicantScout.toc"
-    ) == frozenset({"13.0.5", "13.1.0"})
+    ) == frozenset(versions)
 
 
 @pytest.mark.parametrize("tag", ["1.2.3", "v01.2.3", "v1.2.3-beta"])

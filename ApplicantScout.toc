@@ -1,4 +1,4 @@
-## Interface: 120100
+## Interface: 120100, 120105
 ## Title: |cff00ff7fApplicantScout|r: LFG Applicant Overlay
 ## Notes: Shows WCL, RaiderIO, raid-fit, and M+ fit context for Group Finder applicants through a local companion overlay.
 ## Author: Antrakt

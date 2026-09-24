@@ -2047,8 +2047,9 @@ def test_toc_and_readme_document_current_retail_interfaces():
 
     assert match is not None, "ApplicantScout.toc is missing ## Interface"
     interfaces = match.group(1)
-    assert [part.strip() for part in interfaces.split(",")] == ["120100"]
-    assert f"WoW Retail Midnight: Interface `{interfaces}`." in readme
+    assert [part.strip() for part in interfaces.split(",")] == ["120100", "120105"]
+    assert f"WoW Retail Midnight: Interfaces `{interfaces}`." in readme
+    assert "Retail 12.1.0 and PTR 12.1.5" in readme
 
 
 def test_toc_orders_optional_key_providers_before_applicantscout():

@@ -161,7 +161,9 @@ the wrong folder, or the Screenshots folder is synced/shared before cleanup.
 
 ## Compatibility
 
-- WoW Retail Midnight: Interface `120100`.
+- WoW Retail Midnight: Interfaces `120100, 120105`.
+- One addon package supports Retail 12.1.0 and PTR 12.1.5. PTR compatibility
+  is based on Blizzard UI source review; in-game PTR validation is still pending.
 - Keep both the addon and Windows companion on their latest releases.
 - Classic-era clients are not supported.
 

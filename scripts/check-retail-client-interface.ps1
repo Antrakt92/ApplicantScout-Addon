@@ -67,20 +67,23 @@ $InterfaceMatch = $InterfaceHeaders[0]
 
 $Interfaces = @(
     $InterfaceMatch.Groups['value'].Value.Split(',') |
-        ForEach-Object { $_.Trim() } |
-        Where-Object { $_ }
+        ForEach-Object { $_.Trim() }
 )
-if ($Interfaces.Count -ne 1 -or $Interfaces[0] -notmatch '^[1-9][0-9]{5}$') {
-    throw "TOC Interface must contain exactly one six-digit Retail Interface value, found '$($InterfaceMatch.Groups['value'].Value)'."
+if ($Interfaces.Count -eq 0 -or @($Interfaces | Where-Object { $_ -notmatch '^[1-9][0-9]{5}$' }).Count -gt 0) {
+    throw "TOC Interface must contain comma-separated six-digit Retail Interface values without empty entries, found '$($InterfaceMatch.Groups['value'].Value)'."
 }
-if ($Interfaces[0] -cne $Expected.Interface) {
-    throw "TOC Interface must be exactly $($Expected.Interface) for installed Retail $($Expected.RetailVersion), found '$($Interfaces[0])'."
+if (@($Interfaces | Select-Object -Unique).Count -ne $Interfaces.Count) {
+    throw "TOC Interface must not contain duplicate values."
+}
+if ($Interfaces -cnotcontains $Expected.Interface) {
+    throw "TOC Interface must include $($Expected.Interface) for Retail $($Expected.RetailVersion), found '$($Interfaces -join ', ')'."
 }
 
 $Readme = Get-Content -LiteralPath $ReadmePath -Raw -Encoding UTF8
-$ExpectedReadmeLine = "- WoW Retail Midnight: Interface ``$($Expected.Interface)``."
+$InterfaceLabel = if ($Interfaces.Count -eq 1) { "Interface" } else { "Interfaces" }
+$ExpectedReadmeLine = "- WoW Retail Midnight: $InterfaceLabel ``$($Interfaces -join ', ')``."
 if ($Readme -notmatch [regex]::Escape($ExpectedReadmeLine)) {
-    throw "README compatibility line must match the installed Retail Interface: $ExpectedReadmeLine"
+    throw "README compatibility line must match every declared Retail Interface: $ExpectedReadmeLine"
 }
 
-Write-Host "Retail $($Expected.RetailVersion) matches the single supported Interface $($Expected.Interface)."
+Write-Host "Retail $($Expected.RetailVersion) matches supported Interface $($Expected.Interface) (declared: $($Interfaces -join ', '))."
