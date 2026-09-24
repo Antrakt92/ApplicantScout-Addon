@@ -2446,12 +2446,10 @@ end
 -- ───────────────────────────────────────────────────────────
 -- PVEFrame movement (title drag, current UI session only)
 --
--- WHY in-place HookScript instead of BlizzMove's PanelDragBarTemplate
--- secure-handle: BlizzMove's complexity supports DOZENS of frames with
--- shared combat-lockdown queues. We support exactly one frame (PVEFrame).
--- StartMoving and SetPoint may error on protected frames or in combat;
--- guard movement and deferred restoration without hooking Blizzard's
--- Show/Hide stack.
+-- Only PVEFrame gets a drag handler. Independent root panels docked to it
+-- keep their screen positions; its child controls and companion tooltips follow.
+-- Protected movement may fail during combat transitions, so interrupted stops
+-- and position repairs are retried outside combat without hooking Show/Hide.
 --
 -- WHY title-bar-only drag (NOT whole-frame): clicking applicant
 -- buttons / tabs inside PVEFrame must NOT initiate a window drag. Drag from
@@ -2527,8 +2525,149 @@ local function _SavePVEFramePositionFromFrame(frame)
     }
 end
 
+-- A skin can anchor an otherwise independent UIPanel to the Finder, sometimes
+-- through a companion tooltip. Moving only PVEFrame then drags that panel too.
+-- Walk anchors as well as parents, but never detach the Finder's own children.
+entryCreationKeyState.PVEPanelDependsOn = function(frame, parentsOnly, seen, depth)
+    if IsSecretValue(frame) then return false end
+    if type(frame) == "string" then frame = _G[frame] end
+    if not frame or frame == UIParent then return false end
+    if frame == PVEFrame then return true end
+    if depth >= 8 or seen[frame] then return false end
+    seen[frame] = true
+    if frame.IsForbidden and frame:IsForbidden() then return false end
+    if frame.GetParent and entryCreationKeyState.PVEPanelDependsOn(
+        frame:GetParent(), parentsOnly, seen, depth + 1
+    ) then return true end
+    if parentsOnly or not frame.GetPoint then return false end
+    local count = frame.GetNumPoints and frame:GetNumPoints() or 1
+    if IsSecretValue(count) or not _IsFinitePositionNumber(count)
+       or count < 0 or count > 8 then return false end
+    for i = 1, count do
+        local _, relativeTo = frame:GetPoint(i)
+        if entryCreationKeyState.PVEPanelDependsOn(
+            relativeTo, false, seen, depth + 1
+        ) then return true end
+    end
+    return false
+end
+
+entryCreationKeyState.ReadPVEPanelScreenPosition = function(frame)
+    local left, top, scale = frame:GetLeft(), frame:GetTop(), frame:GetEffectiveScale()
+    if IsSecretValue(left) or IsSecretValue(top) or IsSecretValue(scale)
+       or not _IsFinitePositionNumber(left) or not _IsFinitePositionNumber(top)
+       or not _IsFinitePositionNumber(scale) or scale <= 0 then return end
+    return left * scale, top * scale, scale
+end
+
+entryCreationKeyState.CapturePVEDockedPanels = function(panels)
+    panels = panels or {}
+    if InCombatLockdown() then return panels end
+    local knownPanels = entryCreationKeyState.pveIndependentPanels or {}
+    entryCreationKeyState.pveIndependentPanels = knownPanels
+    for name in pairs(_G.UIPanelWindows or {}) do
+        local panel = _G[name]
+        if panel and panel ~= PVEFrame and not panels[panel] then
+            -- A forbidden/restricted or incompletely loaded panel is not ours
+            -- to position. Do not turn a skin compatibility issue into an error.
+            local ok, x, y = pcall(function()
+                if not panel:IsShown()
+                   or (panel.IsForbidden and panel:IsForbidden())
+                   or entryCreationKeyState.PVEPanelDependsOn(panel, true, {}, 0)
+                   or (not knownPanels[panel]
+                       and not entryCreationKeyState.PVEPanelDependsOn(panel, false, {}, 0)) then
+                    return
+                end
+                return entryCreationKeyState.ReadPVEPanelScreenPosition(panel)
+            end)
+            if ok and x and y then
+                panels[panel] = { x = x, y = y }
+                knownPanels[panel] = true
+            end
+        end
+    end
+    return panels
+end
+
+entryCreationKeyState.RestorePVEDockedPanels = function(panels)
+    if not panels then return true end
+    if InCombatLockdown() then return false end
+    local restored = true
+    for panel, position in pairs(panels) do
+        local ok, applied = pcall(function()
+            if not panel:IsShown() then
+                panels[panel] = nil
+                return true
+            end
+            local x, y, scale = entryCreationKeyState.ReadPVEPanelScreenPosition(panel)
+            local rootX, rootY = entryCreationKeyState.ReadPVEPanelScreenPosition(UIParent)
+            if not x or not y or not rootX or not rootY then return end
+            if math.abs(x - position.x) < 0.5 and math.abs(y - position.y) < 0.5
+               and not entryCreationKeyState.PVEPanelDependsOn(panel, false, {}, 0) then
+                return true
+            end
+            local offsetX, offsetY = (position.x - rootX) / scale,
+                                     (position.y - rootY) / scale
+            if not _IsFinitePositionNumber(offsetX)
+               or not _IsFinitePositionNumber(offsetY) then return end
+            local positioner = entryCreationKeyState.pvePanelPositioner
+            if not positioner then
+                positioner = CreateFrame("Frame", nil, UIParent, "SecureHandlerBaseTemplate")
+                entryCreationKeyState.pvePanelPositioner = positioner
+            end
+            positioner:SetFrameRef("panel", panel)
+            positioner:SetFrameRef("root", UIParent)
+            positioner:SetAttribute("x", offsetX)
+            positioner:SetAttribute("y", offsetY)
+            positioner:SetAttribute("applied", false)
+            local originalPoints = {}
+            local count = panel.GetNumPoints and panel:GetNumPoints() or 1
+            if IsSecretValue(count) or not _IsFinitePositionNumber(count)
+               or count < 1 or count > 8 then return false end
+            for i = 1, count do originalPoints[i] = { panel:GetPoint(i) } end
+            -- Restricted frame handles use the native frame methods, as in
+            -- BlizzMove's positioning helper. Calling panel:SetPoint here would
+            -- run a skin's instance hook and immediately dock the panel again.
+            local positioned = pcall(positioner.Execute, positioner, [[
+                local panel = self:GetFrameRef("panel")
+                local root = self:GetFrameRef("root")
+                if panel and root then
+                    panel:ClearAllPoints()
+                    panel:SetPoint("TOPLEFT", root, "TOPLEFT",
+                        self:GetAttribute("x"), self:GetAttribute("y"))
+                    self:SetAttribute("applied", true)
+                end
+            ]])
+            if not positioned or not positioner:GetAttribute("applied") then
+                -- A rejected secure write must not leave a root panel without
+                -- anchors. Restore the original relationship and abort dragging.
+                panel:ClearAllPoints()
+                for _, point in ipairs(originalPoints) do
+                    panel:SetPoint(unpack(point))
+                end
+                return false
+            end
+            return not entryCreationKeyState.PVEPanelDependsOn(panel, false, {}, 0)
+        end)
+        if not ok or not applied then restored = false end
+    end
+    return restored
+end
+
 entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker = function()
     if not _G.PVEFrame then return end
+    if PVEFrame.apsStopPending then
+        if InCombatLockdown() then return end
+        if not pcall(PVEFrame.StopMovingOrSizing, PVEFrame) then return end
+        PVEFrame.apsStopPending = nil
+        _SavePVEFramePositionFromFrame(PVEFrame)
+    end
+    if not PVEFrame.apsMoving and entryCreationKeyState.pveDragPanels then
+        if not entryCreationKeyState.RestorePVEDockedPanels(entryCreationKeyState.pveDragPanels) then
+            return
+        end
+        entryCreationKeyState.pveDragPanels = nil
+    end
     -- A failed or interrupted drag may leave StartMoving's native flag set.
     -- Retry without changing any other UIPanel's state.
     if PVEFrame.apsWasUserPlaced ~= nil and not PVEFrame.apsMoving then
@@ -2567,8 +2706,9 @@ entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker = function()
         return
     end
 
-    -- Anchor only this panel to UIParent. Never change UIPanelWindows/xoffset:
-    -- those values also position CharacterFrame and other Blizzard panels.
+    -- Preserve dependent root panels across the SetPoint hooks a skin may run.
+    -- Never change UIPanelWindows/xoffset: those values position other panels.
+    local dockedPanels = entryCreationKeyState.CapturePVEDockedPanels()
     local restored = pcall(function()
         PVEFrame:ClearAllPoints()
         PVEFrame:SetPoint(point, UIParent, relativePoint, x, y)
@@ -2581,15 +2721,30 @@ entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker = function()
                               currentRelativePoint, currentX, currentY)
         end)
     end
+    if not entryCreationKeyState.RestorePVEDockedPanels(dockedPanels) then
+        entryCreationKeyState.pveDragPanels = dockedPanels
+    end
     -- Session state owns this position; keep Blizzard's native panel flag unchanged.
 end
 
 local function _OnPVEFrameDragStart()
-    if InCombatLockdown() then return end
+    if InCombatLockdown() or PVEFrame.apsStopPending or PVEFrame.apsMoving then return end
     local okPlaced, wasUserPlaced = pcall(PVEFrame.IsUserPlaced, PVEFrame)
     if not okPlaced then return end
+    -- Preserve a failed previous repair until its original coordinates can be
+    -- restored; a new drag must not adopt the displaced position as its baseline.
+    entryCreationKeyState.pveDragPanels = entryCreationKeyState.CapturePVEDockedPanels(
+        entryCreationKeyState.pveDragPanels
+    )
+    if not entryCreationKeyState.RestorePVEDockedPanels(entryCreationKeyState.pveDragPanels) then
+        APSPrint("Could not detach a window docked to Group Finder; drag cancelled.")
+        return
+    end
     PVEFrame.apsWasUserPlaced = wasUserPlaced
     if not pcall(PVEFrame.StartMoving, PVEFrame) then
+        if not pcall(PVEFrame.StopMovingOrSizing, PVEFrame) then
+            PVEFrame.apsStopPending = true
+        end
         if pcall(PVEFrame.SetUserPlaced, PVEFrame, wasUserPlaced) then
             PVEFrame.apsWasUserPlaced = nil
         end
@@ -2597,16 +2752,22 @@ local function _OnPVEFrameDragStart()
     end
     -- StartMoving marks the panel user-placed. Keep Blizzard's original flag.
     if not pcall(PVEFrame.SetUserPlaced, PVEFrame, wasUserPlaced) then
-        pcall(PVEFrame.StopMovingOrSizing, PVEFrame)
+        if not pcall(PVEFrame.StopMovingOrSizing, PVEFrame) then
+            PVEFrame.apsStopPending = true
+        end
         return
     end
     PVEFrame.apsMoving = true
+    if entryCreationKeyState.pveDragWatcher then
+        entryCreationKeyState.pveDragWatcher:Show()
+    end
 end
 
 local function _OnPVEFrameDragStop()
     if not PVEFrame.apsMoving then return end
     local stopped = pcall(PVEFrame.StopMovingOrSizing, PVEFrame)
     PVEFrame.apsMoving = false
+    PVEFrame.apsStopPending = not stopped or nil
     if stopped and not InCombatLockdown() then
         -- Capture the dragged point before restoring the native flag; that
         -- restore may cause Blizzard to recalculate panel slots.
@@ -2616,6 +2777,13 @@ local function _OnPVEFrameDragStop()
        and pcall(PVEFrame.SetUserPlaced, PVEFrame,
                  PVEFrame.apsWasUserPlaced) then
         PVEFrame.apsWasUserPlaced = nil
+    end
+    if stopped
+       and entryCreationKeyState.RestorePVEDockedPanels(entryCreationKeyState.pveDragPanels) then
+        entryCreationKeyState.pveDragPanels = nil
+    end
+    if entryCreationKeyState.pveDragWatcher then
+        entryCreationKeyState.pveDragWatcher:Hide()
     end
 end
 
@@ -2651,6 +2819,23 @@ _SetupPVEFrameMovement = function()
     -- forward-compatible if Blizzard adds one later.
     titleRegion:HookScript("OnDragStart", _OnPVEFrameDragStart)
     titleRegion:HookScript("OnDragStop", _OnPVEFrameDragStop)
+
+    local watcher = CreateFrame("Frame")
+    watcher:Hide()
+    watcher:SetScript("OnUpdate", function()
+        if not PVEFrame.apsMoving or not PVEFrame:IsShown() or InCombatLockdown() then
+            _OnPVEFrameDragStop()
+            watcher:Hide()
+            return
+        end
+        entryCreationKeyState.pveDragPanels = entryCreationKeyState.CapturePVEDockedPanels(
+            entryCreationKeyState.pveDragPanels
+        )
+        if not entryCreationKeyState.RestorePVEDockedPanels(entryCreationKeyState.pveDragPanels) then
+            _OnPVEFrameDragStop()
+        end
+    end)
+    entryCreationKeyState.pveDragWatcher = watcher
 
     PVEFrame.apsMovementSetup = true
 end

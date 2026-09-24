@@ -133,9 +133,8 @@ the wrong folder, or the Screenshots folder is synced/shared before cleanup.
 - **Move the Group Finder window:** drag its title bar outside combat. Its
   position is kept while this UI session is running; `/reload` returns it to
   Blizzard's default position.
-- **Character window moves with Group Finder:** EllesmereUIBlizzardSkin docks
-  the character window to Group Finder. Disable that addon and run `/reload`
-  to move the two windows independently.
+  Other open Blizzard windows stay in place while you drag Group Finder,
+  including when a skin has docked the character window beside it.
 
 ## Handy Slash Commands
 

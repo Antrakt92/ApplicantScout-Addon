@@ -3089,6 +3089,14 @@ def test_group_finder_title_drag_and_relayout_recovery(pytestconfig):
     )
 
 
+def test_group_finder_drag_leaves_docked_root_panels_in_place(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig, REPO_ROOT / "tests" / "lua" / "check_pve_frame_docking.lua"
+    ).strip()
+
+    assert output.splitlines()[-1].startswith("ok pve-frame-docking ")
+
+
 def test_settings_toggle_uses_blizzard_gate_before_showing_child():
     source = _lua_source()
     settings_body = _slice_between(

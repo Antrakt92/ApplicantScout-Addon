@@ -53,6 +53,9 @@ LibStub = nil
 ---@type any
 PVEFrame = nil
 
+---@type table<string, table>?
+UIPanelWindows = nil
+
 ---@class PixelUtilAPI
 ---@field ConvertPixelsToUIForRegion fun(desiredPixels: number, region: any): number
 ---@type PixelUtilAPI?
