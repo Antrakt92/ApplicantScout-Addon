@@ -47,12 +47,22 @@ local function makeFrame(name, width, height, parent)
         x = 0,
         y = 0,
         scripts = {},
+        children = {},
+        objectType = "Frame",
+        mouseEnabled = true,
         setPointCalls = 0,
         secureSetPointCalls = 0,
         secureClearCount = 0,
     }
     function frame:GetName() return self.name end
     function frame:GetParent() return self.parent end
+    function frame:GetChildren() return unpack(self.children) end
+    function frame:IsObjectType(kind)
+        return self.objectType == kind or kind == "Frame"
+    end
+    function frame:IsMouseEnabled() return self.mouseEnabled end
+    function frame:GetScript(event) return self.scripts[event] end
+    function frame:HasScript(event) return self.scripts[event] ~= nil end
     function frame:GetWidth() return self.width end
     function frame:GetHeight() return self.height end
     function frame:GetScale() return self.scale end
@@ -224,7 +234,7 @@ local function renderFrame()
     end
 end
 
-local function newWorld()
+local function newWorld(noAutoClose)
     helpers = {}
     local root = makeFrame("UIParent", screenWidth, screenHeight)
     root.parent, root.relativeTo = nil, nil
@@ -239,20 +249,44 @@ local function newWorld()
     character:NativeSetPoint("TOPLEFT", root, "TOPLEFT", 85, -84)
     local spellbook = makeFrame("PlayerSpellsFrame", 380, 480)
     spellbook:NativeSetPoint("TOPLEFT", root, "TOPLEFT", 640, -84)
+    local secondary
+    if noAutoClose then
+        secondary = makeFrame("SecondaryPanel", 260, 300)
+        secondary.protected = true
+        secondary:NativeSetPoint("TOPLEFT", pve, "TOPRIGHT", 20, -20)
+        secondary:Show()
+    end
     local settings = makeFrame("ApplicantScoutSettingsFrame", 280, 120, pve)
     settings:NativeSetPoint("TOPLEFT", pve, "TOPLEFT", 20, -20)
     local tooltip = makeFrame("RaiderIO_ProfileTooltip", 160, 280)
     tooltip:NativeSetPoint("TOPLEFT", pve, "TOPRIGHT", 0, 0)
 
     local title = makeFrame("PVEFrameTitleContainer", 563, 30, pve)
+    local body = makeFrame("PVEFrameBody", 563, 398, pve)
+    local nested = makeFrame("PVEFrameNestedButton", 90, 24, body)
+    nested.objectType = "Button"
+    body.shown, nested.shown = true, true
+    body.children = { nested }
+    pve.children = { title, body, settings }
     pve.TitleContainer = title
     PVEFrame, CharacterFrame, PlayerSpellsFrame = pve, character, spellbook
+    SecondaryPanel = secondary
     ApplicantScoutSettingsFrame, RaiderIO_ProfileTooltip = settings, tooltip
-    UIPanelWindows = {
-        PVEFrame = { area = "left" },
-        CharacterFrame = { area = "left" },
-        PlayerSpellsFrame = { area = "left" },
-    }
+    if noAutoClose then
+        -- NoAutoClose unregisters managed windows and moves their names to
+        -- UISpecialFrames. The second root proves CharacterFrame is not special.
+        UIPanelWindows = {}
+        UISpecialFrames = {
+            "PVEFrame", "CharacterFrame", "PlayerSpellsFrame", "SecondaryPanel",
+        }
+    else
+        UIPanelWindows = {
+            PVEFrame = { area = "left" },
+            CharacterFrame = { area = "left" },
+            PlayerSpellsFrame = { area = "left" },
+        }
+        UISpecialFrames = {}
+    end
 
     local dockBusy = false
     local dockViaTooltip = false
@@ -279,9 +313,12 @@ local function newWorld()
         pve = pve,
         character = character,
         spellbook = spellbook,
+        secondary = secondary,
         settings = settings,
         tooltip = tooltip,
         title = title,
+        body = body,
+        nested = nested,
         dockCharacter = dockCharacter,
         useTooltip = function(enabled) dockViaTooltip = enabled end,
     }
@@ -293,27 +330,46 @@ local function assertStill(frame, left, top, label)
         label .. " moved with Group Finder")
 end
 
-local function dragAndCheck(world, newLeft)
-    local pve, character, title = world.pve, world.character, world.title
+local function dragAndCheck(world, newLeft, dragSurface)
+    local pve, character = world.pve, world.character
+    dragSurface = dragSurface or world.title
     local charLeft, charTop = character:GetLeft(), character:GetTop()
     local spellLeft, spellTop = world.spellbook:GetLeft(), world.spellbook:GetTop()
+    local secondaryLeft = world.secondary and world.secondary:GetLeft()
+    local secondaryTop = world.secondary and world.secondary:GetTop()
     local settingsPoint, settingsRelative = world.settings:GetPoint()
     local tooltipPoint, tooltipRelative = world.tooltip:GetPoint()
-    title.scripts.OnDragStart(title)
-    assert(pve.moving and pve.apsMoving, "Group Finder title drag did not start")
+    dragSurface.scripts.OnDragStart(dragSurface)
+    assert(pve.moving and pve.apsMoving, "Group Finder drag did not start")
     assert(select(2, character:GetPoint()) == UIParent,
         "dependent CharacterFrame was still anchored to Group Finder at drag start")
     assertStill(character, charLeft, charTop, "CharacterFrame at drag start")
+    if world.secondary then
+        assert(select(2, world.secondary:GetPoint()) == UIParent,
+            "UISpecialFrames dependent root was still anchored to Group Finder")
+        assertStill(world.secondary, secondaryLeft, secondaryTop,
+            "UISpecialFrames root at drag start")
+    end
     local skinRedocks = character.setPointCalls
     pve:SetPoint("TOPLEFT", UIParent, "TOPLEFT", newLeft, -150)
     assert(character.setPointCalls > skinRedocks,
         "skin SetPoint hook did not re-dock CharacterFrame during movement")
     renderFrame()
     assertStill(character, charLeft, charTop, "CharacterFrame during drag")
+    if world.secondary then
+        assertStill(world.secondary, secondaryLeft, secondaryTop,
+            "UISpecialFrames root during drag")
+    end
     assert(nearlyEqual(pve:GetLeft(), newLeft), "Group Finder did not move")
-    title.scripts.OnDragStop(title)
+    dragSurface.scripts.OnDragStop(dragSurface)
     renderFrame()
     assertStill(character, charLeft, charTop, "CharacterFrame after drag")
+    if world.secondary then
+        assertStill(world.secondary, secondaryLeft, secondaryTop,
+            "UISpecialFrames root after drag")
+        assert(world.secondary.secureSetPointCalls > 0,
+            "UISpecialFrames root was not independently detached")
+    end
     assertStill(world.spellbook, spellLeft, spellTop, "PlayerSpellsFrame")
     assert(world.spellbook.secureSetPointCalls == 0,
         "ordinary PlayerSpellsFrame was unnecessarily detached")
@@ -343,6 +399,10 @@ assert(world.character:GetPoint() == "TOPLEFT"
        and select(2, world.character:GetPoint()) == world.pve,
     "skin did not dock CharacterFrame to Group Finder")
 dragAndCheck(world, 370)
+world.dockCharacter()
+dragAndCheck(world, 390, world.body)
+world.dockCharacter()
+dragAndCheck(world, 410, world.nested)
 
 -- Blizzard's native panel layout can re-anchor PVEFrame after a completed
 -- drag. The subsequent addon SetPoint invokes the skin's docking hook even
@@ -352,7 +412,7 @@ world.pve:NativeSetPoint("TOPLEFT", UIParent, "TOPLEFT", 100, -84)
 local relayoutCharacterLeft = world.character:GetLeft()
 local relayoutCharacterTop = world.character:GetTop()
 scanTick()
-assert(nearlyEqual(world.pve:GetLeft(), 370),
+assert(nearlyEqual(world.pve:GetLeft(), 410),
     "ticker did not restore the session Group Finder position")
 assertStill(world.character, relayoutCharacterLeft, relayoutCharacterTop,
     "CharacterFrame during ticker restore")
@@ -495,4 +555,20 @@ assert(select(2, world.character:GetPoint()) == world.pve,
     "scaled CharacterFrame did not dock before movement")
 dragAndCheck(world, 290)
 
-print("ok pve-frame-docking direct=1 reverse=1 raiderio=1 repeat=1 combat=guarded reload=fresh scale=mixed")
+-- NoAutoClose removes CharacterFrame and other managed windows from
+-- UIPanelWindows. Both the character panel and another UISpecialFrames root
+-- must stay put when they are anchored to the Finder.
+world = newWorld(true)
+local noAutoCloseHarness = env.load_addon({})
+noAutoCloseHarness.FireEvent("ADDON_LOADED", "ApplicantScout")
+noAutoCloseHarness.SetupPVEFrameMovement()
+world.pve:Show()
+world.character:Show()
+assert(UIPanelWindows.CharacterFrame == nil
+       and UISpecialFrames[2] == "CharacterFrame",
+    "NoAutoClose fixture left CharacterFrame in UIPanelWindows")
+assert(select(2, world.character:GetPoint()) == world.pve,
+    "NoAutoClose fixture did not dock CharacterFrame")
+dragAndCheck(world, 350)
+
+print("ok pve-frame-docking surfaces=title/body/nested direct=1 reverse=1 raiderio=1 repeat=1 combat=guarded reload=fresh scale=mixed noautoclose=special")

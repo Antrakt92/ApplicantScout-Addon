@@ -56,6 +56,9 @@ PVEFrame = nil
 ---@type table<string, table>?
 UIPanelWindows = nil
 
+---@type string[]?
+UISpecialFrames = nil
+
 ---@class PixelUtilAPI
 ---@field ConvertPixelsToUIForRegion fun(desiredPixels: number, region: any): number
 ---@type PixelUtilAPI?

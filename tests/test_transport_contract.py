@@ -3081,11 +3081,12 @@ def test_settings_panel_watcher_is_singleton_until_runtime_attachment(pytestconf
     )
 
 
-def test_group_finder_title_drag_and_relayout_recovery(pytestconfig):
+def test_group_finder_surface_drag_and_relayout_recovery(pytestconfig):
     output = _run_lua_script(pytestconfig, LUA_PVE_FRAME_MOVEMENT_CHECK).strip()
 
     assert output.splitlines()[-1] == (
-        "ok pve-frame-movement session-only=1 point-pair=preserved combat=guarded"
+        "ok pve-frame-movement surfaces=root/body/nested controls=preserved "
+        "combat=guarded blizzmove=skipped"
     )
 
 

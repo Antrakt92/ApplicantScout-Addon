@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.12.0 - 24-Sep-2026 - Group Finder movement and past-season ratings
+
+Paired release with ApplicantScout Companion `0.20.0`.
+
+- Drag Group Finder from its background, title or buttons outside combat.
+  Normal clicks, text fields, sliders and controls with their own drag actions
+  keep working.
+- Keep other open windows stationary while moving Group Finder, including
+  windows managed by NoAutoClose or EllesmereUI. When BlizzMove is enabled,
+  let it handle movement.
+- Keep Group Finder's position during the current UI session and panel changes.
+  Reloading returns it to the default position without restoring an old saved
+  location.
+- The paired companion shows approximate past-season character, main and Warband
+  ratings from the installed RaiderIO database. The RIO column adds the highest
+  available historical score as `S1 4024`, unless it is below the character's
+  current rating. Missing data stays hidden; history does not change Fit or
+  sorting.
+- Keep the companion table compact and show the history sources in player
+  details and tooltips. Preserve ratings during roster refreshes.
+- Find WoW's Screenshots folder again after moving the game to another drive.
+- Thanks to @yoyo-boop862 for the historical Raider.IO idea in Companion #22.
+
 ## 0.11.1 - 16-Sep-2026 - Raid Fit and overlay controls
 
 Paired release with ApplicantScout Companion `0.19.1`.

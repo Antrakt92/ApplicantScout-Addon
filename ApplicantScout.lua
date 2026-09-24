@@ -2444,16 +2444,16 @@ _TryHookInfoPanels = function()
 end
 
 -- ───────────────────────────────────────────────────────────
--- PVEFrame movement (title drag, current UI session only)
+-- PVEFrame movement (window drag, current UI session only)
 --
--- Only PVEFrame gets a drag handler. Independent root panels docked to it
+-- Drag surfaces move only PVEFrame. Independent root panels docked to it
 -- keep their screen positions; its child controls and companion tooltips follow.
 -- Protected movement may fail during combat transitions, so interrupted stops
 -- and position repairs are retried outside combat without hooking Show/Hide.
 --
--- WHY title-bar-only drag (NOT whole-frame): clicking applicant
--- buttons / tabs inside PVEFrame must NOT initiate a window drag. Drag from
--- TitleContainer keeps child clicks intact.
+-- Drag registration uses the client's movement threshold, so ordinary clicks
+-- keep their handlers. Text selection, sliders and existing native drag
+-- controls keep ownership of their gestures.
 --
 -- WHY pcall on initial SetMovable: future Blizzard policy change could
 -- protect this method on PVEFrame. Pcall fails soft → user falls back to
@@ -2565,8 +2565,23 @@ entryCreationKeyState.CapturePVEDockedPanels = function(panels)
     if InCombatLockdown() then return panels end
     local knownPanels = entryCreationKeyState.pveIndependentPanels or {}
     entryCreationKeyState.pveIndependentPanels = knownPanels
-    for name in pairs(_G.UIPanelWindows or {}) do
+    -- Other window managers can remove roots from UIPanelWindows while their
+    -- frames and skin anchors remain active. Include escape-close roots too.
+    local candidates = {}
+    local function addNamedPanel(name)
+        if IsSecretValue(name) or type(name) ~= "string" then return end
         local panel = _G[name]
+        if not IsSecretValue(panel) and panel then candidates[panel] = true end
+    end
+    for name in pairs(_G.UIPanelWindows or {}) do
+        addNamedPanel(name)
+    end
+    for _, name in ipairs(UISpecialFrames or {}) do
+        addNamedPanel(name)
+    end
+    addNamedPanel("CharacterFrame")
+    for panel in pairs(knownPanels) do candidates[panel] = true end
+    for panel in pairs(candidates) do
         if panel and panel ~= PVEFrame and not panels[panel] then
             -- A forbidden/restricted or incompletely loaded panel is not ours
             -- to position. Do not turn a skin compatibility issue into an error.
@@ -2656,6 +2671,9 @@ end
 
 entryCreationKeyState.MaybeRestorePVEFramePositionFromTicker = function()
     if not _G.PVEFrame then return end
+    if PVEFrame.apsMovementSetup and PVEFrame:IsShown() and not InCombatLockdown() then
+        entryCreationKeyState.RefreshPVEDragSurfaces()
+    end
     if PVEFrame.apsStopPending then
         if InCombatLockdown() then return end
         if not pcall(PVEFrame.StopMovingOrSizing, PVEFrame) then return end
@@ -2765,6 +2783,7 @@ end
 
 local function _OnPVEFrameDragStop()
     if not PVEFrame.apsMoving then return end
+    entryCreationKeyState.pveActiveDragSurface = nil
     local stopped = pcall(PVEFrame.StopMovingOrSizing, PVEFrame)
     PVEFrame.apsMoving = false
     PVEFrame.apsStopPending = not stopped or nil
@@ -2787,6 +2806,82 @@ local function _OnPVEFrameDragStop()
     end
 end
 
+entryCreationKeyState.RefreshPVEDragSurfaces = function()
+    if InCombatLockdown() or not _G.PVEFrame then return end
+    local hooked = entryCreationKeyState.pveDragSurfaces or {}
+    entryCreationKeyState.pveDragSurfaces = hooked
+    local remaining = 2048
+    local function visit(surface, depth)
+        if not surface or depth > 16 or remaining <= 0 then return end
+        remaining = remaining - 1
+        if surface == settingsFrame
+           or (surface.GetName and surface:GetName() == "ApplicantScoutSettingsFrame")
+           or (surface.IsForbidden and surface:IsForbidden()) then return end
+        if surface ~= PVEFrame and surface ~= PVEFrame.TitleContainer
+           and surface.IsShown and not surface:IsShown() then return end
+        -- Exclude whole control subtrees: a slider thumb or edit-box child
+        -- must not become a competing drag surface.
+        if surface.IsObjectType and (surface:IsObjectType("EditBox")
+           or surface:IsObjectType("Slider")) then return end
+        -- Modern scrollbars are Frames with anonymous Button thumbs. They
+        -- implement dragging through OnMouseDown rather than OnDragStart.
+        if type(surface.GetThumb) == "function"
+           and type(surface.OnThumbMouseDown) == "function" then return end
+        if surface.EditBox and surface.EditBox.IsObjectType
+           and surface.EditBox:IsObjectType("EditBox") then return end
+        if not hooked[surface] and surface.GetScript then
+            for _, script in ipairs({ "OnDragStart", "OnDragStop", "OnReceiveDrag" }) do
+                if (not surface.HasScript or surface:HasScript(script))
+                   and surface:GetScript(script) then return end
+            end
+        end
+        local mouseEnabled = surface == PVEFrame or surface == PVEFrame.TitleContainer
+            or (surface.IsMouseEnabled and surface:IsMouseEnabled())
+        if mouseEnabled and not hooked[surface] and surface.RegisterForDrag
+           and surface.HookScript then
+            -- Parent checks matter for pooled rows that another panel may reuse.
+            local function stillInFinder()
+                local ancestor = surface
+                for _ = 0, 16 do
+                    if IsSecretValue(ancestor) then return false end
+                    if ancestor == PVEFrame then return true end
+                    if not ancestor or not ancestor.GetParent then return false end
+                    ancestor = ancestor:GetParent()
+                end
+                return false
+            end
+            local ok = pcall(function()
+                surface:RegisterForDrag("LeftButton")
+                surface:HookScript("OnDragStart", function(_, button)
+                    if not PVEFrame.apsMoving
+                       and (not button or button == "LeftButton") and stillInFinder() then
+                        _OnPVEFrameDragStart()
+                        if PVEFrame.apsMoving then
+                            entryCreationKeyState.pveActiveDragSurface = surface
+                        end
+                    end
+                end)
+                surface:HookScript("OnDragStop", function()
+                    if entryCreationKeyState.pveActiveDragSurface == surface then
+                        _OnPVEFrameDragStop()
+                        entryCreationKeyState.pveActiveDragSurface = nil
+                    end
+                end)
+            end)
+            if ok then hooked[surface] = true end
+        end
+        if surface.GetChildren then
+            for _, child in ipairs({ surface:GetChildren() }) do
+                -- Restricted descendants are isolated from the rest of the tree.
+                pcall(visit, child, depth + 1)
+            end
+        end
+    end
+    pcall(visit, PVEFrame, 0)
+    -- Some skins expose the title separately from the usual child tree.
+    pcall(visit, PVEFrame.TitleContainer, 1)
+end
+
 _SetupPVEFrameMovement = function()
     if not _G.PVEFrame then return end
     if PVEFrame.apsMovementSetup then return end  -- idempotent
@@ -2796,9 +2891,6 @@ _SetupPVEFrameMovement = function()
        and C_AddOns.IsAddOnLoaded("BlizzMove") then
         return
     end
-
-    local titleRegion = PVEFrame.TitleContainer
-    if not titleRegion then return end
 
     -- Defensive: future Blizzard patch might protect SetMovable on PVEFrame.
     -- Pcall fail-soft so addon load doesn't crash.
@@ -2810,20 +2902,16 @@ _SetupPVEFrameMovement = function()
     end
     PVEFrame:SetClampedToScreen(true)
 
-    -- Only the actual title strip may initiate a plain drag. The NineSlice
-    -- and PVEFrame cover interactive tabs and applicant controls.
-    titleRegion:EnableMouse(true)
-    titleRegion:RegisterForDrag("LeftButton")
-    -- HookScript chains atop any existing handler. PVEFrame's title widgets
-    -- don't register OnDragStart by default in 12.x, but HookScript is
-    -- forward-compatible if Blizzard adds one later.
-    titleRegion:HookScript("OnDragStart", _OnPVEFrameDragStart)
-    titleRegion:HookScript("OnDragStop", _OnPVEFrameDragStop)
+    PVEFrame:EnableMouse(true)
+    if PVEFrame.TitleContainer then PVEFrame.TitleContainer:EnableMouse(true) end
+    entryCreationKeyState.RefreshPVEDragSurfaces()
 
     local watcher = CreateFrame("Frame")
     watcher:Hide()
     watcher:SetScript("OnUpdate", function()
-        if not PVEFrame.apsMoving or not PVEFrame:IsShown() or InCombatLockdown() then
+        local activeSurface = entryCreationKeyState.pveActiveDragSurface
+        if not PVEFrame.apsMoving or not PVEFrame:IsShown() or InCombatLockdown()
+           or (activeSurface and activeSurface.IsVisible and not activeSurface:IsVisible()) then
             _OnPVEFrameDragStop()
             watcher:Hide()
             return

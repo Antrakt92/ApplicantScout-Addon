@@ -38,6 +38,8 @@ alone does not display them.*
 - **Grouped applications:** each member's results and a combined Fit estimate.
 - **Your party or raid:** review the roster after inviting players or joining a group.
 - **Experience:** dungeon history for Mythic+ and raid progress where data is available.
+- **Past seasons:** available local RaiderIO ratings, with the highest shown
+  below the current rating when it is at least as high. Missing history is hidden.
 
 The addon can default new M+ listings to Competitive. Choose another playstyle
 or turn it off in settings. Auto Hi greetings are optional.
@@ -130,7 +132,9 @@ the wrong folder, or the Screenshots folder is synced/shared before cleanup.
   It waits until combat, an active Mythic+ run, or a boss encounter ends.
 - **Move the QR frame:** run `/apscout qrmove`, Alt-drag the frame, then run the
   command again to lock it. `/apscout qrreset` restores its default position.
-- **Move the Group Finder window:** drag its title bar outside combat. Its
+- **Move the Group Finder window:** left-drag its background, title or buttons
+  outside combat. Normal clicks still work; text fields, sliders and controls
+  with their own drag actions keep those actions. Its
   position is kept while this UI session is running; `/reload` returns it to
   Blizzard's default position.
   Other open Blizzard windows stay in place while you drag Group Finder,
