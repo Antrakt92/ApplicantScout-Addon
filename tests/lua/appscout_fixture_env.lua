@@ -355,4 +355,16 @@ env.load_addon = function(qr)
     return fixtureHarness
 end
 
+-- Session start is user-visible by design (one chat line per StartSession),
+-- so checks with byte-exact or hex-parsed stdout must silence it around the
+-- transition. Follows the existing per-check `print = function() end` pattern.
+env.start_session_quietly = function(harness)
+    assert(type(harness) == "table" and type(harness.StartSession) == "function",
+        "session harness is unavailable")
+    local saved_print = print
+    print = function() end
+    harness.StartSession()
+    print = saved_print
+end
+
 return env

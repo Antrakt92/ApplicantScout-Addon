@@ -902,6 +902,10 @@ StartSession = function()
     -- the same visibility coordinator.
     suppressShotsUntil = 0
     _RefreshQRVisibility()
+    -- Single user-visible confirmation per session start. Transport is one-way
+    -- (screenshots out, nothing back), so this line is the only in-game proof
+    -- that the companion should start updating its overlay.
+    APSPrint("session started — emitting; overlay should update in the companion")
 end
 
 EndSession = function()
@@ -1741,6 +1745,29 @@ local function CreateQRFrame()
     qrBackground:SetColorTexture(1, 1, 1, 1)
     qrBackground:SetAllPoints(qrFrame)
 
+    -- Move-mode affordance: thin gold edge + "Alt+drag" caption above the
+    -- frame, stored on the frame (no chunk-local budget spent). Both start
+    -- hidden; _RefreshQRVisibility toggles them so paint/capture leases never
+    -- include affordance pixels in a screenshot the companion decodes.
+    local moveEdges = {}
+    local function addMoveEdge(anchorA, anchorB, xA, yA, xB, yB)
+        local edge = qrFrame:CreateTexture(nil, "OVERLAY")
+        edge:SetColorTexture(1, 0.82, 0, 1)
+        edge:SetPoint(anchorA, qrFrame, anchorA, xA, yA)
+        edge:SetPoint(anchorB, qrFrame, anchorB, xB, yB)
+        edge:Hide()
+        moveEdges[#moveEdges + 1] = edge
+    end
+    addMoveEdge("TOPLEFT", "TOPRIGHT", 0, 0, 0, -2)
+    addMoveEdge("BOTTOMLEFT", "BOTTOMRIGHT", 0, 2, 0, 0)
+    addMoveEdge("TOPLEFT", "BOTTOMLEFT", 0, 0, 2, 0)
+    addMoveEdge("TOPRIGHT", "BOTTOMRIGHT", -2, 0, 0, 0)
+    qrFrame.apsMoveEdges = moveEdges
+    local moveCaption = qrFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    moveCaption:SetPoint("BOTTOM", qrFrame, "TOP", 0, 4)
+    moveCaption:SetText("")
+    qrFrame.apsMoveCaption = moveCaption
+
     qrFrameCreated = true
     -- Hidden by default unless the persisted support override is enabled.
     -- Screenshot dispatch otherwise takes a temporary visibility lease only
@@ -1928,6 +1955,22 @@ _RefreshQRVisibility = function()
         pendingShotDirty = true  -- scan-tick drain retries post-grace
     elseif not shouldShow and wasShown then
         qrFrame:Hide()
+    end
+    -- Move-mode affordance ("Alt+drag" caption + gold edge). Visible only for
+    -- manual positioning: hidden while a paint/capture job owns the frame so
+    -- affordance pixels can never land in a decoded screenshot.
+    local showMoveHint = qrMoveMode
+        and not entryCreationKeyState.qrPaintInProgress
+        and not entryCreationKeyState.qrCaptureInProgress
+    local moveCaption = qrFrame.apsMoveCaption
+    if moveCaption then
+        moveCaption:SetText(showMoveHint and "Alt+drag to move" or "")
+    end
+    local moveEdges = qrFrame.apsMoveEdges
+    if moveEdges then
+        for i = 1, #moveEdges do
+            if showMoveHint then moveEdges[i]:Show() else moveEdges[i]:Hide() end
+        end
     end
 end
 
@@ -2997,7 +3040,8 @@ local function EnsureScreenshotCVars(quiet)
         if verifyFormat:lower() ~= "jpg" then
             if APSPrint and entryCreationKeyState.ShouldPrintScreenshotCVarWarn() then
                 APSPrint("WARN: screenshotFormat SetCVar didn't stick (read back " ..
-                         verifyFormat .. "); QR transport expects JPG screenshots")
+                         verifyFormat .. "); QR transport expects JPG screenshots"
+                         .. " — set screenshotFormat back to jpg (another addon may force it); see /apscout setup")
             end
         elseif APSPrint and not quiet then
             APSPrint("set screenshotFormat=jpg (was " .. currentFormat ..
@@ -6754,7 +6798,8 @@ entryCreationKeyState.RecoverStalledQRTransport = function(now)
        and (not lastPrintAt
             or now - lastPrintAt >= entryCreationKeyState.QR_RECOVERY_NOTICE_COOLDOWN_S) then
         entryCreationKeyState.qrTransportLastRecoveryPrintAt = now
-        APSPrint("WARN: recovered stalled QR " .. phase .. " job; retrying latest snapshot")
+        APSPrint("WARN: recovered stalled QR " .. phase .. " job; retrying latest snapshot"
+            .. " — no action needed, or /apscout shotnow for a fresh snapshot")
     end
 
     if wasTerminalClear and not isSessionActive then
@@ -7025,7 +7070,8 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         entryCreationKeyState.qrOverflowLastFailure = reason
         pendingShotDirty = false
         if APSPrint and entryCreationKeyState.ShouldPrintQREncodeFailure() then
-            APSPrint("QR transport failed: " .. reason)
+            APSPrint("QR transport failed: " .. reason
+                .. " — run /apscout shotnow; if it repeats, /apscout setup and leave screenshot CVars alone")
         end
         return
     end
@@ -8482,7 +8528,7 @@ _AttachSettingsPanel = function()
         settingsFrame,
         "UICheckButtonTemplate"
     )
-    enabledCheckbox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -28)
+    enabledCheckbox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -24)
     _StyleCheckboxLabel(enabledCheckbox, "Enable applicant scouting")
     enabledCheckbox:SetScript("OnClick", function(self)
         _SetEnabled(not not self:GetChecked())
@@ -8565,12 +8611,12 @@ _AttachSettingsPanel = function()
 
     local autoHiDivider = settingsFrame:CreateTexture(nil, "ARTWORK")
     autoHiDivider:SetColorTexture(1, 1, 1, 0.14)
-    autoHiDivider:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -63)
-    autoHiDivider:SetPoint("TOPRIGHT", settingsFrame, "TOPRIGHT", -_SETTINGS_LEFT_PAD, -63)
+    autoHiDivider:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -52)
+    autoHiDivider:SetPoint("TOPRIGHT", settingsFrame, "TOPRIGHT", -_SETTINGS_LEFT_PAD, -52)
     autoHiDivider:SetHeight(1)
 
     local autoHiLabel = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    autoHiLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -77)
+    autoHiLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -64)
     autoHiLabel:SetText("Auto Hi")
 
     local autoHiEditBox = CreateFrame(
@@ -8584,21 +8630,45 @@ _AttachSettingsPanel = function()
     autoHiEditBox:SetSize(190, 22)
     autoHiEditBox:SetAutoFocus(false)
     autoHiEditBox:SetMaxBytes(entryCreationKeyState.AUTO_HI_MAX_BYTES)
+    -- Live preview of what the greeting will do. Function-scoped: only the
+    -- panel consumes it, and the text updates on every edit/show/sync.
+    local function _SyncAutoHiPreview()
+        local preview = settingsFrame.autoHiPreview
+        if not preview then return end
+        local message = ApplicantScoutDB and ApplicantScoutDB.autoHiMessage or ""
+        if message == "" then
+            preview:SetText("Auto Hi: off — type a greeting to enable it")
+            return
+        end
+        local channel = "PARTY"
+        if type(entryCreationKeyState.AutoHiChatChannel) == "function" then
+            local ok, resolved = pcall(entryCreationKeyState.AutoHiChatChannel)
+            if ok and type(resolved) == "string" and resolved ~= "" then
+                channel = resolved
+            end
+        end
+        if #message > 48 then message = message:sub(1, 45) .. "..." end
+        preview:SetText("Will send to " .. channel .. " on join: " .. message)
+    end
     autoHiEditBox:SetScript("OnTextChanged", function(self, userInput)
         if entryCreationKeyState.autoHiEditBoxSyncing or not userInput then return end
         ApplicantScoutDB.autoHiMessage =
             entryCreationKeyState.NormalizeAutoHiMessage(self:GetText())
+        _SyncAutoHiPreview()
     end)
     autoHiEditBox:SetScript("OnEnterPressed", function(self)
         entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)
+        _SyncAutoHiPreview()
         self:ClearFocus()
     end)
     autoHiEditBox:SetScript("OnEscapePressed", function(self)
         entryCreationKeyState.SyncAutoHiEditBox()
+        _SyncAutoHiPreview()
         self:ClearFocus()
     end)
     autoHiEditBox:SetScript("OnEditFocusLost", function(self)
         entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)
+        _SyncAutoHiPreview()
     end)
     _SetWidgetTooltip(
         autoHiEditBox,
@@ -8631,6 +8701,18 @@ _AttachSettingsPanel = function()
         "Also send this greeting 10 seconds after a new player joins your party. Disabled in raids."
     )
 
+    local autoHiPreview = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    settingsFrame.autoHiPreview = autoHiPreview
+    autoHiPreview:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -88)
+    autoHiPreview:SetWidth(_SETTINGS_FRAME_WIDTH - _SETTINGS_LEFT_PAD * 2)
+    autoHiPreview:SetJustifyH("LEFT")
+    _SetWidgetTooltip(
+        autoHiPreview,
+        "Auto Hi preview",
+        "What happens with the current greeting text. The channel follows your current group (party, raid, or instance chat)."
+    )
+    _SyncAutoHiPreview()
+
     -- Re-sync checkboxes from DB on each show. Handles slash-toggle-while-
     -- panel-was-hidden case: open via /apscout config → checkboxes reflect DB truth.
     settingsFrame:HookScript("OnShow", function()
@@ -8639,6 +8721,7 @@ _AttachSettingsPanel = function()
             ApplicantScoutDB.autoHiGreetNewPartyMembers)
         _SyncAutoMPlusPlaystyleDropdown()
         entryCreationKeyState.SyncAutoHiEditBox()
+        _SyncAutoHiPreview()
     end)
 
     enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
@@ -8646,11 +8729,18 @@ _AttachSettingsPanel = function()
         ApplicantScoutDB.autoHiGreetNewPartyMembers and true or false)
     _SyncAutoMPlusPlaystyleDropdown()
     entryCreationKeyState.SyncAutoHiEditBox()
+    _SyncAutoHiPreview()
 
     settingsFrameAttached = true  -- LAST: any earlier failure leaves false → retry next PLAYER_LOGIN
 end
 
 entryCreationKeyState.ToggleSettingsPanel = function()
+    -- Protected frames cannot be shown/moved in combat; fail early with an
+    -- actionable line instead of a silent no-op or a taint-risky toggle.
+    if InCombatLockdown and InCombatLockdown() then
+        APSPrint("settings unavailable in combat — leave combat and retry")
+        return false, "combat"
+    end
     if not settingsFrameAttached then _AttachSettingsPanel() end
     local parent = _G.PVEFrame
     if not settingsFrame or not parent then
@@ -8689,9 +8779,36 @@ end
 -- ───────────────────────────────────────────────────────────
 -- slash commands
 
+-- Short user summary for `/apscout status` (stays <=15 lines). The full
+-- QR-transport diagnostics live in PrintTroubleshootingStatus, reachable via
+-- `/apscout status diag` under the same "status" slash root so help/README
+-- copy stays synchronized through the single status line in PrintHelp.
+entryCreationKeyState.PrintShortStatus = function()
+    entryCreationKeyState.RefreshQRGameplaySuppression()
+    print("|cff00ff7fApplicantScout|r status:")
+    print("  enabled: " .. tostring(ApplicantScoutDB and ApplicantScoutDB.enabled))
+    print("  session: " .. (isSessionActive
+          and ("active (gen " .. tostring(sessionGen) .. ")") or "idle"))
+    local suppressed = entryCreationKeyState.qrGameplaySuppressed == true
+    print("  suppressed: " .. (suppressed
+          and ("yes (" .. tostring(entryCreationKeyState.qrGameplaySuppressionReason) .. ")")
+          or "no"))
+    local qrVisible = qrFrame and qrFrame:IsShown() or false
+    print("  QR: " .. (qrVisible and "visible" or "hidden")
+          .. ", " .. string.format("%.0f", qrCurrentSize) .. "px"
+          .. ", " .. _CurrentQRPositionText())
+    print("  last shot: " .. (lastShotTime > 0
+          and string.format("%.1fs ago", GetTime() - lastShotTime) or "never"))
+    local debugOn = ApplicantScoutDB and ApplicantScoutDB.debug == true
+    print("  debug: " .. (debugOn and "ON — turn it off with /apscout debug off" or "off"))
+    print("  companion: unknown — one-way transport; if the overlay is empty, check the Screenshots folder in the app")
+    print("  details: /apscout status diag")
+end
+
 entryCreationKeyState.PrintTroubleshootingStatus = function()
     print("|cff00ff7fApplicantScout|r status:")
     print("  enabled: " .. tostring(ApplicantScoutDB.enabled))
+    print("  debug: " .. tostring(ApplicantScoutDB and ApplicantScoutDB.debug))
     print("  M+ default playstyle: " .. _GetAutoMPlusPlaystyleStatusText())
     print("  settings panel attached: " .. tostring(settingsFrameAttached))
     print("  session active: " .. tostring(isSessionActive))
@@ -9018,6 +9135,11 @@ SlashCmdList.APSCOUT = function(msg)
     elseif msg == "setup" then
         entryCreationKeyState.ShowCompanionSetup()
     elseif msg == "status" then
+        -- Short user summary (<=15 lines). The full QR-transport diagnostics
+        -- stay one branch below under "status diag"; both share the "status"
+        -- slash root so the help/README command contract stays synchronized.
+        entryCreationKeyState.PrintShortStatus()
+    elseif msg == "status diag" then
         entryCreationKeyState.PrintTroubleshootingStatus()
     elseif msg == "taintcheck" then
         -- One-shot diagnostic. Slash-handler frame is hardware-event-rooted
@@ -9107,6 +9229,87 @@ SlashCmdList.APSCOUT = function(msg)
     end
 end
 
+
+-- Native discovery hooks: addon compartment entry (click opens the same
+-- settings panel, tooltip shows enabled/session/suppressed) plus a proxy entry
+-- in the new Settings API opening that same panel. No minimap icon by design:
+-- slash + settings panel stay the baseline; these hooks only surface them in
+-- normal WoW UI chrome. Everything is guarded so missing APIs (older clients,
+-- fixture harness) stay inert.
+do
+    local function openApplicantScoutConfig()
+        entryCreationKeyState.ToggleSettingsPanel()
+    end
+
+    local function showCompartmentTooltip(button)
+        local tooltip = _G.GameTooltip
+        if not tooltip then return end
+        tooltip:SetOwner(button, "ANCHOR_LEFT")
+        tooltip:SetText("ApplicantScout")
+        local dbEnabled = ApplicantScoutDB and ApplicantScoutDB.enabled
+        tooltip:AddLine("Enabled: " .. tostring(dbEnabled == true))
+        tooltip:AddLine("Session: " .. (isSessionActive and "active" or "idle"))
+        entryCreationKeyState.RefreshQRGameplaySuppression()
+        local suppressed = entryCreationKeyState.qrGameplaySuppressed == true
+        tooltip:AddLine("Suppressed: " .. (suppressed
+            and tostring(entryCreationKeyState.qrGameplaySuppressionReason) or "no"))
+        tooltip:AddLine("Click: open settings")
+        tooltip:Show()
+    end
+
+    local function hideCompartmentTooltip()
+        local tooltip = _G.GameTooltip
+        if tooltip then tooltip:Hide() end
+    end
+
+    local function registerCompartmentEntry()
+        local compartment = _G.AddonCompartmentFrame
+        if not compartment or type(compartment.RegisterAddon) ~= "function" then return end
+        pcall(compartment.RegisterAddon, compartment, {
+            text = "ApplicantScout",
+            icon = "Interface\\AddOns\\ApplicantScout\\media\\logo.png",
+            notCheckable = true,
+            registerForAnyLoad = true,
+            func = openApplicantScoutConfig,
+            funcOnEnter = showCompartmentTooltip,
+            funcOnLeave = hideCompartmentTooltip,
+        })
+    end
+
+    local function registerSettingsProxy()
+        local addonSettings = _G.Settings
+        if type(addonSettings) ~= "table" then return end
+        if type(addonSettings.RegisterCanvasLayoutCategory) ~= "function" then return end
+        local proxy = CreateFrame("Frame", "ApplicantScoutSettingsProxy")
+        local title = proxy:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        title:SetPoint("TOPLEFT", 16, -16)
+        title:SetText("ApplicantScout")
+        local hint = proxy:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        hint:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+        hint:SetWidth(500)
+        hint:SetJustifyH("LEFT")
+        hint:SetText("ApplicantScout settings live next to the Group Finder window.")
+        local openButton = CreateFrame("Button", nil, proxy, "UIPanelButtonTemplate")
+        openButton:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", 0, -12)
+        openButton:SetSize(180, 26)
+        openButton:SetText("Open settings")
+        openButton:SetScript("OnClick", openApplicantScoutConfig)
+        local ok, category =
+            pcall(addonSettings.RegisterCanvasLayoutCategory, proxy, "ApplicantScout")
+        if ok and category
+           and type(addonSettings.RegisterAddOnCategory) == "function" then
+            pcall(addonSettings.RegisterAddOnCategory, category)
+        end
+    end
+
+    local watcher = CreateFrame("Frame")
+    watcher:RegisterEvent("PLAYER_LOGIN")
+    watcher:SetScript("OnEvent", function()
+        InitDB()
+        registerCompartmentEntry()
+        registerSettingsProxy()
+    end)
+end
 
 -- Setup is account-wide and independent of transport: QR has no return channel
 -- that could establish whether the Windows app is installed or running.

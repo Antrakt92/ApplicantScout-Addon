@@ -52,6 +52,12 @@ LE_PARTY_CATEGORY_INSTANCE = 2
 LibStub = nil
 ---@type any
 PVEFrame = nil
+---@type any
+AddonCompartmentFrame = nil
+---@type any
+GameTooltip = nil
+---@type any
+Settings = nil
 
 ---@type table<string, table>?
 UIPanelWindows = nil

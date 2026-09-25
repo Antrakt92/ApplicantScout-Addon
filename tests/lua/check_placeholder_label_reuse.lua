@@ -38,7 +38,7 @@ local entry = {
 local payload = assert(harness.BuildPayload)(entry, applicantIDs, false)
 local firstBuildGsubs = gsubCount
 
-harness.StartSession()
+env.start_session_quietly(harness)
 gsubCount = 0
 local repeatedPayload = assert(harness.BuildPayload)(entry, applicantIDs, false)
 local repeatedBuildGsubs = gsubCount

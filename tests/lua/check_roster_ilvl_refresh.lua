@@ -21,7 +21,7 @@ C_PaperDollInfo.GetInspectItemLevel = function(unit)
 end
 
 local harness = env.load_addon()
-harness.StartSession()
+env.start_session_quietly(harness)
 local entry = { activityIDs = { 401 }, name = "+16 Fixture Halls", comment = "" }
 local function WriteSnapshot()
     now = now + 1

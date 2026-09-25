@@ -1,4 +1,17 @@
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
+-- Session start is user-visible by design (one chat line per StartSession,
+-- including scan-tick-driven transitions). Filter exactly that line for the
+-- whole run so byte-exact stdout assertions stay stable while failure
+-- notices and the final ok line still pass through. Stored on env: this
+-- chunk is at the Lua 5.1 local budget, no new local.
+env.fixture_print = print
+print = function(message, ...)
+    if type(message) == "string"
+       and string.find(message, "session started", 1, true) then
+        return
+    end
+    return env.fixture_print(message, ...)
+end
 local fixture_mode = arg and arg[1] or "applicants"
 local restart_phase = fixture_mode == "restart-race" and arg and arg[2] or nil
 local idle_force_phase = fixture_mode == "disable-idle-force" and arg and arg[2] or nil
@@ -669,7 +682,7 @@ if diagnostic_api_errors then
     end
 
     local taintOK = pcall(SlashCmdList.APSCOUT, "taintcheck")
-    local statusOK = pcall(SlashCmdList.APSCOUT, "status")
+    local statusOK = pcall(SlashCmdList.APSCOUT, "status diag")
 
     print = originalPrint
     C_LFGList.GetApplicants = originalApplicants
@@ -910,7 +923,7 @@ local function start_fresh_session_after_staging()
     applicant_ids = { 91, 92 }
     restart_shots_before = #screenshot_times
     restart_attempts_before = screenshot_attempts
-    harness.StartSession()
+    env.start_session_quietly(harness)
     local state = harness.QRTransportState()
     assert(state.sessionActive, "fresh session did not start")
     assert(state.lastSnapshotHash == nil
@@ -1379,7 +1392,7 @@ for _ = 1, (overflow_interaction_close
                     comment = "fresh session after queued terminal",
                 }
             end
-            harness.StartSession()
+            env.start_session_quietly(harness)
             local restarted = harness.QRTransportState()
             assert(restarted.sessionActive
                    and not restarted.screenshotPendingForce
@@ -3051,5 +3064,6 @@ assert(screenshot_event_timeout or not final_state.screenshotAwaitingResult,
 assert(final_state.qrFrameStrata == "DIALOG",
     "QR capture did not restore DIALOG frame strata")
 
+print = env.fixture_print
 print(string.format("ok qr-capture-lifecycle mode=%s shots=%d attempts=%d",
     fixture_mode, #screenshot_times, screenshot_attempts))

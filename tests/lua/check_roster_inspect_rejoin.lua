@@ -57,7 +57,7 @@ local function WritePayload(payload)
     io.write("\n")
 end
 
-assert(harness.StartSession)()
+env.start_session_quietly(harness)
 WritePayload(assert(harness.BuildPayload)(entry, {}, false))
 
 if challengeMode then

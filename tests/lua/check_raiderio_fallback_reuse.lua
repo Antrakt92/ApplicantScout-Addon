@@ -74,7 +74,7 @@ assert(nilSummary == emptySummary, "nil lookup did not reuse zero summary")
 assert(validAfterNil.hasProfile, "nil-first RaiderIO lookup did not recover")
 harness.GetRaiderIOMPlusSummaryForCleanName("Tankone-Realm", 401, 15)
 assert(nilThenValidCalls == 2, "valid RaiderIO profile was not positively cached")
-harness.StartSession()
+env.start_session_quietly(harness)
 harness.GetRaiderIOMPlusSummaryForCleanName("Tankone-Realm", 401, 15)
 assert(nilThenValidCalls == 3, "session start did not reset RaiderIO profile cache")
 
