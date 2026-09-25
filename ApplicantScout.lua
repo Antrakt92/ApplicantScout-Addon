@@ -5622,6 +5622,19 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
         table.insert(out, string.char(0))
     end
 
+    -- Single player-identity read per snapshot. The version block needs the
+    -- full "Name-Realm" host name and bare same-realm applicants need the
+    -- player realm for RaiderIO lookups; deriving both from one cleaned
+    -- read keeps the 0.5s transport poll at a single UnitFullName("player").
+    -- The derived realm is a plain split of the already SafeStr-cleaned
+    -- name, so no additional API read can taint the transport.
+    local playerFullName = _UnitFullNameForTransport("player")
+    local playerRealm = ""
+    do
+        local dash = playerFullName:find("-", 1, true)
+        if dash then playerRealm = playerFullName:sub(dash + 1) end
+    end
+
     -- Version block — emitted in EVERY snapshot. Companion mid-session launch
     -- (user opens companion AFTER hosting LFG) misses session start; without
     -- VERSION in every shot, companion never learns realm/region and all
@@ -5638,9 +5651,10 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     table.insert(out, string.char(regionID))
     -- Secret-safety: the raw UnitFullName("player") read that used to live
     -- here ran without pcall/nil-guard on every snapshot. The single
-    -- pcall/SafeStr-cleaned helper below returns "" when the name is
+    -- pcall/SafeStr-cleaned helper above returns "" when the name is
     -- unavailable, so "?" still marks an unknown host exactly as before.
-    local fullName = _UnitFullNameForTransport("player")
+    -- The hoisted read is shared with the applicant realm below.
+    local fullName = playerFullName
     if fullName == "" then fullName = "?" end
     _PackCleanLenStr(out, fullName)
 
