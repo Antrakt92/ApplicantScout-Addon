@@ -96,7 +96,7 @@ local function poll(applicant_ids)
     return payload, deferred, roster_reads - before_reads
 end
 
-harness.StartSession()
+env.start_session_quietly(harness)
 -- StartSession owns unrelated roster-preflight/leader timers. Isolate the
 -- load-retry queue after its state initialization.
 timers = {}
@@ -217,7 +217,7 @@ timers = {}
 poll({})
 local stale_callback = take_timer(0.5)
 harness.EndSession()
-harness.StartSession()
+env.start_session_quietly(harness)
 timers = {}
 local fresh_state = harness.RosterLoadRetryState()
 assert(fresh_state.attempt == 0 and fresh_state.ready and not fresh_state.exhausted)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 
 import pytest
 
@@ -29,16 +29,16 @@ def _changelog(
     )
 
 
-def test_release_notes_include_current_and_all_previous_versions():
+def test_release_notes_include_only_current_version():
     notes = extract_release_notes(_changelog(), "v1.2.3")
 
     assert notes.startswith("## 1.2.3 - 22-Jul-2026 - Current release\n")
     assert "Fixed the current release" in notes
     assert "Unreleased" not in notes
     assert "Future work" not in notes
-    assert "1.2.2" in notes
-    assert "Historical work" in notes
-    assert notes.index("## 1.2.3") < notes.index("## 1.2.2")
+    assert "1.2.2" not in notes
+    assert "Historical work" not in notes
+    assert notes.count("\n## ") == 0
     assert notes.endswith("\n")
 
 
@@ -62,7 +62,7 @@ def test_release_notes_accept_promoted_changelog_without_unreleased(with_older_r
 
     notes = extract_release_notes(changelog, "v1.2.3")
 
-    assert notes == changelog[changelog.index("## 1.2.3") :].strip() + "\n"
+    assert notes == "## 1.2.3 - 22-Jul-2026 - Current release\n\n- Fixed the current release.\n"
 
 
 def test_release_notes_accept_empty_unreleased_section():
@@ -72,7 +72,7 @@ def test_release_notes_accept_empty_unreleased_section():
     )
 
 
-def test_real_repository_changelog_preserves_all_released_history(tmp_path: Path):
+def test_real_repository_release_notes_include_only_current_version(tmp_path: Path):
     root = Path(__file__).resolve().parents[1]
     toc = (root / "ApplicantScout.toc").read_text(encoding="utf-8")
     version = re.search(r"(?m)^## Version: ([0-9]+\.[0-9]+\.[0-9]+)$", toc)
@@ -84,7 +84,14 @@ def test_real_repository_changelog_preserves_all_released_history(tmp_path: Path
     notes = output.read_text(encoding="utf-8")
     assert notes.startswith(f"## {version.group(1)} - ")
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert notes == changelog[changelog.index(f"## {version.group(1)} - ") :].strip() + "\n"
+    current_start = changelog.index(f"## {version.group(1)} - ")
+    older_heading = re.search(
+        r"(?m)^## [0-9]+\.[0-9]+\.[0-9]+ - ",
+        changelog[current_start + 1 :],
+    )
+    assert older_heading is not None
+    current_end = current_start + 1 + older_heading.start()
+    assert notes == changelog[current_start:current_end].strip() + "\n"
     assert "Paired release with ApplicantScout Companion" in notes
 
 

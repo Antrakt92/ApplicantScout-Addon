@@ -104,7 +104,7 @@ jobs:
 
       - name: Build marketplace package without uploading
         # BigWigsMods/packager v2 pinned to the same commit as release.yml.
-        uses: BigWigsMods/packager@6d50adb6e8517eefef63f4afb16a6518166a6b28
+        uses: BigWigsMods/packager@e50a250f8705041e40f2fa1ddcb280a686d65aa0
         with:
           args: -d
           pandoc: false

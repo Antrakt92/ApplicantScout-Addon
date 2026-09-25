@@ -23,7 +23,7 @@ C_PaperDollInfo.GetInspectItemLevel = function() return 0 end
 ApplicantScoutDB = { enabled = true, debug = false }
 
 local harness = env.load_addon()
-harness.StartSession()
+env.start_session_quietly(harness)
 assert(
     harness.EnsureRosterInspectBatchBeforeSnapshot() == true,
     "the unresolved roster member should start one owned inspect"

@@ -86,7 +86,7 @@ local function build_incomplete_and_schedule()
     assert(harness.ScheduleRosterLoadRetry(), "unknown identity did not enter backoff")
 end
 
-harness.StartSession()
+env.start_session_quietly(harness)
 timers = {}
 build_incomplete_and_schedule()
 for _, delay in ipairs({ 0.5, 2.0, 5.0, 15.0 }) do

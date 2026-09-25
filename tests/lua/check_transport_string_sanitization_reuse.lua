@@ -57,6 +57,10 @@ C_LFGList.GetApplicantMemberInfo = function(id, memberIndex)
     return name, "MAGE", nil, nil, 700, nil, nil, nil, nil,
         "DAMAGER", nil, 2500, nil, nil, nil, 63
 end
+-- The swapped stub changes the data source behind the same roster; reset the
+-- member-info cache so the raw color-coded name actually crosses the API
+-- boundary under test instead of hitting cached clean rows.
+harness.ResetApplicantMemberInfoCache()
 local escapedPayload = assert(harness.BuildPayload)({
     activityIDs = { 401 },
     questID = 0,

@@ -22,7 +22,7 @@ end
 ApplicantScoutDB = { enabled = true, debug = false }
 
 local harness = env.load_addon()
-harness.StartSession()
+env.start_session_quietly(harness)
 
 assert(
     harness.EnsureRosterInspectBatchBeforeSnapshot() == true,
@@ -73,7 +73,7 @@ assert(harness.LastPayloadRosterIncomplete(), "partial roster must lose authorit
 assert(inspect_requests == 2, "payload construction must respect exhaustion state")
 
 harness.EndSession()
-harness.StartSession()
+env.start_session_quietly(harness)
 remote_spec_id = 63
 assert(
     harness.EnsureRosterInspectBatchBeforeSnapshot() == true,
