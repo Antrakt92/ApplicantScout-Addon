@@ -125,7 +125,8 @@ the wrong folder, or the Screenshots folder is synced/shared before cleanup.
 ## Troubleshooting
 
 - **Empty overlay:** check the companion's Screenshots path points to the active
-  `_retail_\Screenshots` folder. Run `/apscout status` while hosting a listing.
+  `_retail_\Screenshots` folder. Run `/apscout status` while hosting a listing;
+  use `/apscout status diag` for detailed QR diagnostics.
 - **Missing WCL results:** use **Test WCL** in companion Settings.
 - **Stale applicants:** run `/apscout reset` while capture is active.
 - **Manual refresh:** keep the addon enabled and run `/apscout shotnow`.
@@ -147,7 +148,8 @@ the wrong folder, or the Screenshots folder is synced/shared before cleanup.
 /apscout toggle         flip enabled state
 /apscout config         open/close settings panel
 /apscout setup          show companion download and setup
-/apscout status         show current state + QR diagnostics
+/apscout status         show a short capture summary
+/apscout status diag    show detailed QR diagnostics
 /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle
 /apscout reset          clear transport cache, queue fresh snapshot
 /apscout shotnow        request snapshot while enabled; defers in combat/M+/boss fights
@@ -178,7 +180,8 @@ Include both versions and steps to reproduce the problem.
 <details>
 <summary>Before sharing logs or screenshots</summary>
 
-Before sharing support material publicly, redact `/apscout status` output,
+Before sharing support material publicly, redact `/apscout status` and
+`/apscout status diag` output,
 `/apscout taintcheck` output, companion logs, QR screenshots, manual decode
 output, `config.env`, `token.json`, `character-cache.json`,
 `last-live-snapshot.json`, and `screenshot-manual-index-v2-*.json`.

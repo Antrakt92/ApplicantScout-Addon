@@ -1,11 +1,10 @@
-"""Create cumulative GitHub release notes from an exact ApplicantScout tag."""
+"""Create GitHub release notes for one exact ApplicantScout tag."""
 
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import re
-
+from pathlib import Path
 
 _SEMVER = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 _SEMVER_TAG = re.compile(rf"^v(?P<version>{_SEMVER})$")
@@ -22,7 +21,7 @@ class ReleaseNotesError(ValueError):
 
 
 def extract_release_notes(changelog: str, tag: str) -> str:
-    """Return the current release and all history, excluding future work."""
+    """Return only the tagged release section, excluding future and past work."""
     tag_match = _SEMVER_TAG.fullmatch(tag)
     if tag_match is None:
         raise ReleaseNotesError(
@@ -88,7 +87,7 @@ def extract_release_notes(changelog: str, tag: str) -> str:
         raise ReleaseNotesError(
             f"CHANGELOG release section {target_version} has no release copy"
         )
-    return normalized[current_heading.start() :].strip() + "\n"
+    return section + "\n"
 
 
 def write_release_notes(

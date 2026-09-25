@@ -2172,9 +2172,10 @@ def test_documented_slash_commands_match_lua_help_across_both_repositories(
     pytestconfig,
 ):
     expected_lines = _lua_print_help_command_lines(_read_repo_text("ApplicantScout.lua"))
-    assert len(expected_lines) == 14
+    assert len(expected_lines) == 15
     assert "/apscout setup          show companion download and setup" in expected_lines
     assert "/apscout toggle         flip enabled state" in expected_lines
+    assert "/apscout status diag    show detailed QR diagnostics" in expected_lines
     assert "/apscout taintcheck     probe C_LFGList field secret-tagging" in expected_lines
 
     assert _markdown_text_fence_lines(

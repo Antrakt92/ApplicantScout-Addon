@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Show a short capture summary with `/apscout status`; keep detailed QR
+  troubleshooting under `/apscout status diag`.
+- Open ApplicantScout settings from WoW's AddOn Compartment or Settings, and
+  confirm in chat when a scouting session starts.
+- Reduce repeated Group Finder drag checks and roster lookups, and avoid
+  repeated screenshot-setting warnings.
+
 ## 0.12.0 - 24-Sep-2026 - Group Finder movement and past-season ratings
 
 Paired release with ApplicantScout Companion `0.20.1` (companion-only patch, no addon change needed).
