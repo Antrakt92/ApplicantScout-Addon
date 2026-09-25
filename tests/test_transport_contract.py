@@ -139,6 +139,21 @@ LUA_DEFAULT_PLAYSTYLE_DEFERRED_TOUCH_CHECK = (
 LUA_LISTING_KEY_LEVEL_TITLES_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_listing_key_level_titles.lua"
 )
+LUA_ROSTER_DELVE_HANDLING_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_roster_delve_handling.lua"
+)
+LUA_STATUS_DIAG_SPLIT_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_status_diag_split.lua"
+)
+LUA_DB_QR_POSITION_CANONICALIZATION_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_db_qr_position_canonicalization.lua"
+)
+LUA_GROUP_API_SECRET_SAFETY_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_group_api_secret_safety.lua"
+)
+LUA_TRANSPORT_NAME_SECRET_SAFETY_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_transport_name_secret_safety.lua"
+)
 LUA_FIXTURE_HARNESS_NAMESPACE_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_fixture_harness_namespace.lua"
 )
@@ -497,7 +512,7 @@ def test_gameplay_suppression_defers_every_capture_before_payload_and_async_edge
     assert "if not force" not in screenshot_body[
         initial_guard_idx : screenshot_body.index("\n    end", initial_guard_idx)
     ]
-    assert "QueuePendingForcedScreenshot" in screenshot_body[
+    assert "queueForcedOrMarkDirty" in screenshot_body[
         initial_guard_idx:payload_idx
     ]
 
@@ -5818,3 +5833,52 @@ def test_raiderio_lookup_qualifies_same_realm_bare_applicant_names():
     activity_idx = payload_body.index("listingActivityIDForRio", lookup_idx)
     assert summary_idx < lookup_idx < activity_idx
     assert "_PackCleanLenStr(memberOut, memberName)" in payload_body
+
+
+def test_roster_delve_handling_supports_non_mplus_listings_in_lua51(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_ROSTER_DELVE_HANDLING_CHECK,
+    ).strip()
+
+    assert output == "ok roster-delve-handling"
+
+
+def test_status_diagnostics_split_short_and_diag_in_lua51(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_STATUS_DIAG_SPLIT_CHECK,
+    ).strip()
+
+    match = re.match(r"^ok status-diag-split short=(\d+) diag=(\d+)$", output)
+    assert match is not None, f"unexpected status diag output: {output!r}"
+    short_count, diag_count = int(match.group(1)), int(match.group(2))
+    assert short_count <= 15
+    assert diag_count > short_count
+
+
+def test_db_qr_position_canonicalization_in_lua51(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_DB_QR_POSITION_CANONICALIZATION_CHECK,
+    ).strip()
+
+    assert output == "ok db-qr-position-canonicalization"
+
+
+def test_group_apis_fail_closed_on_secret_values_in_lua51(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_GROUP_API_SECRET_SAFETY_CHECK,
+    ).strip()
+
+    assert output == "ok group-api-secret-safety"
+
+
+def test_transport_names_fail_closed_on_secret_values_in_lua51(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_TRANSPORT_NAME_SECRET_SAFETY_CHECK,
+    ).strip()
+
+    assert output == "ok transport-name-secret-safety"

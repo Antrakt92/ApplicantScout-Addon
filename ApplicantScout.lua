@@ -465,6 +465,23 @@ entryCreationKeyState.TakePendingForcedScreenshot = function()
     return pending, terminalClear, pendingSessionGen, lfgReadsAllowed
 end
 
+-- Shared forced-or-dirty branch for the MaybeTriggerScreenshot early-outs:
+-- forced work is queued for the next safe ticker, normal work stays dirty.
+-- extraFlag also flags paint-dirty for the in-flight-screenshot path.
+local function queueForcedOrMarkDirty(force, terminalClear, lfgReadsAllowed, extraFlag)
+    if force then
+        entryCreationKeyState.QueuePendingForcedScreenshot(
+            terminalClear,
+            lfgReadsAllowed
+        )
+    else
+        pendingShotDirty = true
+        if extraFlag then
+            entryCreationKeyState.qrPaintDirtyDuringPaint = true
+        end
+    end
+end
+
 entryCreationKeyState.TerminalClearOwnsTransport = function()
     if isSessionActive
        or entryCreationKeyState.terminalClearSessionGen ~= sessionGen then
@@ -3843,9 +3860,7 @@ local function _RaiderIOProfileLookupNameFromCleanName(memberName, playerRealm)
     if playerRealm == nil then
         -- Secret-safety: this lookup runs on the snapshot hot path. The raw
         -- UnitFullName("player") read is pcall-guarded and SafeStr-cleaned so
-        -- a combat-secret or failing API cannot taint the transport (same
-        -- protection as _UnitFullNameForTransport's own player-realm fallback,
-        -- which is defined further down and not yet in scope here).
+        -- a combat-secret or failing API cannot taint the transport.
         local okPlayer, _, resolvedRealm = pcall(function()
             return UnitFullName("player")
         end)
@@ -5362,11 +5377,6 @@ entryCreationKeyState.RaidDifficultyFlagsForRoster = function()
 end
 
 local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)
-    -- DECISION: Delves, follower dungeons, and scenarios need no special-case
-    -- here. This builder only walks real party slots (player + party1-4, or
-    -- raid1-N) guarded by _UnitExistsForRoster, and NPC companions occupy no
-    -- party slots, so they can never leak into the payload. A solo run
-    -- reports an empty roster through the groupCount early return below.
     local rosterOut = {}
     local emittedCount = 0
     local rows = {}
@@ -5546,14 +5556,8 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
             difficultyID = math.floor(SafeNumber(activityInfo.difficultyID, 0))
         end
         local isMythicPlus = (categoryID == 2)
-        -- DECISION: Delves, follower dungeons, and scenarios are intentionally
-        -- SUPPORTED through the generic non-Mythic+ path below (keyLevel 0),
-        -- with no category ignore gate. Their listings still start a transport
-        -- session so the companion keeps showing applicants plus the real
-        -- party roster. NPC companions occupy no party slots (they never
-        -- appear as player/party/raid units), so the roster builder needs no
-        -- delve-specific filtering; solo follower/scenario runs simply yield
-        -- an empty roster via the groupCount <= 0 early return.
+        -- Delves/follower dungeons/scenarios ride the generic non-Mythic+ path
+        -- (keyLevel 0); NPC companions occupy no party slots, so the roster ships unchanged.
 
         -- Strip player-link |Kxxx|k from listing name after SafeStr has
         -- handled secret-tagged strings and regular WoW escape sequences.
@@ -5702,8 +5706,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     -- re-querying every member on every tick. Keyed by clean wire identity
     -- (applicant ID + member index) — never by secret/opaque API tokens, which
     -- must not drive table keys or comparisons. The whole cache drops when the
-    -- applicant-roster fingerprint changes. Numeric fingerprint on purpose:
-    -- reuse-contract tests pin the table.insert budget, so no inserts here.
+    -- applicant-roster fingerprint changes.
     local applicantRosterFingerprint = 0
     for _, appIndex in ipairs(validAppOrder) do
         applicantRosterFingerprint =
@@ -6866,8 +6869,8 @@ entryCreationKeyState.RecoverStalledQRTransport = function(now)
        and (not lastPrintAt
             or now - lastPrintAt >= entryCreationKeyState.QR_RECOVERY_NOTICE_COOLDOWN_S) then
         entryCreationKeyState.qrTransportLastRecoveryPrintAt = now
-        APSPrint("WARN: recovered stalled QR " .. phase .. " job; retrying latest snapshot"
-            .. " — no action needed, or /apscout shotnow for a fresh snapshot")
+        APSPrint("WARN: recovered stalled QR " .. phase
+            .. " job; retrying latest snapshot (/apscout shotnow for fresh)")
     end
 
     if wasTerminalClear and not isSessionActive then
@@ -6915,14 +6918,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     -- terminal clears and /apscout shotnow. Queue forced work for the first
     -- safe ticker after gameplay ends; normal work remains dirty and is rebuilt.
     if entryCreationKeyState.RefreshQRGameplaySuppression() then
-        if force then
-            entryCreationKeyState.QueuePendingForcedScreenshot(
-                terminalClear,
-                lfgReadsAllowed
-            )
-        else
-            pendingShotDirty = true
-        end
+        queueForcedOrMarkDirty(force, terminalClear, lfgReadsAllowed)
         return
     end
 
@@ -6958,29 +6954,14 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
     -- twice concurrently: a forced/manual or terminal request waits until the
     -- old event (or watchdog timeout) is consumed, then rebuilds current state.
     if entryCreationKeyState.screenshotAwaitingResult then
-        if force then
-            entryCreationKeyState.QueuePendingForcedScreenshot(
-                terminalClear,
-                lfgReadsAllowed
-            )
-        else
-            pendingShotDirty = true
-            entryCreationKeyState.qrPaintDirtyDuringPaint = true
-        end
+        queueForcedOrMarkDirty(force, terminalClear, lfgReadsAllowed, true)
         return
     end
 
     if entryCreationKeyState.IsExternalScreenshotBusy() then
         entryCreationKeyState.screenshotLastResult =
             "deferred: external screenshot"
-        if force then
-            entryCreationKeyState.QueuePendingForcedScreenshot(
-                terminalClear,
-                lfgReadsAllowed
-            )
-        else
-            pendingShotDirty = true
-        end
+        queueForcedOrMarkDirty(force, terminalClear, lfgReadsAllowed)
         return
     end
 
@@ -7024,14 +7005,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
             -- Unknown is not an empty listing. Building a nil-entry payload
             -- here would clear applicants even though the session/cache were
             -- correctly preserved by CheckSessionTransition.
-            if force then
-                entryCreationKeyState.QueuePendingForcedScreenshot(
-                    terminalClear,
-                    lfgReadsAllowed
-                )
-            else
-                pendingShotDirty = true
-            end
+            queueForcedOrMarkDirty(force, terminalClear, lfgReadsAllowed)
             return
         end
     end
@@ -7355,18 +7329,11 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 entryCreationKeyState.qrPaintDirtyDuringPaint = false
                 entryCreationKeyState.qrTransportJobStartedAt = nil
                 entryCreationKeyState.qrTransportJobCaptureRequestedAt = nil
-                if force then
-                    if terminalClear then
-                        entryCreationKeyState
-                            .RefundTerminalClearDispatchForCurrentJob()
-                    end
-                    entryCreationKeyState.QueuePendingForcedScreenshot(
-                        terminalClear,
-                        lfgReadsAllowed
-                    )
-                else
-                    pendingShotDirty = true
+                if force and terminalClear then
+                    entryCreationKeyState
+                        .RefundTerminalClearDispatchForCurrentJob()
                 end
+                queueForcedOrMarkDirty(force, terminalClear, lfgReadsAllowed)
                 _ReleaseForceVisibleShotLease(forceVisibleShotGen)
                 return true
             end
@@ -7526,14 +7493,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                     "deferred: external screenshot"
                 entryCreationKeyState.ClearQRTransportJob(jobGen)
                 _ReleaseForceVisibleShotLease(forceVisibleShotGen)
-                if force then
-                    entryCreationKeyState.QueuePendingForcedScreenshot(
-                        terminalClear,
-                        lfgReadsAllowed
-                    )
-                else
-                    pendingShotDirty = true
-                end
+                queueForcedOrMarkDirty(force, terminalClear, lfgReadsAllowed)
                 return
             end
             entryCreationKeyState.qrTransportJobInteractionActiveAtCapture =

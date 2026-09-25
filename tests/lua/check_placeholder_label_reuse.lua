@@ -4,19 +4,7 @@ _G.UNKNOWN = "Unknown"
 _G.UNKNOWNOBJECT = "Unknown Object"
 
 env.install_raid_roster(40)
-C_LFGList.GetApplicantInfo = function(id)
-    return {
-        applicantID = id,
-        applicationStatus = "applied",
-        numMembers = 1,
-    }
-end
-C_LFGList.GetApplicantMemberInfo = function(id, memberIndex)
-    if memberIndex ~= 1 then return nil end
-    return string.format("Applicant%02d-Realm", id),
-        "MAGE", nil, nil, 700, nil, nil, nil, nil,
-        "DAMAGER", nil, 2500, nil, nil, nil, 63
-end
+env.install_single_applicant()
 
 local harness = env.load_addon({})
 local applicantIDs = {}
@@ -59,17 +47,12 @@ assert(
     "placeholder label reuse changed APS1 payload bytes"
 )
 
-C_LFGList.GetApplicantMemberInfo = function(id, memberIndex)
-    if memberIndex ~= 1 then return nil end
-    local names = {
-        [101] = "Unknown-Realm",
-        [102] = "Unknown Object-Realm",
-        [103] = "UNKNOWNOBJECT-Realm",
-        [104] = "Visible-Realm",
-    }
-    return names[id], "MAGE", nil, nil, 700, nil, nil, nil, nil,
-        "DAMAGER", nil, 2500, nil, nil, nil, 63
-end
+env.install_single_applicant({ names = {
+    [101] = "Unknown-Realm",
+    [102] = "Unknown Object-Realm",
+    [103] = "UNKNOWNOBJECT-Realm",
+    [104] = "Visible-Realm",
+} })
 local placeholderPayload = assert(harness.BuildPayload)(
     entry,
     { 101, 102, 103, 104 },

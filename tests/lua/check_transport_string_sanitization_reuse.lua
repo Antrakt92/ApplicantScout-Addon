@@ -1,19 +1,7 @@
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 
 env.install_raid_roster(40)
-C_LFGList.GetApplicantInfo = function(id)
-    return {
-        applicantID = id,
-        applicationStatus = "applied",
-        numMembers = 1,
-    }
-end
-C_LFGList.GetApplicantMemberInfo = function(id, memberIndex)
-    if memberIndex ~= 1 then return nil end
-    return string.format("Applicant%02d-Realm", id),
-        "MAGE", nil, nil, 700, nil, nil, nil, nil,
-        "DAMAGER", nil, 2500, nil, nil, nil, 63
-end
+env.install_single_applicant()
 
 local harness = env.load_addon({})
 local applicantIDs = {}
@@ -50,13 +38,9 @@ UnitFullName = function(unit)
     end
     return originalUnitFullName(unit)
 end
-C_LFGList.GetApplicantMemberInfo = function(id, memberIndex)
-    if memberIndex ~= 1 then return nil end
-    local name = string.format("Applicant%02d-Realm", id)
-    if id == 1 then name = "|cffff0000Applicant01|r-Realm" end
-    return name, "MAGE", nil, nil, 700, nil, nil, nil, nil,
-        "DAMAGER", nil, 2500, nil, nil, nil, 63
-end
+env.install_single_applicant({ names = {
+    [1] = "|cffff0000Applicant01|r-Realm",
+} })
 -- The swapped stub changes the data source behind the same roster; reset the
 -- member-info cache so the raw color-coded name actually crosses the API
 -- boundary under test instead of hitting cached clean rows.

@@ -335,12 +335,49 @@ C_LFGList = {
     end,
 }
 
-env.install_single_applicant = function()
+-- Single-applicant fixture shared by reuse-contract checks. Wraps the
+-- default applicant stubs: known rows (id 42 Tankone/Mageone) pass through
+-- untouched with numMembers forced to 1, while any other id reports one
+-- generic member row. opts.name_format overrides the generic row name
+-- ("Missing%02d-Realm" for zero-summary checks); opts.names maps specific
+-- ids to exact names for placeholder/sanitization phases. The generic row
+-- (MAGE/700/DAMAGER/2500/spec 63) is byte-identical to the stubs it
+-- replaces; class/ilvl overrides were not needed.
+env.install_single_applicant = function(opts)
+    opts = opts or {}
+    local name_format = opts.name_format or "Applicant%02d-Realm"
+    local names = opts.names
     local originalGetApplicantInfo = C_LFGList.GetApplicantInfo
+    local originalGetApplicantMemberInfo = C_LFGList.GetApplicantMemberInfo
     C_LFGList.GetApplicantInfo = function(id)
         local info = originalGetApplicantInfo(id)
-        if info then info.numMembers = 1 end
-        return info
+        if info then
+            info.numMembers = 1
+            return info
+        end
+        return {
+            applicantID = id,
+            applicationStatus = "applied",
+            numMembers = 1,
+        }
+    end
+    C_LFGList.GetApplicantMemberInfo = function(id, memberIndex)
+        if memberIndex == 1 and names and names[id] then
+            return names[id],
+                "MAGE", nil, nil, 700, nil, nil, nil, nil,
+                "DAMAGER", nil, 2500, nil, nil, nil, 63
+        end
+        local known, class, c, d, ilvl, f, g, h, i,
+            role, k, score, m, n, o, specID =
+            originalGetApplicantMemberInfo(id, memberIndex)
+        if known ~= nil then
+            return known, class, c, d, ilvl, f, g, h, i,
+                role, k, score, m, n, o, specID
+        end
+        if memberIndex ~= 1 then return nil end
+        return string.format(name_format, id),
+            "MAGE", nil, nil, 700, nil, nil, nil, nil,
+            "DAMAGER", nil, 2500, nil, nil, nil, 63
     end
 end
 
