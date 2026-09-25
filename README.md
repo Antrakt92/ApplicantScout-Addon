@@ -109,8 +109,8 @@ locally, and can read optional RaiderIO data from
 `_retail_\Interface\AddOns\RaiderIO\db`. Decoded RaiderIO data is cached in
 `%LOCALAPPDATA%\applicant-scout\cache\raiderio-local`.
 
-The companion offers optional usage statistics, enabled when no preference has
-been saved. Existing choices are preserved. Reports contain a random installation
+The companion offers optional usage statistics, which stay off until you opt in.
+Existing choices are preserved. Reports contain a random installation
 ID, version and daily milestones; names, screenshots and credentials are excluded.
 Reports go to the ApplicantScout service hosted on Cloudflare. Turn sharing off
 in Companion Settings at any time.

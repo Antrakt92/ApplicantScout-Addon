@@ -76,4 +76,19 @@ Ambiguate = cleanAmbiguate
 harness.OnLeaderKeystoneData(0, 0, 0, "Host", "PARTY")
 assert(harness.ResolveLeaderKeystoneContext() == nil, "local short alias can clear its own key")
 
+-- M1: two identical bare short names carry no realm evidence. With the
+-- leader's realm unknown ("Host") an incoming bare "Host" must not establish
+-- key context, even though the strings compare equal.
+local originalUnitFullNameM1 = UnitFullName
+UnitFullName = function(unit)
+    if unit == "player" then return "Host", nil end
+    return originalUnitFullNameM1(unit)
+end
+harness.OnLeaderKeystoneData(18, 504, 0, "Host", "PARTY")
+assert(harness.ResolveLeaderKeystoneContext() == nil,
+    "identical bare short names matched across unknown realms")
+UnitFullName = originalUnitFullNameM1
+harness.OnLeaderKeystoneData(19, 506, 0, "Host-Realm", "PARTY")
+assert_key(19, 506, "qualified identity still accepted after short-name guard")
+
 io.write("ok leader-keystone-validation\n")

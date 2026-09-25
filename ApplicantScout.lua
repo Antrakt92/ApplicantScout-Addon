@@ -801,6 +801,28 @@ InitDB = function()
     for k, v in pairs(DB_DEFAULTS) do
         if ApplicantScoutDB[k] == nil then ApplicantScoutDB[k] = v end
     end
+    -- Canonicalize a persisted QR position written by another build: anything
+    -- that is not a finite {x,y} pair reverts to the default sentinel (nil),
+    -- mirroring _NormalizeQRPosition's validation (kept inline: that helper
+    -- is defined further down and InitDB must stay callable from ADDON_LOADED
+    -- without new chunk-level locals). Unknown keys are preserved for forward
+    -- compatibility — nothing is dropped here.
+    do
+        local persistedQRPosition = ApplicantScoutDB.qrFramePosition
+        if persistedQRPosition ~= nil then
+            local qrX, qrY
+            if type(persistedQRPosition) == "table" then
+                qrX, qrY = persistedQRPosition.x, persistedQRPosition.y
+            end
+            local function isFiniteQRCoord(v)
+                return type(v) == "number" and v == v
+                    and v > -100000 and v < 100000
+            end
+            if not (isFiniteQRCoord(qrX) and isFiniteQRCoord(qrY)) then
+                ApplicantScoutDB.qrFramePosition = nil
+            end
+        end
+    end
     ApplicantScoutDB.autoMPlusPlaystyle =
         _NormalizeAutoMPlusPlaystyleToken(ApplicantScoutDB.autoMPlusPlaystyle)
     ApplicantScoutDB.autoHiMessage =
@@ -1073,14 +1095,17 @@ entryCreationKeyState.IsGroupedForAutoHi = function()
 end
 
 entryCreationKeyState.AutoHiChatChannel = function()
+    -- Secret-safety: raw IsInGroup()/IsInRaid() can return secret booleans in
+    -- combat; branching on them taints this stack (channel choice runs before
+    -- the pcall-protected send). Unknown reads fail closed to PARTY.
     local homeCategory = _G.LE_PARTY_CATEGORY_HOME or 1
     local instanceCategory = _G.LE_PARTY_CATEGORY_INSTANCE or 2
-    local inHomeGroup = IsInGroup and IsInGroup(homeCategory) or false
-    local inInstanceGroup = IsInGroup and IsInGroup(instanceCategory) or false
+    local inHomeGroup = entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup, homeCategory) == true
+    local inInstanceGroup = entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup, instanceCategory) == true
     if inInstanceGroup and not inHomeGroup then
         return "INSTANCE_CHAT"
     end
-    if IsInRaid and IsInRaid() then return "RAID" end
+    if entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid) == true then return "RAID" end
     return "PARTY"
 end
 
@@ -3816,8 +3841,15 @@ local function _RaiderIOProfileLookupNameFromCleanName(memberName, playerRealm)
         return memberName
     end
     if playerRealm == nil then
-        local _playerName, resolvedRealm = UnitFullName("player")
-        playerRealm = SafeStr(resolvedRealm, "")
+        -- Secret-safety: this lookup runs on the snapshot hot path. The raw
+        -- UnitFullName("player") read is pcall-guarded and SafeStr-cleaned so
+        -- a combat-secret or failing API cannot taint the transport (same
+        -- protection as _UnitFullNameForTransport's own player-realm fallback,
+        -- which is defined further down and not yet in scope here).
+        local okPlayer, _, resolvedRealm = pcall(function()
+            return UnitFullName("player")
+        end)
+        playerRealm = (okPlayer and SafeStr(resolvedRealm, "")) or ""
     end
     if playerRealm == "" then return memberName end
     -- WHY: LFG may emit same-realm applicants as bare "Name"; RaiderIO profile
@@ -4806,7 +4838,13 @@ entryCreationKeyState.SendLibKeystoneAddonMessage = function(payload, channel)
         return false, "disabled"
     end
     if channel ~= "PARTY" then return false, "bad-channel" end
-    if not (IsInGroup and IsInGroup()) then return false, "not-grouped" end
+    -- Secret-safety: a raw IsInGroup() read can return a secret boolean on a
+    -- tainted stack. Clean false stays "not-grouped" (not retried); an
+    -- unknown read fails closed with a retryable reason so the existing
+    -- C_Timer retry path re-attempts the send from a clean state.
+    local groupedForSend = entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup)
+    if groupedForSend == false then return false, "not-grouped" end
+    if groupedForSend ~= true then return false, "request-failed" end
     if IsChatMessagingLockdown() then return false, "lockdown" end
     if not entryCreationKeyState.RegisterLibKeystonePrefix() then
         return false, "prefix-unavailable"
@@ -4884,7 +4922,8 @@ entryCreationKeyState.ScheduleLibKeystoneResponseRetry = function(channel, reaso
         return false
     end
     if not (C_Timer and C_Timer.After) then return false end
-    if not (IsInGroup and IsInGroup()) then return false end
+    -- Secret-safety: unknown group state fails closed (no schedule).
+    if entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup) ~= true then return false end
 
     local now = GetTime and GetTime() or 0
     local delay = entryCreationKeyState.LIB_KEYSTONE_RESPONSE_RETRY_DELAY_S
@@ -5023,15 +5062,27 @@ entryCreationKeyState.PlayerNamesMatch = function(leftName, rightName)
     local leftFull, leftShort = entryCreationKeyState.CanonicalPlayerName(leftName)
     local rightFull, rightShort = entryCreationKeyState.CanonicalPlayerName(rightName)
     if leftFull == "" or rightFull == "" then return false end
-    if leftFull == rightFull then return true end
+    local leftQualified = leftFull:find("-", 1, true) ~= nil
+    local rightQualified = rightFull:find("-", 1, true) ~= nil
+    if leftQualified and rightQualified then
+        -- Only an exact realm-qualified identity matches without
+        -- normalization. A same-name member from another realm must not
+        -- replace or clear the leader's keystone.
+        return leftFull == rightFull
+    end
     if leftShort ~= rightShort then return false end
-    if not leftFull:find("-", 1, true) or not rightFull:find("-", 1, true) then
-        -- Only WoW's local-realm alias may omit the realm. A same-name member
-        -- from another realm must not replace or clear the leader's keystone.
-        if type(Ambiguate) ~= "function" then return false end
-        local fullName = leftFull:find("-", 1, true) and leftFull or rightFull
-        local ok, normalized = pcall(Ambiguate, fullName, "none")
-        return ok and SafeStr(normalized, "") == leftShort
+    -- Either side is a bare short name (only WoW's local-realm alias may omit
+    -- the realm). A matching short alone proves nothing across realms, and
+    -- two identical bare shorts carry no realm evidence at all, so normalize
+    -- the qualified side via Ambiguate in both directions first, else false.
+    if type(Ambiguate) ~= "function" then return false end
+    if leftQualified then
+        local okLeft, normalizedLeft = pcall(Ambiguate, leftFull, "none")
+        if okLeft and SafeStr(normalizedLeft, "") == rightShort then return true end
+    end
+    if rightQualified then
+        local okRight, normalizedRight = pcall(Ambiguate, rightFull, "none")
+        if okRight and SafeStr(normalizedRight, "") == leftShort then return true end
     end
     return false
 end
@@ -5097,7 +5148,10 @@ end
 entryCreationKeyState.OnLeaderKeystoneData = function(keyLevel, challengeMapID, _rating, playerName, channel)
     if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return end
     if channel ~= "PARTY" then return end
-    if not (IsInGroup and IsInGroup()) then return end
+    -- Secret-safety: this runs on the CHAT_MSG_ADDON stack (tainted) and the
+    -- event dispatcher calls handlers without pcall, so a raw IsInGroup()
+    -- read can raise on a secret boolean. Unknown group state refuses the data.
+    if entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup) ~= true then return end
     local leaderName = entryCreationKeyState.CurrentPartyLeaderName()
     if not leaderName or leaderName == "" then return end
     if not entryCreationKeyState.PlayerNamesMatch(playerName, leaderName) then return end
@@ -5565,11 +5619,12 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     local regionID = math.floor(SafeNumber(GetCurrentRegion and GetCurrentRegion(), 0))
     if regionID < 0 then regionID = 0 elseif regionID > 255 then regionID = 0 end
     table.insert(out, string.char(regionID))
-    local pname, prealm = UnitFullName("player")
-    local playerName = SafeStr(pname, "?")
-    if playerName == "" then playerName = "?" end
-    local playerRealm = SafeStr(prealm, "")
-    local fullName = playerName .. ((playerRealm ~= "") and ("-" .. playerRealm) or "")
+    -- Secret-safety: the raw UnitFullName("player") read that used to live
+    -- here ran without pcall/nil-guard on every snapshot. The single
+    -- pcall/SafeStr-cleaned helper below returns "" when the name is
+    -- unavailable, so "?" still marks an unknown host exactly as before.
+    local fullName = _UnitFullNameForTransport("player")
+    if fullName == "" then fullName = "?" end
     _PackCleanLenStr(out, fullName)
 
     local leaderQuietOut = {}

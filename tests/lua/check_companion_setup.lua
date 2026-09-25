@@ -1,6 +1,7 @@
 local scenario = assert(arg[1], "scenario required")
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 local frames, pending = {}, {}
+local fontstrings = {}
 local now = 1000
 local combat = false
 local challenge, encounter = false, false
@@ -32,7 +33,11 @@ local function widget()
         ClearFocus = function(self) self.focused = false end,
         HighlightText = function(self) self.selected = true end,
         CreateTexture = function() return widget() end,
-        CreateFontString = function() return widget() end,
+        CreateFontString = function()
+            local fontstring = widget()
+            fontstrings[#fontstrings + 1] = fontstring
+            return fontstring
+        end,
     }
     setmetatable(frame, { __index = function(_, key) return methods[key] or noop end })
     return frame
@@ -129,6 +134,15 @@ assert(url.focused and url.selected, "copy action did not select the address")
 url:SetText("bad pasted address")
 url.scripts.OnTextChanged(url, true)
 assert(url.text == downloadURL, "download address remained editable")
+local curseforgeURL = "https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay"
+local hasCurseForgeLabel = false
+for _, fontstring in ipairs(fontstrings) do
+    if fontstring.text and fontstring.text:find(curseforgeURL, 1, true) then
+        hasCurseForgeLabel = true
+        break
+    end
+end
+assert(hasCurseForgeLabel, "setup panel is missing the CurseForge update label")
 for _, pair in ipairs({ {"PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED"},
     {"ENCOUNTER_START", "ENCOUNTER_END"}, {"CHALLENGE_MODE_START", "CHALLENGE_MODE_COMPLETED"},
     {"LOADING_SCREEN_ENABLED", "LOADING_SCREEN_DISABLED"} }) do
