@@ -5362,6 +5362,11 @@ entryCreationKeyState.RaidDifficultyFlagsForRoster = function()
 end
 
 local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)
+    -- DECISION: Delves, follower dungeons, and scenarios need no special-case
+    -- here. This builder only walks real party slots (player + party1-4, or
+    -- raid1-N) guarded by _UnitExistsForRoster, and NPC companions occupy no
+    -- party slots, so they can never leak into the payload. A solo run
+    -- reports an empty roster through the groupCount early return below.
     local rosterOut = {}
     local emittedCount = 0
     local rows = {}
@@ -5541,6 +5546,14 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
             difficultyID = math.floor(SafeNumber(activityInfo.difficultyID, 0))
         end
         local isMythicPlus = (categoryID == 2)
+        -- DECISION: Delves, follower dungeons, and scenarios are intentionally
+        -- SUPPORTED through the generic non-Mythic+ path below (keyLevel 0),
+        -- with no category ignore gate. Their listings still start a transport
+        -- session so the companion keeps showing applicants plus the real
+        -- party roster. NPC companions occupy no party slots (they never
+        -- appear as player/party/raid units), so the roster builder needs no
+        -- delve-specific filtering; solo follower/scenario runs simply yield
+        -- an empty roster via the groupCount <= 0 early return.
 
         -- Strip player-link |Kxxx|k from listing name after SafeStr has
         -- handled secret-tagged strings and regular WoW escape sequences.

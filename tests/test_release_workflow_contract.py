@@ -1823,7 +1823,7 @@ def test_check_workflow_runs_non_release_preflight_without_publishing():
     assert "contents: read" in workflow
     assert "contents: write" not in workflow
     assert "APPLICANT_SCOUT_VISUAL_BASELINE" not in workflow
-    assert "python-version: '3.13'" in workflow
+    assert "python-version: '3.14'" in workflow
     assert "repository: Antrakt92/ApplicantScout-Companion" in workflow
     companion_checkout = _step_block(job, "Checkout companion")
     assert "ref: ${{ github.event.inputs.paired_companion_ref || 'main' }}" in (
