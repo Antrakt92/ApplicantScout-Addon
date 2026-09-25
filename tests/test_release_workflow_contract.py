@@ -1775,7 +1775,7 @@ def test_release_version_check_rejects_malformed_paired_companion_release_json(
 def test_release_preflight_runs_python_through_companion_constraints():
     workflow = _workflow_source()
 
-    assert "python-version: '3.13'" in workflow
+    assert "python-version: '3.14'" in workflow
     assert "constraints-release.txt" in workflow
     assert "python -m pip install pytest" not in workflow
 
