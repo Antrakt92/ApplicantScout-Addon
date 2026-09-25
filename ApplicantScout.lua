@@ -9334,7 +9334,7 @@ do
 
     local function createPanel()
         panel = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-        panel:SetSize(620, 368)
+        panel:SetSize(620, 408)
         panel:SetPoint("CENTER")
         panel:SetFrameStrata("DIALOG")
         panel:SetClampedToScreen(true)
@@ -9384,6 +9384,9 @@ do
         end)
         label("Select the link, then press Ctrl+C. Open this guide again with /apscout setup.",
             -260, "GameFontHighlightSmall", 32)
+        label("Keep this addon updated through CurseForge:\n"
+            .. "https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay",
+            -292, "GameFontHighlightSmall", 44)
         local select = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
         select:SetSize(140, 28)
         select:SetPoint("BOTTOMLEFT", 24, 24)

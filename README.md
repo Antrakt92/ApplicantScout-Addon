@@ -47,6 +47,7 @@ or turn it off in settings. Auto Hi greetings are optional.
 ## Quick Setup
 
 1. Install the addon through [CurseForge](https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay)
+   or [Wago](https://addons.wago.io/addons/ANzke264),
    or download the packaged ZIP from the
    [latest addon release](https://github.com/Antrakt92/ApplicantScout-Addon/releases/latest).
 2. Install the [Windows companion](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest)
