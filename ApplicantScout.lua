@@ -672,7 +672,7 @@ end
 entryCreationKeyState.CleanGroupMemberCount = function()
     if type(GetNumGroupMembers) ~= "function" then return nil end
     local ok, value = pcall(GetNumGroupMembers)
-    if not ok or IsSecretValue(value) then return nil end
+    if not ok or value == nil or IsSecretValue(value) then return nil end
     return math.floor(SafeNumber(value, 0))
 end
 
@@ -1087,11 +1087,16 @@ entryCreationKeyState.ResetListingTransportState = function()
 end
 
 local function _HasGroupRosterForTransport()
-    return entryCreationKeyState.AutoHiGroupMemberCount() > 0
+    -- Secret-safety: unknown size fails closed (no transport roster).
+    local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()
+    return groupMemberCount ~= nil and groupMemberCount > 0
 end
 
 entryCreationKeyState.AutoHiGroupMemberCount = function()
-    return math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))
+    -- Secret-safety: raw GetNumGroupMembers() can raise or return a secret
+    -- value in combat; unknown size returns nil and every caller fails
+    -- closed (never as solo/empty). Mirrors AutoHiChatChannel.
+    return entryCreationKeyState.CleanGroupMemberCount()
 end
 
 entryCreationKeyState.ReadActiveLFGEntry = function()
@@ -1121,7 +1126,13 @@ entryCreationKeyState.ReadActiveLFGEntry = function()
 end
 
 entryCreationKeyState.IsGroupedForAutoHi = function()
-    return entryCreationKeyState.AutoHiGroupMemberCount() > 1
+    -- Secret-safety: unknown size fails closed; raids are excluded like the
+    -- newcomer path (DB documents raids as out of scope) and unknown raid
+    -- state also fails closed. Mirrors AutoHiChatChannel.
+    if entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid) ~= false then return false end
+    local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()
+    if groupMemberCount == nil then return false end
+    return groupMemberCount > 1
 end
 
 entryCreationKeyState.AutoHiChatChannel = function()
@@ -1297,21 +1308,27 @@ entryCreationKeyState.TrySendAutoHiWithRetry = function(kind, generation, attemp
 end
 
 entryCreationKeyState.IsPartyForAutoHiNewMembers = function()
-    if IsInRaid and IsInRaid() then return false end
-    return entryCreationKeyState.AutoHiGroupMemberCount() > 1
+    -- Secret-safety: raw IsInRaid()/GetNumGroupMembers() can raise or return
+    -- secret values in combat. Unknown raid state or size fails closed.
+    -- Mirrors AutoHiChatChannel.
+    if entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid) ~= false then return false end
+    local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()
+    if groupMemberCount == nil then return false end
+    return groupMemberCount > 1
 end
 
 entryCreationKeyState.IsPartyContextForAutoHiNewMembers = function()
-    if IsInRaid and IsInRaid() then return false end
-    if entryCreationKeyState.AutoHiGroupMemberCount() <= 0 then return false end
+    if entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid) ~= false then return false end
+    local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()
+    if groupMemberCount == nil or groupMemberCount <= 0 then return false end
     return true
 end
 
 entryCreationKeyState.CollectAutoHiPartyMemberGUIDs = function()
     local guids = {}
     local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()
-    if groupMemberCount <= 0 then return guids, false end
-    if IsInRaid and IsInRaid() then return guids, false end
+    if groupMemberCount == nil or groupMemberCount <= 0 then return guids, false end
+    if entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid) ~= false then return guids, false end
     local expectedPartyMembers = math.min(math.max(groupMemberCount - 1, 0), 4)
     local complete = true
     for i = 1, expectedPartyMembers do
@@ -1444,6 +1461,9 @@ end
 entryCreationKeyState.SyncAutoHiInitialGroupState = function()
     if not entryCreationKeyState.IsAutoHiTrackingEnabled() then return end
     local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()
+    -- Unknown size preserves existing state; treating it as solo/empty
+    -- would corrupt the join baseline on a tainted roster read.
+    if groupMemberCount == nil then return end
     local isGrouped = groupMemberCount > 1
     local isSoloGroup = groupMemberCount == 1
     if entryCreationKeyState.autoHiGroupStateKnown
@@ -1467,6 +1487,9 @@ end
 entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
     if not entryCreationKeyState.IsAutoHiTrackingEnabled() then return end
     local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()
+    -- Unknown size preserves existing state and schedules nothing; the
+    -- GROUP_ROSTER_UPDATE event will retry on the next clean read.
+    if groupMemberCount == nil then return end
     if groupMemberCount <= 0 then
         if entryCreationKeyState.autoHiWasInGroup
            or entryCreationKeyState.autoHiWasInSoloGroup then
@@ -1508,6 +1531,9 @@ entryCreationKeyState.ScheduleAutoHiIfGroupJoined = function()
         entryCreationKeyState.autoHiGroupGen + 1
     entryCreationKeyState.PrimeAutoHiPartyMembers()
 
+    -- Raids never schedule the join greeting (consistent with the newcomer
+    -- path); state above still tracks so leaving the raid re-arms cleanly.
+    if entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid) ~= false then return end
     if not (ApplicantScoutDB and ApplicantScoutDB.enabled) then return end
     if entryCreationKeyState.NormalizeAutoHiMessage(
         ApplicantScoutDB.autoHiMessage
@@ -6297,6 +6323,23 @@ if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
         entryCreationKeyState.NormalizeAutoHiMessage
     _addonNS.ApplicantScoutFixtureHarness.AutoHiChatChannel =
         entryCreationKeyState.AutoHiChatChannel
+    _addonNS.ApplicantScoutFixtureHarness.AutoHiGroupMemberCount =
+        entryCreationKeyState.AutoHiGroupMemberCount
+    _addonNS.ApplicantScoutFixtureHarness.IsGroupedForAutoHi =
+        entryCreationKeyState.IsGroupedForAutoHi
+    _addonNS.ApplicantScoutFixtureHarness.IsPartyForAutoHiNewMembers =
+        entryCreationKeyState.IsPartyForAutoHiNewMembers
+    _addonNS.ApplicantScoutFixtureHarness.IsPartyContextForAutoHiNewMembers =
+        entryCreationKeyState.IsPartyContextForAutoHiNewMembers
+    _addonNS.ApplicantScoutFixtureHarness.CollectAutoHiPartyMemberGUIDs =
+        entryCreationKeyState.CollectAutoHiPartyMemberGUIDs
+    _addonNS.ApplicantScoutFixtureHarness.ScheduleAutoHiIfGroupJoined =
+        entryCreationKeyState.ScheduleAutoHiIfGroupJoined
+    -- Deferred lookup: ToggleSettingsPanel is defined after this harness
+    -- block, so a direct reference would capture nil.
+    _addonNS.ApplicantScoutFixtureHarness.ToggleSettingsPanel = function(...)
+        return entryCreationKeyState.ToggleSettingsPanel(...)
+    end
     _addonNS.ApplicantScoutFixtureHarness.AutoHiMaxBytes = function()
         return entryCreationKeyState.AUTO_HI_MAX_BYTES
     end
@@ -8920,7 +8963,9 @@ end
 entryCreationKeyState.ToggleSettingsPanel = function()
     -- Protected frames cannot be shown/moved in combat; fail early with an
     -- actionable line instead of a silent no-op or a taint-risky toggle.
-    if InCombatLockdown and InCombatLockdown() then
+    -- Clean read keeps the hardware-event stack secret-safe like the rest of
+    -- this file; clean true/false behave exactly like the raw call.
+    if entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) == true then
         APSPrint("settings unavailable in combat — leave combat and retry")
         return false, "combat"
     end

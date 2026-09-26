@@ -3171,7 +3171,8 @@ def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():
     assert "autoHiWasInSoloGroup" in auto_hi_body
     assert "autoHiWasInGroup" in auto_hi_body
     assert "entryCreationKeyState.IsGroupedForAutoHi = function()" in auto_hi_body
-    assert "return entryCreationKeyState.AutoHiGroupMemberCount() > 1" in auto_hi_body
+    assert "return entryCreationKeyState.CleanGroupMemberCount()" in auto_hi_body
+    assert "if groupMemberCount == nil then return end" in auto_hi_body
     assert "if groupMemberCount == 1 then" in auto_hi_body
     assert "entryCreationKeyState.autoHiWasInSoloGroup = true" in auto_hi_body
     assert "if entryCreationKeyState.autoHiWasInSoloGroup then" in auto_hi_body
@@ -3255,10 +3256,10 @@ def test_auto_hi_new_party_members_is_opt_in_party_only_and_guid_tracked():
     )
 
     assert "entryCreationKeyState.IsPartyForAutoHiNewMembers = function()" in auto_hi_body
-    assert "if IsInRaid and IsInRaid() then return false end" in auto_hi_body
-    assert "return entryCreationKeyState.AutoHiGroupMemberCount() > 1" in auto_hi_body
+    assert "entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid) ~= false" in auto_hi_body
+    assert "if groupMemberCount == nil then return false end" in auto_hi_body
     assert "entryCreationKeyState.CollectAutoHiPartyMemberGUIDs = function()" in auto_hi_body
-    assert "if groupMemberCount <= 0 then return guids, false end" in auto_hi_body
+    assert "if groupMemberCount == nil or groupMemberCount <= 0 then return guids, false end" in auto_hi_body
     assert "local expectedPartyMembers = math.min(math.max(groupMemberCount - 1, 0), 4)" in auto_hi_body
     assert "for i = 1, expectedPartyMembers do" in auto_hi_body
     assert 'local guid = entryCreationKeyState.UnitGUIDForRoster("party" .. i)' in auto_hi_body

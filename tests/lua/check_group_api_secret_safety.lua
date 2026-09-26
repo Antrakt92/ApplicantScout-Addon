@@ -170,4 +170,145 @@ for _, behavior in ipairs({ "secret", "error", "nil" }) do
     assert_equal("unreadable group request timers (" .. behavior .. ")", #timers, 0)
 end
 
+-- Auto Hi group-size/raid gates (GROUP_ROSTER_UPDATE path): raw
+-- GetNumGroupMembers()/IsInRaid() must never drive greetings. Unknown reads
+-- fail closed as nil/false without raising.
+for _, hook in ipairs({
+    "AutoHiGroupMemberCount",
+    "IsGroupedForAutoHi",
+    "IsPartyForAutoHiNewMembers",
+    "IsPartyContextForAutoHiNewMembers",
+    "CollectAutoHiPartyMemberGUIDs",
+    "ScheduleAutoHiIfGroupJoined",
+    "ToggleSettingsPanel",
+}) do
+    if type(harness[hook]) ~= "function" then
+        fail("missing Auto Hi fixture hook: " .. hook)
+    end
+end
+
+local groupCountBehavior = "three"
+local groupCountValue = 3
+local function resolveCountBehavior(behavior)
+    if behavior == "secret" then return secretToken end
+    if behavior == "error" then error("group size unreadable") end
+    if behavior == "nil" then return nil end
+    return groupCountValue
+end
+GetNumGroupMembers = function() return resolveCountBehavior(groupCountBehavior) end
+
+local function autoHiCount()
+    local ok, result = pcall(harness.AutoHiGroupMemberCount)
+    if not ok then fail("AutoHiGroupMemberCount propagated a group API failure: " .. tostring(result)) end
+    return result
+end
+local function autoHiFlag(fn)
+    local ok, result = pcall(fn)
+    if not ok then fail("Auto Hi predicate propagated a group API failure") end
+    return result
+end
+
+-- Clean party: count passes through, party predicates hold.
+groupCountBehavior, groupCountValue = "clean", 3
+raidBehavior = "false"
+assert_equal("clean auto-hi count", autoHiCount(), 3)
+assert_equal("clean grouped for auto-hi", autoHiFlag(harness.IsGroupedForAutoHi), true)
+assert_equal("clean party for new members", autoHiFlag(harness.IsPartyForAutoHiNewMembers), true)
+assert_equal("clean party context", autoHiFlag(harness.IsPartyContextForAutoHiNewMembers), true)
+do
+    local ok, guids, complete = pcall(harness.CollectAutoHiPartyMemberGUIDs)
+    if not ok then fail("party GUID collect propagated a group API failure") end
+    assert_equal("clean party sample complete", complete, true)
+    assert_equal("clean party sample non-empty", next(guids) ~= nil, true)
+end
+
+-- Raid gate: a raid-sized clean group never counts as party/group for Auto Hi.
+groupCountBehavior, groupCountValue = "clean", 8
+raidBehavior = "true"
+assert_equal("raid grouped for auto-hi", autoHiFlag(harness.IsGroupedForAutoHi), false)
+assert_equal("raid party for new members", autoHiFlag(harness.IsPartyForAutoHiNewMembers), false)
+assert_equal("raid party context", autoHiFlag(harness.IsPartyContextForAutoHiNewMembers), false)
+do
+    local ok, _, complete = pcall(harness.CollectAutoHiPartyMemberGUIDs)
+    if not ok then fail("raid GUID collect propagated a group API failure") end
+    assert_equal("raid party sample complete", complete, false)
+end
+
+-- Unknown size or raid state fails closed on every predicate.
+for _, countBehavior in ipairs({ "secret", "error", "nil" }) do
+    groupCountBehavior = countBehavior
+    raidBehavior = "false"
+    assert_equal("unknown size count (" .. countBehavior .. ")", autoHiCount(), nil)
+    assert_equal("unknown size grouped (" .. countBehavior .. ")", autoHiFlag(harness.IsGroupedForAutoHi), false)
+    assert_equal("unknown size party (" .. countBehavior .. ")", autoHiFlag(harness.IsPartyForAutoHiNewMembers), false)
+    assert_equal("unknown size context (" .. countBehavior .. ")", autoHiFlag(harness.IsPartyContextForAutoHiNewMembers), false)
+    do
+        local ok, _, complete = pcall(harness.CollectAutoHiPartyMemberGUIDs)
+        if not ok then fail("unknown-size GUID collect raised: " .. countBehavior) end
+        assert_equal("unknown-size sample complete (" .. countBehavior .. ")", complete, false)
+    end
+end
+for _, badRaid in ipairs({ "secret", "error", "nil" }) do
+    groupCountBehavior, groupCountValue = "clean", 3
+    raidBehavior = badRaid
+    assert_equal("unknown raid grouped (" .. badRaid .. ")", autoHiFlag(harness.IsGroupedForAutoHi), false)
+    assert_equal("unknown raid party (" .. badRaid .. ")", autoHiFlag(harness.IsPartyForAutoHiNewMembers), false)
+    assert_equal("unknown raid context (" .. badRaid .. ")", autoHiFlag(harness.IsPartyContextForAutoHiNewMembers), false)
+end
+
+-- Join greeting raid gate: the kind=="group" delayed send never arms in a
+-- raid, while an identical party arms exactly one 5s greeting attempt.
+local function groupJoinTimers(count, raid)
+    ApplicantScoutDB = { enabled = true, debug = false, autoHiMessage = "hi" }
+    local fresh = env.load_addon()
+    timers = {}
+    C_Timer.After = function(_delay, callback)
+        timers[#timers + 1] = callback
+    end
+    -- Left baseline first, then the observed join: only the neither->group
+    -- transition arms the greeting (solo->group just flips tracking flags).
+    groupCountBehavior, groupCountValue = "clean", 0
+    raidBehavior = "false"
+    fresh.ScheduleAutoHiIfGroupJoined()
+    groupCountBehavior, groupCountValue = "clean", count
+    raidBehavior = raid
+    fresh.ScheduleAutoHiIfGroupJoined()
+    local delayCount = 0
+    for _, callback in ipairs(timers) do
+        if type(callback) == "function" then delayCount = delayCount + 1 end
+    end
+    return delayCount, fresh
+end
+do
+    local raidTimers = groupJoinTimers(8, "true")
+    assert_equal("raid join greeting timers", raidTimers, 0)
+    local partyTimers = groupJoinTimers(3, "false")
+    assert_equal("party join greeting timers", partyTimers, 1)
+end
+
+-- Settings combat gate: clean combat still refuses; secret/failing/missing
+-- lockdown never raises (unknown proceeds past the gate to unavailable).
+do
+    local savedPrint = print
+    print = function() end
+    local savedLockdown = InCombatLockdown
+    InCombatLockdown = function() return true end
+    local ok, toggleOK, toggleReason = pcall(harness.ToggleSettingsPanel)
+    if not ok then fail("settings toggle propagated a combat API failure") end
+    assert_equal("combat toggle ok", toggleOK, false)
+    assert_equal("combat toggle reason", toggleReason, "combat")
+    InCombatLockdown = function() return secretToken end
+    ok, toggleOK = pcall(harness.ToggleSettingsPanel)
+    if not ok then fail("settings toggle propagated a secret combat value") end
+    assert_equal("secret combat toggle ok type", type(toggleOK), "boolean")
+    InCombatLockdown = function() error("lockdown unreadable") end
+    ok = pcall(harness.ToggleSettingsPanel)
+    if not ok then fail("settings toggle propagated a combat API failure") end
+    InCombatLockdown = nil
+    ok = pcall(harness.ToggleSettingsPanel)
+    if not ok then fail("settings toggle propagated a missing combat API") end
+    InCombatLockdown = savedLockdown
+    print = savedPrint
+end
+
 print("ok group-api-secret-safety")
