@@ -9713,6 +9713,24 @@ local function PrintHelp()
     print("  /apscout config         open/close settings panel")
     print("  /apscout setup          show companion download and setup")
     print("  /apscout status         show a short capture summary")
+    print("  /apscout selftest       start/finish/show in-game diagnostics + copy window")
+    print("  /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle")
+    print("  /apscout reset          clear transport cache, queue fresh snapshot")
+    print("  /apscout shotnow        request snapshot while enabled; defers in combat/M+/boss fights")
+    print("  more: /apscout help all")
+end
+
+-- Full command list behind `/apscout help all`. Every /apscout line below
+-- stays verbatim-synchronized with the showcase above, README "Handy Slash
+-- Commands", and companion docs/REFERENCE.md "In-Game Commands" (the
+-- release fence asserts all three).
+local function PrintHelpAll()
+    print("|cff00ff7fApplicantScout v" .. ADDON_VERSION .. "|r (QR transport)")
+    print("  /apscout on | off       enable/disable capture")
+    print("  /apscout toggle         flip enabled state")
+    print("  /apscout config         open/close settings panel")
+    print("  /apscout setup          show companion download and setup")
+    print("  /apscout status         show a short capture summary")
     print("  /apscout status diag    show detailed QR diagnostics")
     print("  /apscout selftest       start/finish/show in-game diagnostics + copy window")
     print("  /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle")
@@ -9856,6 +9874,15 @@ SlashCmdList.APSCOUT = function(msg)
         -- Start/stop wrapper around the shared selftest export helper above;
         -- the branch itself performs no transport, chat, or LFG work.
         entryCreationKeyState.ToggleSelfTest(arg)
+    elseif command == "help" then
+        -- Two-level help: bare `/apscout help` (or an unknown topic) shows
+        -- the essential showcase; `/apscout help all` shows every command.
+        -- Unknown slash roots still fall through to the else branch below.
+        if arg == "all" then
+            PrintHelpAll()
+        else
+            PrintHelp()
+        end
     else
         PrintHelp()
     end

@@ -144,17 +144,24 @@ the wrong folder, or the Screenshots folder is synced/shared before cleanup.
 
 ## Handy Slash Commands
 
+Essential commands (`/apscout help`):
+
 ```text
 /apscout on | off       enable/disable capture
 /apscout toggle         flip enabled state
 /apscout config         open/close settings panel
 /apscout setup          show companion download and setup
 /apscout status         show a short capture summary
-/apscout status diag    show detailed QR diagnostics
 /apscout selftest       start/finish/show in-game diagnostics + copy window
 /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle
 /apscout reset          clear transport cache, queue fresh snapshot
 /apscout shotnow        request snapshot while enabled; defers in combat/M+/boss fights
+```
+
+Advanced commands (`/apscout help all`):
+
+```text
+/apscout status diag    show detailed QR diagnostics
 /apscout qrvisible      toggle persistent QR always-visible mode; off clears it
 /apscout qrmove         toggle QR move mode (Alt+drag QR frame)
 /apscout qrreset        reset QR frame position to top-left
