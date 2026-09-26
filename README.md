@@ -207,6 +207,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, checks, transport
 details, and the development-only addon ZIP. Report security issues through
 [SECURITY.md](SECURITY.md).
 
+## More by Antrakt
+- [StatsPro](https://www.curseforge.com/wow/addons/statspro) — customizable stats and gear HUD
+- [DoYouNeedIt](https://www.curseforge.com/wow/addons/do-you-need-it) — group loot helper with opt-in whispers
+
 ## License
 
 ApplicantScout uses the [MIT license](LICENSE). The bundled QR encoder retains
