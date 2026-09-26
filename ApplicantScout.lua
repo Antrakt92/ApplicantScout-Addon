@@ -9556,6 +9556,83 @@ entryCreationKeyState.BuildSelfTestReport = function()
     add("gameplay-suppressed", flag(S.qrGameplaySuppressed))
     add("suppress-reason", token(S.qrGameplaySuppressionReason, "none"))
     add("combat", flag(S.qrGameplayCombatActive))
+    -- Dry-run of the hex→QR-encode stage on a fixed synthetic probe. The live
+    -- snapshot bytes are never retained (only hashes/counters), and building a
+    -- fresh snapshot would perform transport reads and diagnostic writes, so
+    -- the probe stands in for the encode stage only: same hex helper, same
+    -- sync encoder, same EC level as the transport ladder's first attempt for
+    -- small payloads. Pure CPU on a temp table: no dirty flags, generations,
+    -- queue, DB, frame, capture, or chat writes. OOC-only; combat skips.
+    do
+        local encodeOK, encodeBytes, encodeVersion, encodeMs = false, 0, 0, 0
+        local encodeSkip = "none"
+        local inCombat = S.qrGameplayCombatActive == true
+        if inCombat then
+            encodeSkip = "combat"
+        elseif type(_qrencode) ~= "function" then
+            encodeSkip = "nolib"
+        else
+            local probe = table.concat({
+                "APS1",
+                string.char(9, 0, 40, 0, 0),
+                "selftest-qr-probe-0123456789abcdef",
+            })
+            local hex = _HexEncode(probe)
+            encodeBytes = #hex
+            if encodeBytes > 2048 then
+                encodeBytes = 0
+                encodeSkip = "over-budget"
+            else
+                local useProfile = type(_G.debugprofilestop) == "function"
+                local function nowMs()
+                    if useProfile then
+                        local okC, v = pcall(_G.debugprofilestop)
+                        if okC and type(v) == "number" then return v end
+                    end
+                    if GetTime then
+                        local okT, v = pcall(GetTime)
+                        if okT and type(v) == "number" then return v * 1000 end
+                    end
+                    return 0
+                end
+                local t0 = nowMs()
+                local okE, okQ, matrix = pcall(_qrencode, hex, QR_EC_LEVEL)
+                local t1 = nowMs()
+                encodeMs = math.max(0, math.floor(t1 - t0))
+                if okE and okQ and type(matrix) == "table" then
+                    -- #matrix is the module dimension already
+                    -- (version * 4 + 17), not the version number.
+                    local dimension = #matrix
+                    local square = dimension >= 21 and dimension <= 177
+                        and (dimension - 17) % 4 == 0
+                    if square then
+                        for row = 1, dimension do
+                            if type(matrix[row]) ~= "table"
+                                or #matrix[row] ~= dimension then
+                                square = false
+                                break
+                            end
+                        end
+                    end
+                    if square
+                        and dimension * dimension
+                            <= S.QR_TEXTURE_RENDER_BUDGET then
+                        encodeOK = true
+                        encodeVersion = (dimension - 17) / 4
+                    else
+                        encodeSkip = "error"
+                    end
+                else
+                    encodeSkip = "error"
+                end
+            end
+        end
+        add("encode-ok", flag(encodeOK))
+        add("encode-bytes", num(encodeBytes, 0))
+        add("encode-version", num(encodeVersion, 0))
+        add("encode-ms", num(encodeMs, 0))
+        add("encode-skip", encodeSkip)
+    end
     add("mplus", flag(S.qrGameplayChallengeActive))
     add("encounter", flag(S.qrGameplayEncounterActive))
     add("loading", flag(S.qrGameplayLoadingActive))
@@ -9665,8 +9742,9 @@ entryCreationKeyState.ToggleSelfTest = function(arg)
         S.selfTestRun = nil
         -- Short chat summary; the full block lives in the copy window + SV.
         local function val(key)
+            local pattern = "^" .. key:gsub("(%W)", "%%%1") .. "=(.+)$"
             for _, line in ipairs(report) do
-                local v = line:match("^" .. key .. "=(.+)$")
+                local v = line:match(pattern)
                 if v then return v end
             end
             return "?"
@@ -9682,6 +9760,11 @@ entryCreationKeyState.ToggleSelfTest = function(arg)
               .. ", emission " .. val("shot-age") .. " ago"
               .. ", sends " .. val("delivery-sends")
               .. ", recoveries " .. val("recoveries"))
+        print("  encode: " .. val("encode-ok")
+              .. ", bytes " .. val("encode-bytes")
+              .. ", v" .. val("encode-version")
+              .. ", " .. val("encode-ms") .. "ms"
+              .. ", skip " .. val("encode-skip"))
         print("  safety: chat-lockdown " .. val("chat-lockdown")
               .. ", identities exported: none")
         if opened then
