@@ -4443,23 +4443,28 @@ entryCreationKeyState.ShouldDeferRosterChangeForPreflight = function()
     local now = GetTime and GetTime() or 0
     return now < deadline
 end
-entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()
-    local skippedInspectCount = 0
-    local inspectCooldownCount = 0
-    local exhaustedInspectCount = 0
+entryCreationKeyState.CountRosterInspectBatch = function()
+    -- Counts only (GUID keys never leave as values). Shared by the chat
+    -- diagnostics below and the selftest export so both read one source.
+    local skipped, cooling, exhausted = 0, 0, 0
     if entryCreationKeyState.rosterInspectBatchSkippedGUIDs then
         for _ in pairs(entryCreationKeyState.rosterInspectBatchSkippedGUIDs) do
-            skippedInspectCount = skippedInspectCount + 1
+            skipped = skipped + 1
         end
     end
     for _, retryAfter in pairs(entryCreationKeyState.rosterInspectRetryAfterByGUID) do
         if SafeNumber(retryAfter, 0) > GetTime() then
-            inspectCooldownCount = inspectCooldownCount + 1
+            cooling = cooling + 1
         end
     end
     for _ in pairs(entryCreationKeyState.rosterInspectExhaustedGUIDs) do
-        exhaustedInspectCount = exhaustedInspectCount + 1
+        exhausted = exhausted + 1
     end
+    return skipped, cooling, exhausted
+end
+entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()
+    local skippedInspectCount, inspectCooldownCount, exhaustedInspectCount =
+        entryCreationKeyState.CountRosterInspectBatch()
     local pendingInspectAge = "n/a"
     if rosterInspectPendingGUID and rosterInspectLastRequestTime > 0 then
         pendingInspectAge = string.format("%.1fs", GetTime() - rosterInspectLastRequestTime)
@@ -9255,6 +9260,253 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
     end
 end
 
+-- ───────────────────────────────────────────────────────────
+-- selftest export (`/apscout selftest` start/stop)
+
+-- Human-verifiable in-game self-diagnostics. The QR/screenshot pipe is
+-- one-way by design (the companion cannot ACK), so there is no handshake or
+-- last-seen state to report: the export carries only counters, states, and
+-- ages that already exist in the addon and that PrintTroubleshootingStatus
+-- already reads. It never emits payload bytes, screenshots, keys, account or
+-- roster identities, or boss-by-boss WCL detail, and it never uses chat as a
+-- transport — only chat prints plus one persisted SavedVariable below.
+-- Chat export is one `ASCOUT1: key=value` pair per short line. Persistence is
+-- the single last run in the separate `_G.ApplicantScoutSelfTest` variable
+-- (`{version=1, finishedAt, report}`); ApplicantScoutDB is never touched.
+entryCreationKeyState.SELFTEST_VERSION = 1
+entryCreationKeyState.SELFTEST_MAX_REPORT_LINES = 96
+entryCreationKeyState.SELFTEST_MAX_VALUE_CHARS = 96
+entryCreationKeyState.selfTestRun = nil
+
+entryCreationKeyState.BuildSelfTestReport = function()
+    local S = entryCreationKeyState
+    local now = GetTime and GetTime() or 0
+    local function num(v, d)
+        return math.floor(SafeNumber(v, d or 0))
+    end
+    local function flag(v)
+        return (v == true) and "true" or "false"
+    end
+    local function token(v, fallback)
+        local s = SafeStr(v, "")
+        if s == "" then return fallback or "none" end
+        s = s:gsub("=", "-")
+        if #s > S.SELFTEST_MAX_VALUE_CHARS then
+            s = s:sub(1, S.SELFTEST_MAX_VALUE_CHARS)
+        end
+        return s
+    end
+    local function age(t)
+        t = SafeNumber(t, 0)
+        if t <= 0 then return "never" end
+        return string.format("%.1fs", math.max(0, now - t))
+    end
+    local lines = {}
+    local function add(k, v)
+        lines[#lines + 1] = k .. "=" .. tostring(v)
+    end
+    -- Identity: addon/TOC/game versions only, never player/roster identity.
+    add("v", S.SELFTEST_VERSION)
+    add("addon", token(ADDON_VERSION, "?"))
+    local gameVer, gameBuild, gameIface = "?", "?", "?"
+    if GetBuildInfo then
+        local ok, v1, v2, v4 = pcall(function()
+            return select(1, GetBuildInfo()), select(2, GetBuildInfo()),
+                select(4, GetBuildInfo())
+        end)
+        if ok then
+            gameVer, gameBuild, gameIface = token(v1, "?"), token(v2, "?"), token(v4, "?")
+        end
+    end
+    add("game", gameVer)
+    add("build", gameBuild)
+    add("iface", gameIface)
+    local region = 0
+    if GetCurrentRegion then
+        local ok, r = pcall(GetCurrentRegion)
+        if ok then region = num(r, 0) end
+    end
+    add("region", region)
+    -- Session and debug-override axis.
+    add("enabled", flag(ApplicantScoutDB and ApplicantScoutDB.enabled))
+    add("debug", flag(ApplicantScoutDB and ApplicantScoutDB.debug))
+    add("session", isSessionActive and "active" or "idle")
+    add("session-gen", num(sessionGen, 0))
+    -- QR pipeline: ticker liveness, snapshot age, existing send counters.
+    -- (No resend/cache-hit counters exist; sends + overflow progress cover it.)
+    add("scan-ticker", (S.scanTicker ~= nil) and "on" or "off")
+    add("poll-age", age(lastTransportPollTime))
+    add("shot-age", age(lastShotTime))
+    add("snapshot", (lastSnapshotHash ~= nil) and "known" or "none")
+    add("delivery-sends", num(S.lastDeliverySnapshotSendCount, 0)
+          .. "/" .. num(S.NONTERMINAL_SNAPSHOT_MIN_SENDS, 0))
+    add("job", (S.qrPaintInProgress or S.qrCaptureInProgress) and "active" or "idle")
+    if S.qrTransportJobStartedAt then
+        add("job-age", age(S.qrTransportJobStartedAt))
+    else
+        add("job-age", "idle")
+    end
+    add("shot-lease", flag(qrForceVisibleForShot))
+    local ov = S.qrOverflowState
+    if ov then
+        add("overflow", string.format("frag-%d/%d-pass-%d/%d-stream-%d-gen-%d-queued-%s",
+            num(ov.chunkIndex, -1) + 1, num(ov.chunkCount, 0),
+            num(ov.pass, 0), num(S.QR_OVERFLOW_MIN_SENDS, 0),
+            num(ov.streamID, 0), num(ov.generation, 0),
+            (ov.queuedNewer == true) and "yes" or "no"))
+    else
+        add("overflow", "idle")
+    end
+    add("overflow-superseded", num(S.qrOverflowSupersededCount, 0))
+    add("overflow-fail", token(S.qrOverflowLastFailure, "none"))
+    add("recoveries", num(S.qrTransportRecoveryCount, 0))
+    add("last-recovery", token(S.qrTransportLastRecoveryReason, "never"))
+    -- Last payload shape as counts/bytes only, never content.
+    add("payload-bytes", num(S.lastPayloadTotalBytes, 0))
+    add("payload-error", token(S.lastPayloadBuildError, "none"))
+    add("payload-applicants", num(S.lastPayloadApplicantCount, 0))
+    add("payload-roster", num(S.lastPayloadRosterCount, 0))
+    add("payload-roster-incomplete", flag(S.lastPayloadRosterIncomplete))
+    add("payload-emitted", num(S.lastEmittedApplicantCount, 0))
+    add("qr-encode", token(lastQREncodeMode, "never"))
+    add("qr-bytes", num(lastQREncodeBytes, 0))
+    add("qr-error", token(lastQREncodeError, "none"))
+    -- Companion pairing: one-way transport, so last emission age plus the
+    -- delivery/screenshot states above stand in for last-seen/handshake.
+    add("transport", "one-way")
+    add("shot-result", token(S.screenshotLastResult, "never"))
+    add("shot-fail", num(S.screenshotFailureAttemptCount, 0)
+          .. "/" .. num(S.SCREENSHOT_FAILURE_MAX_ATTEMPTS, 0))
+    add("shot-pending", flag(S.screenshotAwaitingResult))
+    add("shot-throttled", flag(pendingShotDirty))
+    if GetCVar then
+        local okQ, q = pcall(GetCVar, "screenshotQuality")
+        add("cvar-quality", token(okQ and q or nil, "?"))
+        local okF, f = pcall(GetCVar, "screenshotFormat")
+        add("cvar-format", token(okF and f or nil, "?"))
+    end
+    add("tex-pool", num(#qrTexturePool, 0))
+    add("tex-used", num(qrTextureUsed, 0))
+    add("tex-high", num(S.qrTextureVisibleHighWater, 0))
+    -- Visibility axes: session/gameplay, interaction suppression, overrides.
+    S.RefreshQRGameplaySuppression()
+    add("gameplay-suppressed", flag(S.qrGameplaySuppressed))
+    add("suppress-reason", token(S.qrGameplaySuppressionReason, "none"))
+    add("combat", flag(S.qrGameplayCombatActive))
+    add("mplus", flag(S.qrGameplayChallengeActive))
+    add("encounter", flag(S.qrGameplayEncounterActive))
+    add("loading", flag(S.qrGameplayLoadingActive))
+    add("dormant", flag(S.challengeDormant))
+    add("interaction-defer", flag(S.ShouldDeferQRForInteraction()))
+    local slots = 0
+    if type(_interactionSlots) == "table" then
+        for _, active in pairs(_interactionSlots) do
+            if active then slots = slots + 1 end
+        end
+    end
+    add("interaction-slots", num(slots, 0))
+    add("qr-visible", (qrFrame ~= nil and qrFrame:IsShown()) and "visible" or "hidden")
+    add("qr-always", flag(qrAlwaysVisible))
+    add("qr-move", flag(qrMoveMode))
+    local lfgReadsAllowed = not IsChatMessagingLockdown()
+    add("chat-lockdown", flag(not lfgReadsAllowed))
+    -- Roster health: counts and ages only, no identities or GUIDs.
+    local skipped, cooling, exhausted = S.CountRosterInspectBatch()
+    add("inspect-pending", flag(rosterInspectPendingGUID ~= nil))
+    if rosterInspectPendingGUID and SafeNumber(rosterInspectLastRequestTime, 0) > 0 then
+        add("inspect-age", age(rosterInspectLastRequestTime))
+    else
+        add("inspect-age", "n/a")
+    end
+    add("inspect-skipped", num(skipped, 0))
+    add("inspect-cooldown", num(cooling, 0))
+    add("inspect-exhausted", num(exhausted, 0))
+    add("inspect-retry", (S.rosterInspectBatchRetryDeadline ~= nil) and "yes" or "no")
+    add("inspect-block", token(S.rosterInspectBatchLastBlockReason, "none"))
+    add("inspect-combat-defer", flag(S.rosterInspectBatchCombatDeferred))
+    add("load-retry", (S.rosterLoadRetryDeadline ~= nil) and "yes" or "no")
+    add("load-attempt", num(S.rosterLoadRetryAttempt, 0))
+    add("load-exhausted", flag(S.rosterLoadRetryExhausted))
+    -- Fixed-token send/request statuses (sanitized; reasons stay internal).
+    add("autohi", token(S.autoHiLastSendStatus, "never"))
+    add("libks", token(S.libKeystoneLastSendStatus, "never"))
+    add("leader-key", token(S.leaderKeystoneLastRequestStatus, "never"))
+    add("hooks", flag(lfgEntryCreationHookState and lfgEntryCreationHookState.hooksSetup))
+    add("hook-error", token(lfgEntryCreationHookState and lfgEntryCreationHookState.hookError, "none"))
+    -- Error counters.
+    add("term-clear-dispatch", num(S.terminalClearDispatchCount, 0))
+    add("term-clear-precapture-fail", num(S.terminalClearPreCaptureFailureCount, 0))
+    -- Deltas against the run baseline, when a run is active.
+    local run = S.selfTestRun
+    if type(run) == "table" then
+        local function delta(key, cur)
+            add("d-" .. key, math.max(0, num(cur, 0) - num(run[key], 0)))
+        end
+        delta("sends", S.lastDeliverySnapshotSendCount)
+        delta("recoveries", S.qrTransportRecoveryCount)
+        delta("shot-fail", S.screenshotFailureAttemptCount)
+        delta("term-clear", S.terminalClearDispatchCount)
+        delta("superseded", S.qrOverflowSupersededCount)
+        add("run-dur", string.format("%.1fs", math.max(0, now - num(run.startedAt, now))))
+    end
+    while #lines > S.SELFTEST_MAX_REPORT_LINES do
+        table.remove(lines)
+    end
+    return lines
+end
+
+entryCreationKeyState.ToggleSelfTest = function(arg)
+    local S = entryCreationKeyState
+    arg = string.lower(SafeStr(arg, ""))
+    arg = arg:gsub("^%s+", ""):gsub("%s+$", "")
+    if arg == "cancel" then
+        if S.selfTestRun == nil then
+            print("ApplicantScout selftest: no run active")
+            return
+        end
+        S.selfTestRun = nil
+        print("ApplicantScout selftest: cancelled")
+        return
+    end
+    if arg == "start" or (arg == "" and S.selfTestRun == nil) then
+        local now = GetTime and GetTime() or 0
+        S.selfTestRun = {
+            startedAt = now,
+            lastDeliverySnapshotSendCount = S.lastDeliverySnapshotSendCount,
+            qrTransportRecoveryCount = S.qrTransportRecoveryCount,
+            screenshotFailureAttemptCount = S.screenshotFailureAttemptCount,
+            terminalClearDispatchCount = S.terminalClearDispatchCount,
+            qrOverflowSupersededCount = S.qrOverflowSupersededCount,
+        }
+        print("ApplicantScout selftest: started — reproduce, then /apscout selftest to finish")
+        return
+    end
+    if arg == "stop" or arg == "done" or arg == "finish" or arg == "" then
+        if S.selfTestRun == nil then
+            print("ApplicantScout selftest: no run active — use /apscout selftest start")
+            return
+        end
+        local report = S.BuildSelfTestReport()
+        report[#report + 1] = "done=lines-" .. tostring(#report + 1)
+        for _, line in ipairs(report) do
+            print("ASCOUT1: " .. line)
+        end
+        local finishedAt = 0
+        if type(GetServerTime) == "function" then
+            local ok, v = pcall(GetServerTime)
+            if ok and type(v) == "number" then finishedAt = math.floor(v) end
+        end
+        _G.ApplicantScoutSelfTest = {
+            version = S.SELFTEST_VERSION,
+            finishedAt = finishedAt,
+            report = report,
+        }
+        S.selfTestRun = nil
+        return
+    end
+    print("ApplicantScout selftest: use /apscout selftest [start|stop|cancel]")
+end
+
 local function PrintHelp()
     print("|cff00ff7fApplicantScout v" .. ADDON_VERSION .. "|r (QR transport)")
     print("  /apscout on | off       enable/disable capture")
@@ -9263,6 +9515,7 @@ local function PrintHelp()
     print("  /apscout setup          show companion download and setup")
     print("  /apscout status         show a short capture summary")
     print("  /apscout status diag    show detailed QR diagnostics")
+    print("  /apscout selftest       start/finish in-game self-diagnostics export")
     print("  /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle")
     print("  /apscout reset          clear transport cache, queue fresh snapshot")
     print("  /apscout shotnow        request snapshot while enabled; defers in combat/M+/boss fights")
@@ -9400,6 +9653,10 @@ SlashCmdList.APSCOUT = function(msg)
         _SetDebug(true)
     elseif msg == "debug off" or msg == "nodebug" then
         _SetDebug(false)
+    elseif command == "selftest" then
+        -- Start/stop wrapper around the shared selftest export helper above;
+        -- the branch itself performs no transport, chat, or LFG work.
+        entryCreationKeyState.ToggleSelfTest(arg)
     else
         PrintHelp()
     end

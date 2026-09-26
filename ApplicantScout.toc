@@ -4,7 +4,7 @@
 ## Author: Antrakt
 ## Version: 0.12.0
 ## IconTexture: Interface\AddOns\ApplicantScout\media\logo.png
-## SavedVariables: ApplicantScoutDB
+## SavedVariables: ApplicantScoutDB, ApplicantScoutSelfTest
 ## OptionalDeps: RaiderIO, LibKeystone, DBM-Core, BigWigs
 ## DefaultState: enabled
 ## X-Category: Data Export
