@@ -5947,6 +5947,60 @@ def test_selftest_export_helpers_keep_transport_contract():
     # The toggle helper persists to the separate SV and never touches the DB.
     assert "ApplicantScoutDB" not in toggle_body
     assert "_G.ApplicantScoutSelfTest = {" in toggle_body
+    # Finish/show keep chat short: the only prints are the summary lines.
+    assert 'print("ASCOUT1: "' not in toggle_body
+
+
+def test_selftest_copy_window_keeps_secret_contract():
+    # The copy window reuses the setup-panel frame idioms (this file has no
+    # StaticPopup pattern, and StaticPopup edit boxes are single-line). Its
+    # text must come only from the stored counters-only report, and the
+    # region must stay clear of transport/chat/LFG/identity surfaces.
+    source = _lua_source()
+    window_body = _slice_between(
+        source,
+        "entryCreationKeyState.BuildSelfTestCopyText = function()",
+        "entryCreationKeyState.BuildSelfTestReport = function()",
+    )
+
+    for forbidden in (
+        "C_LFGList",
+        "GetApplicantInfoForTransport",
+        "UnitFullName",
+        "UnitGUID",
+        "BuildPayload(",
+        "Screenshot()",
+        "SendChatMessage",
+        "CHAT_MSG_ADDON",
+        "StaticPopup",
+        "ApplicantScoutDB",
+    ):
+        assert forbidden not in window_body
+    assert "CreateFrame(" in window_body
+    assert "selfTestLastReport" in window_body
+    assert window_body.count("SetText(S.BuildSelfTestCopyText())") == 2
+    assert window_body.count("self:SetText(S.BuildSelfTestCopyText())") == 1
+    assert "SetMaxLetters(S.SELFTEST_COPY_MAX_LETTERS)" in window_body
+    assert "CleanUnitAPIBoolean(InCombatLockdown)" in window_body
+
+
+def test_selftest_window_defers_through_gameplay_reconciliation():
+    # A combat-deferred window reopens via the same RefreshQRGameplaySuppression
+    # reconciliation site as the setup panel (which owns the proven pattern).
+    source = _lua_source()
+    refresh_body = _slice_between(
+        source,
+        "entryCreationKeyState.RefreshQRGameplaySuppression = function(",
+        "entryCreationKeyState.SetQRLoadingScreenActive = function(active)",
+    )
+
+    setup_idx = refresh_body.index(
+        "entryCreationKeyState.RefreshCompanionSetupForGameplay()"
+    )
+    window_idx = refresh_body.index(
+        "entryCreationKeyState.RefreshSelfTestWindowForGameplay()"
+    )
+    assert setup_idx < window_idx
 
 
 def test_db_qr_position_canonicalization_in_lua51(pytestconfig):

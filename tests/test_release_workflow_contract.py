@@ -2176,7 +2176,7 @@ def test_documented_slash_commands_match_lua_help_across_both_repositories(
     assert "/apscout setup          show companion download and setup" in expected_lines
     assert "/apscout toggle         flip enabled state" in expected_lines
     assert "/apscout status diag    show detailed QR diagnostics" in expected_lines
-    assert "/apscout selftest       start/finish in-game self-diagnostics export" in expected_lines
+    assert "/apscout selftest       start/finish/show in-game diagnostics + copy window" in expected_lines
     assert "/apscout taintcheck     probe C_LFGList field secret-tagging" in expected_lines
 
     assert _markdown_text_fence_lines(
