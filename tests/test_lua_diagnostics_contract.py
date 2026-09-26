@@ -181,6 +181,7 @@ def test_luals_workspace_owns_exact_wow_global_declarations():
         "hooksecurefunc",
         "C_ChallengeMode",
         "C_InstanceEncounter",
+        "debugprofilestop",
         "LE_PARTY_CATEGORY_HOME",
         "LE_PARTY_CATEGORY_INSTANCE",
         "LFGListFrame",

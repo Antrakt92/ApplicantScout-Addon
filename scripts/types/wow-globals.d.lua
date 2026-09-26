@@ -74,6 +74,9 @@ PixelUtil = nil
 ---@return number physicalHeight
 function GetPhysicalScreenSize() end
 
+---@return number milliseconds
+function debugprofilestop() end
+
 ---@param sidePanelName string
 ---@param selection? string
 function PVEFrame_ToggleFrame(sidePanelName, selection) end
