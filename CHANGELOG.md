@@ -8,6 +8,10 @@
   confirm in chat when a scouting session starts.
 - Reduce repeated Group Finder drag checks and roster lookups, and avoid
   repeated screenshot-setting warnings.
+- Link CurseForge for addon updates in the in-game setup guide, and list Wago
+  alongside CurseForge in the README.
+- Run Delve, follower dungeon and scenario listings through the normal
+  scouting path with key level 0; NPC companions never enter the roster.
 
 ## 0.12.0 - 24-Sep-2026 - Group Finder movement and past-season ratings
 

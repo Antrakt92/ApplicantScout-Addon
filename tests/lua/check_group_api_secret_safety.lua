@@ -148,4 +148,26 @@ harness.LibKeystoneShimHandleAddonMessage("LibKS", "R", "PARTY", "Someone-Realm"
 assert_equal("clean grouped response sends", #sends, 1)
 assert_equal("clean grouped response timers", #timers, 0)
 
+-- Retry-stack group guards: secret group state refuses sends without raising
+-- and schedules no C_Timer retry (clean ~= true fails closed).
+groupBehavior = "secret"
+lockdown = false
+timers = {}
+sends = {}
+harness.LibKeystoneShimHandleAddonMessage("LibKS", "R", "PARTY", "Someone-Realm")
+assert_equal("secret group response sends", #sends, 0)
+assert_equal("secret group response timers", #timers, 0)
+
+-- Leader request guard: secret/failing/unknown group refuses before any send.
+for _, behavior in ipairs({ "secret", "error", "nil" }) do
+    groupBehavior = behavior
+    lockdown = false
+    timers = {}
+    sends = {}
+    local requestOK = pcall(harness.RequestLeaderKeystone, true)
+    if not requestOK then fail("leader request propagated a group API failure: " .. behavior) end
+    assert_equal("unreadable group request sends (" .. behavior .. ")", #sends, 0)
+    assert_equal("unreadable group request timers (" .. behavior .. ")", #timers, 0)
+end
+
 print("ok group-api-secret-safety")

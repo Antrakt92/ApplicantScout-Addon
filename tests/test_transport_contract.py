@@ -1454,15 +1454,19 @@ def test_roster_payload_rows_skip_solo_player_when_not_grouped():
     source = _lua_source()
     roster_body = _slice_between(
         source,
-        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio, playerRealmOrNil)",
         "-- CRC32 IEEE-802.3",
     )
 
-    group_idx = roster_body.index("local groupCount = math.floor")
+    group_idx = roster_body.index(
+        "local groupCount = entryCreationKeyState.CleanGroupMemberCount()"
+    )
+    unknown_guard_idx = roster_body.index("if groupCount == nil or inRaid == nil then")
     solo_guard_idx = roster_body.index("if groupCount <= 0 then")
-    player_idx = roster_body.index('_BuildRosterRow("player", 1, 1, false)')
+    player_idx = roster_body.index('_BuildRosterRow("player", 1, 1, false, rosterPlayerRealm)')
 
-    assert group_idx < solo_guard_idx < player_idx
+    assert group_idx < unknown_guard_idx < solo_guard_idx < player_idx
+    assert 'return "", 0, "", false, false, true' in roster_body[unknown_guard_idx:solo_guard_idx]
     assert 'return "", emittedCount, ""' in roster_body[solo_guard_idx:player_idx]
 
 
@@ -1470,7 +1474,7 @@ def test_roster_name_falls_back_to_visible_unit_name_when_full_name_is_missing()
     source = _lua_source()
     name_body = _slice_between(
         source,
-        "local function _UnitFullNameForTransport(unit)",
+        "local function _UnitFullNameForTransport(unit, fallbackRealm)",
         "local function _UnitClassIDForRoster(unit)",
     )
 
@@ -1481,6 +1485,9 @@ def test_roster_name_falls_back_to_visible_unit_name_when_full_name_is_missing()
     assert full_name_idx < fallback_idx < safe_fallback_idx
     assert "if name == \"\" and GetUnitName then" in name_body
     assert 'name:find("-", 1, true)' in name_body
+    assert "not IsSecretValue(unitName)" in name_body
+    assert "not IsSecretValue(unitRealm)" in name_body
+    assert "if fallbackRealm ~= nil then" in name_body
 
 
 def test_roster_name_filters_unknown_placeholder_unit_names():
@@ -1492,9 +1499,9 @@ def test_roster_name_filters_unknown_placeholder_unit_names():
     )
 
     helper_idx = name_body.index("local function _IsPlaceholderCleanUnitName(name)")
-    unit_name_idx = name_body.index("local function _UnitFullNameForTransport(unit)")
+    unit_name_idx = name_body.index("local function _UnitFullNameForTransport(unit, fallbackRealm)")
     guard_idx = name_body.index(
-        'if _IsPlaceholderCleanUnitName(name) then return "" end'
+        'if _IsPlaceholderCleanUnitName(name) then return "", "placeholder" end'
     )
 
     assert helper_idx < unit_name_idx < guard_idx
@@ -1503,6 +1510,7 @@ def test_roster_name_filters_unknown_placeholder_unit_names():
     assert "name:find(\"-\", 1, true)" in name_body
     assert 'base == "Unknown"' in name_body
     assert 'base == "UNKNOWNOBJECT"' in name_body
+    assert 'return "", "unknown"' in name_body
 
 
 def test_safe_str_strips_player_links_before_bare_pipe_cleanup():
@@ -1813,7 +1821,8 @@ def test_leader_keystone_request_uses_checked_send_and_throttle_updates_only_aft
     assert "leaderKeystoneRequestRetryToken" in source
     assert "leaderKeystoneRequestRetryDeadline" in source
     assert 'reason == "request-failed"' in source
-    assert "if not (IsInGroup and IsInGroup()) then return end" in source
+    assert "entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup) ~= true" in request_body
+    assert "if not (IsInGroup and IsInGroup()) then return end" not in source
 
 
 def test_libkeystone_retries_are_group_generation_scoped_and_cancelled_on_group_left():
@@ -1909,7 +1918,7 @@ def test_full_party_quiet_signature_requires_empty_resolved_non_raid_roster():
     )
     roster_body = _slice_between(
         source,
-        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio, playerRealmOrNil)",
         "-- CRC32 IEEE-802.3",
     )
 
@@ -2014,7 +2023,7 @@ def test_quiet_full_party_signature_uses_collision_safe_encoding():
     )
     roster_body = _slice_between(
         source,
-        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio, playerRealmOrNil)",
         "-- CRC32 IEEE-802.3",
     )
 
@@ -2031,7 +2040,7 @@ def test_quiet_full_party_signature_covers_companion_visible_roster_fields():
     source = _lua_source()
     roster_body = _slice_between(
         source,
-        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio, playerRealmOrNil)",
         "-- CRC32 IEEE-802.3",
     )
     serialize_idx = roster_body.index("for _, row in ipairs(rows) do")
@@ -2581,13 +2590,14 @@ def test_roster_payload_marks_group_snapshot_incomplete_when_expected_rows_are_m
     )
     roster_body = _slice_between(
         source,
-        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio, playerRealmOrNil)",
         "-- CRC32 IEEE-802.3",
     )
 
     assert "entryCreationKeyState.lastPayloadRosterIncomplete = false" in payload_body
     assert "local expectedRosterCount = 0" in roster_body
     assert "expectedRosterCount = groupCount" in roster_body
+    assert "expectedRosterCount = expectedRosterCount - placeholderSkipped" in roster_body
     assert "local rosterIncomplete = emittedCount < expectedRosterCount" in roster_body
     assert "rosterQuietHasUnknownSpec, inRaid, rosterIncomplete" in roster_body
     assert "entryCreationKeyState.lastPayloadRosterIncomplete = rosterIncomplete" in (
@@ -2604,7 +2614,7 @@ def test_party_roster_walks_all_party_units_without_subtracting_player():
     )
     roster_body = _slice_between(
         source,
-        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio, playerRealmOrNil)",
         "-- CRC32 IEEE-802.3",
     )
 
@@ -2619,7 +2629,7 @@ def test_party_roster_with_unknown_spec_stays_incomplete_until_clear_data():
     source = _lua_source()
     roster_body = _slice_between(
         source,
-        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio, playerRealmOrNil)",
         "-- CRC32 IEEE-802.3",
     )
 
@@ -2793,7 +2803,7 @@ def test_roster_payload_rows_include_key_summary_and_group_metadata():
     source = _lua_source()
     roster_body = _slice_between(
         source,
-        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio, playerRealmOrNil)",
         "-- CRC32 IEEE-802.3",
     )
     summary_writer = _slice_between(
@@ -2802,7 +2812,8 @@ def test_roster_payload_rows_include_key_summary_and_group_metadata():
         "local function _IsPlaceholderCleanUnitName(name)",
     )
 
-    assert "GetNumGroupMembers()" in roster_body
+    assert "entryCreationKeyState.CleanGroupMemberCount()" in roster_body
+    assert "GetNumGroupMembers()" not in roster_body
     assert 'table.insert(rosterOut, string.char(_ClampUInt8(row.unitIndex)))' in roster_body
     assert 'table.insert(rosterOut, string.char(_ClampUInt8(row.flags)))' in roster_body
     assert 'table.insert(rosterOut, string.char(_ClampUInt8(row.subgroup)))' in roster_body
@@ -2818,11 +2829,11 @@ def test_roster_payload_rows_pack_current_score_separately_from_main_score():
     summary_body = _slice_between(
         source,
         "local function _GetRaiderIOMPlusSummaryForCleanName(memberName, listingActivityID, targetKey)",
-        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio, playerRealmOrNil)",
     )
     roster_body = _slice_between(
         source,
-        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)",
+        "local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio, playerRealmOrNil)",
         "-- CRC32 IEEE-802.3",
     )
     writer_body = _slice_between(
@@ -3411,7 +3422,7 @@ def test_roster_self_detection_uses_literal_player_before_unit_is_unit():
     self_body = _slice_between(
         source,
         "local function _UnitIsSelfForRoster(unit)",
-        "local function _BuildRosterRow(unit, unitIndex, subgroup, isRaid)",
+        "local function _BuildRosterRow(unit, unitIndex, subgroup, isRaid, fallbackRealm)",
     )
 
     literal_idx = self_body.index('if unit == "player" then return true end')
@@ -3633,12 +3644,16 @@ def test_initial_roster_spec_preflight_does_not_hold_raid_snapshots():
         "local function _OnRosterInspectReady(guid)",
     )
 
-    group_count_idx = ensure_body.index("local groupCount = math.floor")
+    group_count_idx = ensure_body.index(
+        "local groupCount = entryCreationKeyState.CleanGroupMemberCount()"
+    )
+    unknown_guard_idx = ensure_body.index("groupCount == nil")
     max_party_idx = ensure_body.index("groupCount > 5")
-    raid_idx = ensure_body.index("IsInRaid and IsInRaid()")
+    raid_idx = ensure_body.index("entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid)")
     seed_idx = ensure_body.index("local seeded = false")
 
-    assert group_count_idx < max_party_idx < raid_idx < seed_idx
+    assert group_count_idx < unknown_guard_idx < max_party_idx < raid_idx < seed_idx
+    assert "IsInRaid and IsInRaid()" not in ensure_body
 
 
 def test_initial_roster_spec_preflight_does_not_hold_applicant_snapshots():
@@ -5246,14 +5261,19 @@ def test_lua_producer_omits_fallback_placeholder_roster_identity(pytestconfig):
 
     assert b"Unknown-Realm" not in payload
     assert b"Host-Realm" in payload
-    assert b"Healer-Realm" not in payload
+    assert b"Healer-Realm" in payload
     parse_payload = _companion_payload_parser(pytestconfig)
     snapshot, error = parse_payload(payload)
 
     assert error is None
     assert snapshot is not None
-    assert snapshot.roster_unavailable
-    assert snapshot.roster == []
+    assert not snapshot.roster_unavailable
+    assert [member.name for member in snapshot.roster] == [
+        "Host-Realm",
+        "Healer-Realm",
+        "Feral-Realm",
+        "Ret-Realm",
+    ]
 
 
 @pytest.mark.requires_companion

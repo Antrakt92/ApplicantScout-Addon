@@ -53,7 +53,7 @@ assert(inspect_releases == 0, "a failed probe must not release the owned inspect
 
 issecretvalue = originalIsSecretValue
 assert(
-    harness.OnRosterInspectReady("Party-1") == true,
+    harness.OnRosterInspectReady("Player-11") == true,
     "the matching clean callback should still resolve the owned inspect"
 )
 assert(inspect_releases == 1, "the matching clean callback should release the inspect")

@@ -663,6 +663,19 @@ local function SafeEnumKey(v, default)
     return default
 end
 
+-- Secret-safe group-size read with explicit nil semantics (same pattern as
+-- CleanUnitAPIBoolean, which only covers booleans). Returns a clean count or
+-- nil when the API is missing, fails, or returns a secret value. Callers must
+-- handle nil explicitly: unknown size fails closed, never as solo/empty.
+-- Defined here (not next to CleanUnitAPIBoolean) so the SafeNumber upvalue
+-- is in scope; see the local/upvalue budget warning below.
+entryCreationKeyState.CleanGroupMemberCount = function()
+    if type(GetNumGroupMembers) ~= "function" then return nil end
+    local ok, value = pcall(GetNumGroupMembers)
+    if not ok or IsSecretValue(value) then return nil end
+    return math.floor(SafeNumber(value, 0))
+end
+
 IsChatMessagingLockdown = function()
     local api = C_ChatInfo and C_ChatInfo.InChatMessagingLockdown
     if type(api) ~= "function" then return false end
@@ -1603,6 +1616,15 @@ end
 
 CheckSessionTransition = function(lfgReadsAllowed)
     if lfgReadsAllowed == nil then lfgReadsAllowed = true end
+    -- Deliberately no arena/pvp session gate here (GetInstanceInfo instance
+    -- types "arena"/"pvp" do not suspend StartSession). Suspending the
+    -- session drops transport data, not just capture: applicants applying
+    -- while the group zones through PvP would be lost, and a listed group
+    -- can exist while members are in arena-adjacent staging. Combat already
+    -- pauses capture via gameplay suppression, so an extra data gate has no
+    -- proven benefit. See tests/lua/check_arena_pvp_session_decision.lua,
+    -- which locks this behavior; revisit only with live evidence that
+    -- arena sessions emit harmful or useless snapshots.
     local hasRoster = _HasGroupRosterForTransport()
     local entry = nil
     local listingStateKnown = false
@@ -3791,7 +3813,11 @@ local function _GetOwnedKeystoneListingInfo()
 end
 
 entryCreationKeyState.CanUseOwnedKeystoneForListingFallback = function()
-    if not (IsInGroup and IsInGroup()) then return true end
+    -- Secret-safety: clean false stays solo (owned key usable); unknown
+    -- group state fails closed (no fallback) instead of assuming solo.
+    local grouped = entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup)
+    if grouped == false then return true end
+    if grouped ~= true then return false end
     if entryCreationKeyState.CleanUnitIsGroupLeader("player") == true then return true end
     return false
 end
@@ -4014,27 +4040,49 @@ local function _IsPlaceholderCleanUnitName(name)
     return base == "Unknown" or base == "UNKNOWN" or base == "UNKNOWNOBJECT"
 end
 
-local function _UnitFullNameForTransport(unit)
-    local name, realm = "", ""
+local function _UnitFullNameForTransport(unit, fallbackRealm)
+    -- readsClean tracks whether at least one identity API returned a clean
+    -- (non-secret) result. Only clean reads can establish placeholder
+    -- evidence; failing or secret reads stay "unknown" so both share
+    -- identical fail-closed bytes downstream.
+    local name, realm, readsClean = "", "", false
     if UnitFullName then
         local ok, unitName, unitRealm = pcall(UnitFullName, unit)
-        if ok then
+        if ok and not IsSecretValue(unitName) and not IsSecretValue(unitRealm) then
             name = SafeStr(unitName, "")
             realm = SafeStr(unitRealm, "")
+            readsClean = true
         end
     end
     if name == "" and GetUnitName then
         local ok, unitName = pcall(GetUnitName, unit, true)
-        if ok then name = SafeStr(unitName, "") end
+        if ok and not IsSecretValue(unitName) then
+            name = SafeStr(unitName, "")
+            readsClean = true
+        end
     end
-    if _IsPlaceholderCleanUnitName(name) then return "" end
-    if name:find("-", 1, true) then return name end
-    if realm == "" and UnitFullName then
-        local okPlayer, _playerName, playerRealm = pcall(UnitFullName, "player")
-        if okPlayer then realm = SafeStr(playerRealm, "") end
+    if name == "" then
+        if readsClean then return "", "placeholder" end
+        return "", "unknown"
     end
-    if realm ~= "" then return name .. "-" .. realm end
-    return name
+    -- Second return is the resolution reason ("ok", "placeholder",
+    -- "unknown"). Single-value callers ignore it; the roster builder uses it
+    -- to subtract stable placeholder/offline rows from its expected count
+    -- while keeping secret/failed reads incomplete (withheld).
+    if _IsPlaceholderCleanUnitName(name) then return "", "placeholder" end
+    if name:find("-", 1, true) then return name, "ok" end
+    if realm == "" then
+        if fallbackRealm ~= nil then
+            -- Hoisted caller realm: already SafeStr-cleaned, so no new API
+            -- read can taint this path. "" means the host realm is unknown.
+            realm = SafeStr(fallbackRealm, "")
+        elseif UnitFullName then
+            local okPlayer, _playerName, playerRealm = pcall(UnitFullName, "player")
+            if okPlayer then realm = SafeStr(playerRealm, "") end
+        end
+    end
+    if realm ~= "" then return name .. "-" .. realm, "ok" end
+    return name, "ok"
 end
 
 local function _UnitClassIDForRoster(unit)
@@ -4069,10 +4117,15 @@ end
 
 local function _ForEachRosterUnit(callback)
     if type(callback) ~= "function" then return end
-    local groupCount = math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))
-    if groupCount <= 0 then return end
+    -- Secret-safety: raw GetNumGroupMembers()/IsInRaid() can raise or return
+    -- secret values in combat. Unknown size or raid state iterates nothing;
+    -- callers already treat zero visits as incomplete via expected counts.
+    local groupCount = entryCreationKeyState.CleanGroupMemberCount()
+    if groupCount == nil or groupCount <= 0 then return end
 
-    if IsInRaid and IsInRaid() then
+    local inRaid = entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid)
+    if inRaid == nil then return end
+    if inRaid == true then
         if groupCount > 40 then groupCount = 40 end
         for i = 1, groupCount do
             if callback("raid" .. i) then return end
@@ -4198,7 +4251,12 @@ local function _MaybeRequestRosterInspect(unit, guid, isSelf)
     if (now - rosterInspectLastRequestTime) < ROSTER_INSPECT_THROTTLE_S then
         return false, "throttle"
     end
-    if InCombatLockdown and InCombatLockdown() then return false, "combat" end
+    -- Secret-safety: NotifyInspect is protected. Unknown combat state fails
+    -- closed to the combat-deferral path (the caller arms bounded retry),
+    -- exactly like a clean combat lockdown.
+    if entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) ~= false then
+        return false, "combat"
+    end
 
     if entryCreationKeyState.CleanUnitAPIBoolean(CanInspect, unit) ~= true then
         return false, "uninspectable"
@@ -4618,9 +4676,11 @@ entryCreationKeyState.FlushOrContinueRosterInspectBatch = function()
 end
 
 entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot = function()
-    local groupCount = math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))
-    if groupCount <= 0 or groupCount > 5 then return false end
-    if IsInRaid and IsInRaid() then return false end
+    -- Secret-safety: unknown size fails closed (no batch); unknown raid
+    -- state also bails since this batch only supports non-raid parties.
+    local groupCount = entryCreationKeyState.CleanGroupMemberCount()
+    if groupCount == nil or groupCount <= 0 or groupCount > 5 then return false end
+    if entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid) ~= false then return false end
     if not entryCreationKeyState.rosterInspectBatchDirtyPending then
         local seeded = false
         local now = GetTime and GetTime() or 0
@@ -4770,11 +4830,18 @@ local function _UnitRoleTokenForRoster(unit, specID)
     return "DAMAGER"
 end
 
-local function _BuildRosterRow(unit, unitIndex, subgroup, isRaid)
+local function _BuildRosterRow(unit, unitIndex, subgroup, isRaid, fallbackRealm)
     if not _UnitExistsForRoster(unit) then return nil end
-    local name = _UnitFullNameForTransport(unit)
-    if name == "" then return nil end
+    local name, nameReason = _UnitFullNameForTransport(unit, fallbackRealm)
+    if name == "" then return nil, nameReason end
     local guid = entryCreationKeyState.UnitGUIDForRoster(unit)
+    -- Follower-dungeon NPCs can occupy real party slots with Creature- (or
+    -- similar non-player) GUIDs. Only Player- GUIDs transport as roster
+    -- members; empty GUIDs stay unknown (withheld), not skipped. NPC rows
+    -- reuse the placeholder reason so they leave the expected count instead
+    -- of voiding the roster. The cleansed GUID is a plain string here, so
+    -- the prefix match cannot taint the transport.
+    if guid ~= "" and not guid:find("^Player%-") then return nil, "placeholder" end
     local isSelf = _UnitIsSelfForRoster(unit)
     local specID = _UnitSpecIDForRoster(unit, guid, isSelf)
     local roleToken = _UnitRoleTokenForRoster(unit, specID)
@@ -4963,7 +5030,7 @@ entryCreationKeyState.ScheduleLibKeystoneResponseRetry = function(channel, reaso
         entryCreationKeyState.libKeystoneResponseRetryDeadline = nil
         entryCreationKeyState.libKeystoneResponseRetryGeneration = nil
         if retryGroupGen ~= entryCreationKeyState.groupTransportGen then return end
-        if not (IsInGroup and IsInGroup()) then return end
+        if entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup) ~= true then return end
         if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return end
         if not entryCreationKeyState.IsLibKeystoneShimResponderOwner() then return end
         local ok, retryReason = entryCreationKeyState.SendLibKeystoneShimInfo(channel)
@@ -4995,7 +5062,7 @@ end
 entryCreationKeyState.ScheduleLeaderKeystoneRefresh = function()
     if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return false end
     if not (C_Timer and C_Timer.After) then return false end
-    if not (IsInGroup and IsInGroup()) then return false end
+    if entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup) ~= true then return false end
 
     local refreshGroupGen = entryCreationKeyState.groupTransportGen
     if entryCreationKeyState.leaderKeystoneRefreshDeadline ~= nil
@@ -5014,7 +5081,7 @@ entryCreationKeyState.ScheduleLeaderKeystoneRefresh = function()
         entryCreationKeyState.leaderKeystoneRefreshDeadline = nil
         entryCreationKeyState.leaderKeystoneRefreshGeneration = nil
         if refreshGroupGen ~= entryCreationKeyState.groupTransportGen then return end
-        if not (IsInGroup and IsInGroup()) then return end
+        if entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup) ~= true then return end
         if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return end
         entryCreationKeyState.RequestLeaderKeystone(false)
     end)
@@ -5240,7 +5307,7 @@ entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry = function(attempt, rea
         return false
     end
     if not (C_Timer and C_Timer.After) then return false end
-    if not (IsInGroup and IsInGroup()) then return false end
+    if entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup) ~= true then return false end
 
     local now = GetTime and GetTime() or 0
     local delay = entryCreationKeyState.LEADER_KEY_REQUEST_RETRY_DELAY_S
@@ -5267,7 +5334,7 @@ entryCreationKeyState.ScheduleLeaderKeystoneRequestRetry = function(attempt, rea
         entryCreationKeyState.leaderKeystoneRequestRetryDeadline = nil
         entryCreationKeyState.leaderKeystoneRequestRetryGeneration = nil
         if retryGroupGen ~= entryCreationKeyState.groupTransportGen then return end
-        if not (IsInGroup and IsInGroup()) then return end
+        if entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup) ~= true then return end
         if not entryCreationKeyState.IsLibKeystoneTransportEnabled() then return end
         entryCreationKeyState.RequestLeaderKeystone(true, attempt + 1)
     end)
@@ -5279,7 +5346,7 @@ entryCreationKeyState.RequestLeaderKeystone = function(force, attempt)
         return
     end
     if not entryCreationKeyState.RegisterLeaderKeystoneCallback()
-       or not (IsInGroup and IsInGroup()) then
+       or entryCreationKeyState.CleanUnitAPIBoolean(IsInGroup) ~= true then
         return
     end
     local now = GetTime and GetTime() or 0
@@ -5376,48 +5443,100 @@ entryCreationKeyState.RaidDifficultyFlagsForRoster = function()
     return flags
 end
 
-local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio)
+local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelForRio, playerRealmOrNil)
     local rosterOut = {}
     local emittedCount = 0
     local rows = {}
     local rosterQuietHasUnknownSpec = false
-    local groupCount = math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))
+    -- Secret-safety: an unreadable group size withholds the roster as
+    -- incomplete instead of emitting a zero-member authoritative frame.
+    local groupCount = entryCreationKeyState.CleanGroupMemberCount()
     local inRaid = entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid)
     local expectedRosterCount = 0
+    if groupCount == nil or inRaid == nil then
+        return "", 0, "", false, false, true
+    end
     if groupCount <= 0 then
         return "", emittedCount, "", false, inRaid, false
     end
-    if inRaid == nil then
-        return "", 0, "", false, false, true
-    end
 
+    -- Single player-realm read per roster build. BuildPayload threads its
+    -- hoisted realm through playerRealmOrNil; direct callers pass nil and pay
+    -- one read here instead of one per bare-name row below.
+    local rosterPlayerRealm = playerRealmOrNil
+    if rosterPlayerRealm == nil and UnitFullName then
+        local okPlayer, playerName, resolvedRealm = pcall(UnitFullName, "player")
+        if okPlayer then
+            local cleanedFull = SafeStr(playerName, "")
+            if cleanedFull == "" and GetUnitName then
+                local okUnit, unitName = pcall(GetUnitName, "player", true)
+                if okUnit then cleanedFull = SafeStr(unitName, "") end
+            end
+            if not _IsPlaceholderCleanUnitName(cleanedFull) then
+                local dash = cleanedFull:find("-", 1, true)
+                if dash then
+                    rosterPlayerRealm = cleanedFull:sub(dash + 1)
+                else
+                    rosterPlayerRealm = SafeStr(resolvedRealm, "")
+                end
+            else
+                rosterPlayerRealm = ""
+            end
+        else
+            rosterPlayerRealm = ""
+        end
+    end
+    rosterPlayerRealm = SafeStr(rosterPlayerRealm, "")
+
+    -- Stable placeholder rows (offline members, "Unknown" identities) carry
+    -- no transportable identity on clean reads and never resolve on later
+    -- ticks, so they leave the expected count instead of voiding the whole
+    -- roster every tick. Secret/failed reads keep reason "unknown" and stay
+    -- incomplete (withheld) so partial bytes never escape authority checks,
+    -- and failing and secret reads share identical fail-closed bytes.
+    -- UnitIsConnected is not referenced: it is outside the LuaLS globals
+    -- allowlist, and only clean placeholder evidence subtracts here.
+    local placeholderSkipped = 0
     if inRaid then
         local raidDifficultyFlags = entryCreationKeyState.RaidDifficultyFlagsForRoster()
         if groupCount > 40 then groupCount = 40 end
         expectedRosterCount = groupCount
         for i = 1, groupCount do
-            local row = _BuildRosterRow(
+            local row, rowReason = _BuildRosterRow(
                 "raid" .. i,
                 i,
                 _RaidSubgroupForRoster(i),
-                true
+                true,
+                rosterPlayerRealm
             )
             if row then
                 row.flags = row.flags + raidDifficultyFlags
                 table.insert(rows, row)
+            elseif rowReason == "placeholder" then
+                placeholderSkipped = placeholderSkipped + 1
             end
         end
     else
         expectedRosterCount = groupCount
         if expectedRosterCount > 5 then expectedRosterCount = 5 end
-        local playerRow = _BuildRosterRow("player", 1, 1, false)
-        if playerRow then table.insert(rows, playerRow) end
+        local playerRow, playerReason = _BuildRosterRow("player", 1, 1, false, rosterPlayerRealm)
+        if playerRow then
+            table.insert(rows, playerRow)
+        elseif playerReason == "placeholder" then
+            placeholderSkipped = placeholderSkipped + 1
+        end
         for i = 1, 4 do
             local unit = "party" .. i
-            local row = _BuildRosterRow(unit, i + 1, 1, false)
-            if row then table.insert(rows, row) end
+            local row, rowReason = _BuildRosterRow(unit, i + 1, 1, false, rosterPlayerRealm)
+            if row then
+                table.insert(rows, row)
+            elseif rowReason == "placeholder" then
+                placeholderSkipped = placeholderSkipped + 1
+            end
         end
     end
+    expectedRosterCount = expectedRosterCount - placeholderSkipped
+    if expectedRosterCount < 0 then expectedRosterCount = 0 end
 
     table.sort(rows, function(a, b)
         if a.subgroup ~= b.subgroup then return a.subgroup < b.subgroup end
@@ -5426,7 +5545,7 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
 
     for _, row in ipairs(rows) do
         local rioSummary = _GetRaiderIOMPlusSummaryForCleanName(
-            _RaiderIOProfileLookupNameFromCleanName(row.name),
+            _RaiderIOProfileLookupNameFromCleanName(row.name, rosterPlayerRealm),
             listingActivityIDForRio,
             listingKeyLevelForRio
         )
@@ -5774,12 +5893,25 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
                 memberOK, rawMemberName, memberClass, memberILvl,
                 memberRole, memberScore, memberSpecID =
                     entryCreationKeyState.GetApplicantMemberInfoForTransport(apiToken, m)
+            end
+            local memberName = SafeStr(rawMemberName, "")
+            -- Never cache failures, secrets, or placeholder names. The cache
+            -- key covers only the applicant roster fingerprint, so a cached
+            -- miss sticks until the roster changes: a 1-frame backend lag or
+            -- combat-secret name would empty the applicant domain for the
+            -- whole session. Uncached misses re-read on the next 0.5s poll
+            -- (bounded: <=5 members per applicant). The single SafeStr above
+            -- serves both the cache decision and the emit path, so the reuse
+            -- budgets are unchanged.
+            if cachedMember == nil
+               and memberOK
+               and not IsSecretValue(rawMemberName)
+               and not _IsPlaceholderCleanUnitName(memberName) then
                 memberInfoRows[appID .. ":" .. m] = {
                     memberOK, rawMemberName, memberClass, memberILvl,
                     memberRole, memberScore, memberSpecID,
                 }
             end
-            local memberName = SafeStr(rawMemberName, "")
             if memberOK and not _IsPlaceholderCleanUnitName(memberName) then
                 local classToken = SafeEnumKey(memberClass, "")
                 local roleToken = SafeEnumKey(memberRole, "DAMAGER")
@@ -5830,7 +5962,8 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
         rosterQuietHasUnknownSpec, rosterQuietInRaid, rosterIncomplete =
             BuildRosterPayloadRows(
                 listingActivityIDForRio,
-                listingKeyLevelForRio
+                listingKeyLevelForRio,
+                playerRealm
             )
     end
     entryCreationKeyState.lastPayloadRosterIncomplete = rosterIncomplete

@@ -38,4 +38,22 @@ assert(playerRealmReads == 1, string.format(
     playerRealmReads
 ))
 
-print("ok player-realm-lookup-reuse reads=" .. playerRealmReads)
+-- Roster coverage: the bare-party fallback and the RaiderIO lookup must reuse
+-- the same hoisted realm instead of re-reading UnitFullName("player") per
+-- row. GetNumGroupMembers=0 above masks this path entirely, so a roster phase
+-- is required to keep the leak covered. The stdout contract stays exactly one
+-- line; the roster read bound is enforced by the assert below.
+playerRealmReads = 0
+GetNumGroupMembers = function() return 5 end
+for _, unit in ipairs({ "party1", "party2", "party3", "party4" }) do
+    env.unit_data[unit].unitFullName = { env.unit_data[unit].name, nil }
+    env.unit_data[unit].unitName = env.unit_data[unit].name
+end
+local _, rosterCount = harness.BuildRosterPayloadRows(0, 0)
+assert(rosterCount == 5, "bare-name roster did not transport 5 members")
+assert(playerRealmReads == 2, string.format(
+    "roster resolved the player realm %d times for 4 bare party names (hoist + player row)",
+    playerRealmReads
+))
+
+print("ok player-realm-lookup-reuse reads=1")

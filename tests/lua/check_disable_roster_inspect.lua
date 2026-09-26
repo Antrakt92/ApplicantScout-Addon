@@ -33,14 +33,14 @@ ApplicantScoutDB = { enabled = true, debug = false }
 
 local harness = env.load_addon()
 harness.StartSession()
-harness.OnRosterInspectReady("Party-1")
+harness.OnRosterInspectReady("Player-11")
 assert(clearInspectCalls == 0,
     "an unowned INSPECT_READY must not clear global inspect state")
 assert(harness.EnsureRosterInspectBatchBeforeSnapshot() == true,
     "fixture did not start the first roster inspection")
 assert(#inspectRequests == 1 and inspectRequests[1] == "party1",
     "fixture did not request the expected first party member")
-harness.OnRosterInspectReady("Party-2")
+harness.OnRosterInspectReady("Player-12")
 assert(clearInspectCalls == 0,
     "a different GUID must not consume the owned inspect request")
 
@@ -49,7 +49,7 @@ assert(clearInspectCalls == 1,
     "disabling must release the inspect request while ownership is known")
 now = now + 2
 resolvedSpec = 63
-harness.OnRosterInspectReady("Party-1")
+harness.OnRosterInspectReady("Player-11")
 
 assert(#inspectRequests == 1,
     "late INSPECT_READY restarted roster inspection after the kill switch")

@@ -36,6 +36,36 @@ assert(not npcPayload:find("Brann", 1, true), "NPC companion leaked into roster 
 env.unit_data["party5"] = nil
 env.unit_data["target"] = nil
 
+-- Follower-dungeon NPCs occupy real party slots with non-player GUIDs. The
+-- row must be skipped (never transported) while the remaining real members
+-- still ship as a complete roster.
+local savedParty2 = env.unit_data.party2
+env.unit_data.party2 = {
+    name = "Brann",
+    realm = "Realm",
+    guid = "Creature-0-1234-0-0-1-0000000000",
+    class = "WARRIOR",
+    classID = 1,
+    specID = 73,
+    role = "DAMAGER",
+}
+local followerPayload, followerCount = harness.BuildRosterPayloadRows(0, 0)
+assert(followerCount == 4, "follower NPC slot was transported or voided the roster")
+assert(not followerPayload:find("Brann", 1, true), "follower NPC leaked into roster payload")
+local followerEntry = {
+    activityIDs = { 501 },
+    questID = 0,
+    name = "Follower dungeon",
+    comment = "npc in party slot",
+}
+assert(harness.BuildPayload(followerEntry, {}, false) ~= nil,
+    "follower NPC voided the party payload")
+assert(harness.LastPayloadRosterCount() == 4,
+    "follower NPC slot changed the transported roster count")
+assert(not harness.LastPayloadRosterIncomplete(),
+    "follower NPC slot marked the real party incomplete")
+env.unit_data.party2 = savedParty2
+
 -- Delve-like listing (non-Mythic+ category): the M+ gate must hold keyLevel
 -- at 0 even with a "+15" title, while the real party roster still ships.
 local delveEntry = {

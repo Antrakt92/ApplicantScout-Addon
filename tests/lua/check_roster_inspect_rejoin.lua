@@ -74,7 +74,7 @@ end
 env.unit_data.party1 = {
     name = "Friend",
     realm = "Realm",
-    guid = "Party-1",
+    guid = "Player-11",
     class = "PRIEST",
     classID = 5,
     specID = 258,

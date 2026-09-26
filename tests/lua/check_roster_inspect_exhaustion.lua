@@ -80,7 +80,7 @@ assert(
     "a new listing session must reset the per-GUID retry budget"
 )
 assert(inspect_requests == 3, "new session should permit one fresh inspect")
-harness.OnRosterInspectReady("Party-1")
+harness.OnRosterInspectReady("Player-11")
 assert(
     harness.EnsureRosterInspectBatchBeforeSnapshot() == false,
     "a partial inspect callback must enter the same retry cooldown"
@@ -93,7 +93,7 @@ assert(
     "a partial callback should receive one bounded retry after cooldown"
 )
 assert(inspect_requests == 4, "expected one retry after the partial callback")
-harness.OnRosterInspectReady("Party-1")
+harness.OnRosterInspectReady("Player-11")
 now = 3000
 assert(
     harness.EnsureRosterInspectBatchBeforeSnapshot() == false,

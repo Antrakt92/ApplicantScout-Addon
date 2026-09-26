@@ -109,7 +109,7 @@ assert(string.find(first_payload, "Friend-Realm", 1, true) == nil,
 local load_state = harness.RosterLoadRetryState()
 assert(load_state.attempt == 1 and not load_state.ready and not load_state.exhausted)
 assert(timer_count(0.5) == 1, "first retry did not use the 0.5s backoff")
-local inspect_state = harness.RosterInspectFailureState("Party-1")
+local inspect_state = harness.RosterInspectFailureState("Player-11")
 assert(inspect_state.failures == 1 and not inspect_state.exhausted,
     "CanInspect=false did not consume the first per-GUID failure")
 
@@ -148,7 +148,7 @@ for index, delay in ipairs(expected_delays) do
     end
 end
 
-inspect_state = harness.RosterInspectFailureState("Party-1")
+inspect_state = harness.RosterInspectFailureState("Player-11")
 assert(inspect_state.failures == 2 and inspect_state.exhausted,
     "stable uninspectable GUID did not share the session inspect budget")
 local parked_reads = roster_reads
@@ -163,7 +163,7 @@ assert(roster_reads == parked_reads and #timers == 0,
 -- the exhausted per-GUID inspect budget for the unchanged member.
 harness.FireEvent("GROUP_ROSTER_UPDATE")
 load_state = harness.RosterLoadRetryState()
-inspect_state = harness.RosterInspectFailureState("Party-1")
+inspect_state = harness.RosterInspectFailureState("Player-11")
 assert(load_state.attempt == 0 and load_state.ready and not load_state.exhausted,
     "roster event did not rearm transport loading")
 assert(inspect_state.failures == 2 and inspect_state.exhausted,
@@ -178,7 +178,7 @@ inspectable = true
 remote_spec_id = 63
 remote_item_level = 704
 local before_unowned = harness.RosterLoadRetryState()
-harness.FireEvent("INSPECT_READY", "Party-1")
+harness.FireEvent("INSPECT_READY", "Player-11")
 load_state = harness.RosterLoadRetryState()
 assert(load_state.attempt == before_unowned.attempt
     and load_state.ready == before_unowned.ready
@@ -196,7 +196,7 @@ assert(not recovery_deferred and inspect_requests == 1,
     "recovery did not create one owned inspect request")
 remote_spec_id = 63
 remote_item_level = 704
-harness.FireEvent("INSPECT_READY", "Party-1")
+harness.FireEvent("INSPECT_READY", "Player-11")
 timers = {}
 load_state = harness.RosterLoadRetryState()
 assert(load_state.attempt == 0 and load_state.ready and not load_state.exhausted,
