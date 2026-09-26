@@ -2324,6 +2324,9 @@ entryCreationKeyState.RefreshQRGameplaySuppression = function(worldTransition)
     if entryCreationKeyState.RefreshCompanionSetupForGameplay then
         entryCreationKeyState.RefreshCompanionSetupForGameplay()
     end
+    if entryCreationKeyState.RefreshSelfTestWindowForGameplay then
+        entryCreationKeyState.RefreshSelfTestWindowForGameplay()
+    end
     return suppressed
 end
 
@@ -9269,14 +9272,174 @@ end
 -- ages that already exist in the addon and that PrintTroubleshootingStatus
 -- already reads. It never emits payload bytes, screenshots, keys, account or
 -- roster identities, or boss-by-boss WCL detail, and it never uses chat as a
--- transport — only chat prints plus one persisted SavedVariable below.
--- Chat export is one `ASCOUT1: key=value` pair per short line. Persistence is
+-- transport — only short chat prints, a copy window, and one persisted
+-- SavedVariable below.
+-- Chat stays a short summary (see ToggleSelfTest); the full `ASCOUT1:`
+-- key=value block goes to the copy window and to persistence. Persistence is
 -- the single last run in the separate `_G.ApplicantScoutSelfTest` variable
 -- (`{version=1, finishedAt, report}`); ApplicantScoutDB is never touched.
 entryCreationKeyState.SELFTEST_VERSION = 1
 entryCreationKeyState.SELFTEST_MAX_REPORT_LINES = 96
 entryCreationKeyState.SELFTEST_MAX_VALUE_CHARS = 96
+entryCreationKeyState.SELFTEST_COPY_MAX_LETTERS = 16384
 entryCreationKeyState.selfTestRun = nil
+entryCreationKeyState.selfTestLastReport = nil
+entryCreationKeyState.selfTestCopyPanel = nil
+entryCreationKeyState.selfTestCopyBox = nil
+entryCreationKeyState.selfTestCopyQueued = false
+entryCreationKeyState.selfTestCopyPending = false
+
+-- Copy window for the finished report. This file has no StaticPopup pattern
+-- (only strata comments); StaticPopup edit boxes are single-line and cannot
+-- present an ~80-line block, so this reuses the shipped companion-setup panel
+-- idioms instead: DIALOG-strata frame, read-only edit box with
+-- HighlightText/Ctrl+C, and a combat gate with deferred re-show (a slash
+-- window is user-invoked, so only combat blocks it; the setup panel gates
+-- loading as well because it auto-shows at login).
+entryCreationKeyState.BuildSelfTestCopyText = function()
+    local report = entryCreationKeyState.selfTestLastReport
+    if type(report) ~= "table" or #report == 0 then return "" end
+    return "ASCOUT1: " .. table.concat(report, "\nASCOUT1: ")
+end
+
+entryCreationKeyState.CanShowSelfTestCopy = function()
+    local S = entryCreationKeyState
+    if type(S.selfTestLastReport) ~= "table" or #S.selfTestLastReport == 0 then
+        return false
+    end
+    return S.CleanUnitAPIBoolean(InCombatLockdown) == false
+end
+
+entryCreationKeyState.CreateSelfTestCopyPanel = function()
+    local S = entryCreationKeyState
+    local panel = CreateFrame("Frame", "ApplicantScoutSelfTestCopy", UIParent, "BackdropTemplate")
+    panel:SetSize(620, 460)
+    panel:SetPoint("CENTER")
+    panel:SetFrameStrata("DIALOG")
+    panel:SetClampedToScreen(true)
+    panel:EnableMouse(true)
+    panel:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    panel:SetBackdropColor(0.06, 0.07, 0.09, 0.98)
+    panel:SetBackdropBorderColor(0.35, 0.45, 0.5, 1)
+    local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 24, -24)
+    title:SetSize(572, 26)
+    title:SetJustifyH("LEFT")
+    title:SetJustifyV("TOP")
+    title:SetText("ApplicantScout selftest — copy report")
+    local hint = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    hint:SetPoint("TOPLEFT", 24, -52)
+    hint:SetSize(572, 20)
+    hint:SetJustifyH("LEFT")
+    hint:SetJustifyV("TOP")
+    hint:SetText("Select all, then press Ctrl+C. Reopen with /apscout selftest show.")
+    local scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
+    scroll:SetSize(560, 300)
+    scroll:SetPoint("TOPLEFT", 30, -80)
+    local box = CreateFrame("EditBox", nil, scroll)
+    box:SetMultiLine(true)
+    box:SetFontObject("GameFontHighlightSmall")
+    box:SetWidth(540)
+    box:SetHeight(1600)
+    box:SetAutoFocus(false)
+    box:SetMaxLetters(S.SELFTEST_COPY_MAX_LETTERS)
+    scroll:SetScrollChild(box)
+    box:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+        S.HideSelfTestCopyWindow()
+    end)
+    box:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    box:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+    -- Read-only in effect: restore the report after any keypress or paste.
+    box:SetScript("OnTextChanged", function(self, userInput)
+        if userInput then
+            self:SetText(S.BuildSelfTestCopyText())
+            self:HighlightText()
+        end
+    end)
+    local selectAll = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    selectAll:SetSize(140, 28)
+    selectAll:SetPoint("BOTTOMLEFT", 24, 24)
+    selectAll:SetText("Select all")
+    selectAll:SetScript("OnClick", function()
+        box:SetFocus()
+        box:HighlightText()
+    end)
+    local close = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    close:SetSize(110, 28)
+    close:SetPoint("BOTTOMRIGHT", -24, 24)
+    close:SetText("Close")
+    close:SetScript("OnClick", function() S.HideSelfTestCopyWindow() end)
+    local cross = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
+    cross:SetPoint("TOPRIGHT", -2, -2)
+    cross:SetScript("OnClick", function() S.HideSelfTestCopyWindow() end)
+    panel:Hide()
+    S.selfTestCopyPanel = panel
+    S.selfTestCopyBox = box
+end
+
+entryCreationKeyState.RefreshSelfTestCopyText = function()
+    local S = entryCreationKeyState
+    if S.selfTestCopyBox then
+        S.selfTestCopyBox:SetText(S.BuildSelfTestCopyText())
+        S.selfTestCopyBox:SetCursorPosition(0)
+        S.selfTestCopyBox:HighlightText()
+    end
+end
+
+entryCreationKeyState.HideSelfTestCopyWindow = function()
+    local S = entryCreationKeyState
+    S.selfTestCopyPending = false
+    if S.selfTestCopyBox then S.selfTestCopyBox:ClearFocus() end
+    if S.selfTestCopyPanel then S.selfTestCopyPanel:Hide() end
+end
+
+entryCreationKeyState.TryShowSelfTestCopyWindow = function()
+    local S = entryCreationKeyState
+    if not S.selfTestCopyPending then return false end
+    if not S.CanShowSelfTestCopy() then return false end
+    S.selfTestCopyPending = false
+    if not S.selfTestCopyPanel then S.CreateSelfTestCopyPanel() end
+    S.RefreshSelfTestCopyText()
+    S.selfTestCopyPanel:Show()
+    return true
+end
+
+entryCreationKeyState.QueueSelfTestCopyWindow = function()
+    local S = entryCreationKeyState
+    if S.selfTestCopyQueued then return end
+    if not (C_Timer and C_Timer.After) then
+        S.TryShowSelfTestCopyWindow()
+        return
+    end
+    S.selfTestCopyQueued = true
+    -- Recheck combat after this short presentation delay (setup pattern).
+    C_Timer.After(0.2, function()
+        S.selfTestCopyQueued = false
+        S.TryShowSelfTestCopyWindow()
+    end)
+end
+
+-- Requested by slash (`show` or run finish): opens now or defers to
+-- combat end. Returns whether the window is visible afterwards.
+entryCreationKeyState.ShowSelfTestCopyWindow = function()
+    local S = entryCreationKeyState
+    S.selfTestCopyPending = true
+    S.QueueSelfTestCopyWindow()
+    return S.TryShowSelfTestCopyWindow()
+end
+
+-- Called from the RefreshQRGameplaySuppression reconciliation site (next to
+-- the setup hook): a deferred window opens once combat clears.
+entryCreationKeyState.RefreshSelfTestWindowForGameplay = function()
+    local S = entryCreationKeyState
+    if S.selfTestCopyPending then S.QueueSelfTestCopyWindow() end
+end
 
 entryCreationKeyState.BuildSelfTestReport = function()
     local S = entryCreationKeyState
@@ -9488,9 +9651,6 @@ entryCreationKeyState.ToggleSelfTest = function(arg)
         end
         local report = S.BuildSelfTestReport()
         report[#report + 1] = "done=lines-" .. tostring(#report + 1)
-        for _, line in ipairs(report) do
-            print("ASCOUT1: " .. line)
-        end
         local finishedAt = 0
         if type(GetServerTime) == "function" then
             local ok, v = pcall(GetServerTime)
@@ -9501,10 +9661,49 @@ entryCreationKeyState.ToggleSelfTest = function(arg)
             finishedAt = finishedAt,
             report = report,
         }
+        S.selfTestLastReport = report
         S.selfTestRun = nil
+        -- Short chat summary; the full block lives in the copy window + SV.
+        local function val(key)
+            for _, line in ipairs(report) do
+                local v = line:match("^" .. key .. "=(.+)$")
+                if v then return v end
+            end
+            return "?"
+        end
+        local opened = S.ShowSelfTestCopyWindow()
+        print("ApplicantScout selftest: finished — " .. tostring(#report)
+              .. " lines in " .. val("run-dur"))
+        print("  errors: shot " .. val("shot-fail")
+              .. ", payload " .. val("payload-error")
+              .. ", overflow " .. val("overflow-fail")
+              .. ", inspect-block " .. val("inspect-block"))
+        print("  transport: " .. val("transport")
+              .. ", emission " .. val("shot-age") .. " ago"
+              .. ", sends " .. val("delivery-sends")
+              .. ", recoveries " .. val("recoveries"))
+        print("  safety: chat-lockdown " .. val("chat-lockdown")
+              .. ", identities exported: none")
+        if opened then
+            print("  copy window opened — select all, Ctrl+C (reopen: /apscout selftest show)")
+        else
+            print("  copy window deferred (in combat) — auto-opens after (reopen: /apscout selftest show)")
+        end
         return
     end
-    print("ApplicantScout selftest: use /apscout selftest [start|stop|cancel]")
+    if arg == "show" then
+        if type(S.selfTestLastReport) ~= "table" or #S.selfTestLastReport == 0 then
+            print("ApplicantScout selftest: no finished run yet — use /apscout selftest start")
+            return
+        end
+        if S.ShowSelfTestCopyWindow() then
+            print("ApplicantScout selftest: copy window opened (reopen: /apscout selftest show)")
+        else
+            print("ApplicantScout selftest: copy window deferred (in combat) — auto-opens after")
+        end
+        return
+    end
+    print("ApplicantScout selftest: use /apscout selftest [start|stop|show|cancel]")
 end
 
 local function PrintHelp()
@@ -9515,7 +9714,7 @@ local function PrintHelp()
     print("  /apscout setup          show companion download and setup")
     print("  /apscout status         show a short capture summary")
     print("  /apscout status diag    show detailed QR diagnostics")
-    print("  /apscout selftest       start/finish in-game self-diagnostics export")
+    print("  /apscout selftest       start/finish/show in-game diagnostics + copy window")
     print("  /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle")
     print("  /apscout reset          clear transport cache, queue fresh snapshot")
     print("  /apscout shotnow        request snapshot while enabled; defers in combat/M+/boss fights")
