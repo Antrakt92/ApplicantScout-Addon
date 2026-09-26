@@ -5917,6 +5917,99 @@ def test_selftest_slash_command_delegates_to_shared_helper():
     assert source.count('SLASH_APSCOUT1 = "/apscout"') == 1
 
 
+def test_showcase_help_prints_essential_commands_with_more_hint():
+    source = _lua_source()
+    match = re.search(
+        r"(?ms)^local function PrintHelp\(\)\r?\n(?P<body>.*?)(?=^end\r?$)",
+        source,
+    )
+    assert match is not None, "Missing ApplicantScout.lua::PrintHelp"
+    body = match.group("body")
+    lines = re.findall(r'print\("  (?P<line>/apscout[^"]+)"\)', body)
+    assert lines == [
+        "/apscout on | off       enable/disable capture",
+        "/apscout toggle         flip enabled state",
+        "/apscout config         open/close settings panel",
+        "/apscout setup          show companion download and setup",
+        "/apscout status         show a short capture summary",
+        "/apscout selftest       start/finish/show in-game diagnostics + copy window",
+        "/apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle",
+        "/apscout reset          clear transport cache, queue fresh snapshot",
+        "/apscout shotnow        request snapshot while enabled; defers in combat/M+/boss fights",
+    ]
+    assert 'print("  more: /apscout help all")' in body
+    for advanced_line in (
+        "/apscout status diag    show detailed QR diagnostics",
+        "/apscout qrvisible      toggle persistent QR always-visible mode; off clears it",
+        "/apscout qrmove         toggle QR move mode (Alt+drag QR frame)",
+        "/apscout qrreset        reset QR frame position to top-left",
+        "/apscout taintcheck     probe C_LFGList field secret-tagging",
+        "/apscout debug [on|off] toggle debug logging",
+        "/apscout competitive [on|off] legacy alias for Competitive / Off",
+    ):
+        assert advanced_line not in body
+
+
+def test_help_all_prints_every_command_verbatim():
+    source = _lua_source()
+    match = re.search(
+        r"(?ms)^local function PrintHelpAll\(\)\r?\n(?P<body>.*?)(?=^end\r?$)",
+        source,
+    )
+    assert match is not None, "Missing ApplicantScout.lua::PrintHelpAll"
+    lines = re.findall(r'print\("  (?P<line>/apscout[^"]+)"\)', match.group("body"))
+    assert lines == [
+        "/apscout on | off       enable/disable capture",
+        "/apscout toggle         flip enabled state",
+        "/apscout config         open/close settings panel",
+        "/apscout setup          show companion download and setup",
+        "/apscout status         show a short capture summary",
+        "/apscout status diag    show detailed QR diagnostics",
+        "/apscout selftest       start/finish/show in-game diagnostics + copy window",
+        "/apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle",
+        "/apscout reset          clear transport cache, queue fresh snapshot",
+        "/apscout shotnow        request snapshot while enabled; defers in combat/M+/boss fights",
+        "/apscout qrvisible      toggle persistent QR always-visible mode; off clears it",
+        "/apscout qrmove         toggle QR move mode (Alt+drag QR frame)",
+        "/apscout qrreset        reset QR frame position to top-left",
+        "/apscout taintcheck     probe C_LFGList field secret-tagging",
+        "/apscout debug [on|off] toggle debug logging",
+        "/apscout competitive [on|off] legacy alias for Competitive / Off",
+    ]
+
+
+def test_help_branch_routes_all_to_full_and_falls_back_to_showcase():
+    source = _lua_source()
+    slash_body = source[source.index("SlashCmdList.APSCOUT = function(msg)") :]
+    branch = _slice_between(
+        slash_body,
+        'elseif command == "help" then',
+        "    else\n        PrintHelp()",
+    )
+
+    assert 'if arg == "all" then' in branch
+    assert "PrintHelpAll()" in branch
+    assert "PrintHelp()" in branch
+    for forbidden in (
+        "MaybeTriggerScreenshot(",
+        "_RefreshQRMouse()",
+        "_RefreshQRVisibility()",
+        "_ResetQRFramePosition()",
+        "SendChatMessage",
+        "Screenshot()",
+        "BuildPayload(",
+    ):
+        assert forbidden not in branch
+
+
+def test_unknown_slash_command_still_falls_back_to_showcase():
+    source = _lua_source()
+    slash_body = source[source.index("SlashCmdList.APSCOUT = function(msg)") :]
+    tail = slash_body[slash_body.index('elseif command == "help" then') :]
+
+    assert "    else\n        PrintHelp()" in tail
+
+
 def test_selftest_export_helpers_keep_transport_contract():
     source = _lua_source()
     build_body = _slice_between(

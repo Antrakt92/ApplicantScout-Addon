@@ -237,6 +237,17 @@ def _lua_print_help_command_lines(source: str) -> list[str]:
     return [line.rstrip() for line in lines]
 
 
+def _lua_print_help_all_command_lines(source: str) -> list[str]:
+    match = re.search(
+        r"(?ms)^local function PrintHelpAll\(\)\r?\n(?P<body>.*?)(?=^end\r?$)",
+        source,
+    )
+    assert match is not None, "Missing ApplicantScout.lua::PrintHelpAll"
+    lines = re.findall(r'print\("  (?P<line>/apscout[^"]+)"\)', match.group("body"))
+    assert lines, "PrintHelpAll did not expose any /apscout command lines"
+    return [line.rstrip() for line in lines]
+
+
 def _help_command_roots(lines: list[str]) -> set[str]:
     roots = {line.split()[1] for line in lines}
     if any(line.startswith("/apscout on | off") for line in lines):
@@ -271,6 +282,16 @@ def _markdown_text_fence_lines(markdown: str, heading: str) -> list[str]:
     match = re.search(r"(?ms)```text\r?\n(?P<body>.*?)\r?\n```", section)
     assert match is not None, f"Missing text code fence in README section: {heading}"
     return [line.rstrip() for line in match.group("body").splitlines() if line.strip()]
+
+
+def _markdown_text_fence_blocks(markdown: str, heading: str) -> list[list[str]]:
+    section = _markdown_section(markdown, heading)
+    blocks = re.findall(r"(?ms)```text\r?\n(?P<body>.*?)\r?\n```", section)
+    assert blocks, f"Missing text code fence in README section: {heading}"
+    return [
+        [line.rstrip() for line in block.splitlines() if line.strip()]
+        for block in blocks
+    ]
 
 
 def _assert_copy_contains(text: str, phrase: str) -> None:
@@ -2171,18 +2192,25 @@ def test_readme_documents_residual_qr_screenshot_cleanup_risk():
 def test_documented_slash_commands_match_lua_help_across_both_repositories(
     pytestconfig,
 ):
-    expected_lines = _lua_print_help_command_lines(_read_repo_text("ApplicantScout.lua"))
-    assert len(expected_lines) == 16
-    assert "/apscout setup          show companion download and setup" in expected_lines
-    assert "/apscout toggle         flip enabled state" in expected_lines
-    assert "/apscout status diag    show detailed QR diagnostics" in expected_lines
-    assert "/apscout selftest       start/finish/show in-game diagnostics + copy window" in expected_lines
-    assert "/apscout taintcheck     probe C_LFGList field secret-tagging" in expected_lines
+    addon_source = _read_repo_text("ApplicantScout.lua")
+    essential_lines = _lua_print_help_command_lines(addon_source)
+    full_lines = _lua_print_help_all_command_lines(addon_source)
+    assert len(essential_lines) == 9
+    assert len(full_lines) == 16
+    assert "/apscout setup          show companion download and setup" in essential_lines
+    assert "/apscout toggle         flip enabled state" in essential_lines
+    assert "/apscout selftest       start/finish/show in-game diagnostics + copy window" in essential_lines
+    assert "/apscout status diag    show detailed QR diagnostics" in full_lines
+    assert "/apscout status diag    show detailed QR diagnostics" not in essential_lines
+    assert "/apscout taintcheck     probe C_LFGList field secret-tagging" in full_lines
+    advanced_lines = [line for line in full_lines if line not in set(essential_lines)]
+    assert len(advanced_lines) == 7
 
-    assert _markdown_text_fence_lines(
+    readme_fences = _markdown_text_fence_blocks(
         _read_repo_text("README.md"),
         "Handy Slash Commands",
-    ) == expected_lines
+    )
+    assert readme_fences == [essential_lines, advanced_lines]
 
     companion_root = pytestconfig.getoption("--companion-root")
     if not companion_root:
@@ -2191,17 +2219,17 @@ def test_documented_slash_commands_match_lua_help_across_both_repositories(
     assert companion_readme.is_file(), f"Missing paired companion README: {companion_readme}"
     assert "docs/REFERENCE.md" in companion_readme.read_text(encoding="utf-8")
     companion_reference = Path(companion_root) / "docs" / "REFERENCE.md"
-    assert _markdown_text_fence_lines(
+    assert _markdown_text_fence_blocks(
         companion_reference.read_text(encoding="utf-8"),
         "In-Game Commands",
-    ) == expected_lines
+    ) == [essential_lines, advanced_lines]
 
 
 def test_public_slash_help_and_handler_branches_are_symmetric():
     source = _read_repo_text("ApplicantScout.lua")
-    help_roots = _help_command_roots(_lua_print_help_command_lines(source))
+    help_roots = _help_command_roots(_lua_print_help_all_command_lines(source))
     handler_roots = _handler_command_roots(source)
-    hidden_aliases = {"settings", "nocompetitive", "nodebug"}
+    hidden_aliases = {"settings", "nocompetitive", "nodebug", "help"}
 
     assert hidden_aliases <= handler_roots
     assert handler_roots - hidden_aliases == help_roots
