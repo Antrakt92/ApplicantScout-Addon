@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.13.1 - 26-Sep-2026 - Self-test export, help tiers and session status
+
+Paired release with ApplicantScout Companion `0.21.1`. Version 0.13.0 was
+tagged but never published; this is the first public release of the
+improvements listed below.
+
 ## 0.13.0 - 26-Sep-2026 - Self-test export, help tiers and session status
 
 Paired release with ApplicantScout Companion `0.21.0`.
