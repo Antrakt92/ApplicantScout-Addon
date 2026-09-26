@@ -145,6 +145,9 @@ LUA_ROSTER_DELVE_HANDLING_CHECK = (
 LUA_STATUS_DIAG_SPLIT_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_status_diag_split.lua"
 )
+LUA_SELFTEST_EXPORT_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_selftest_export.lua"
+)
 LUA_DB_QR_POSITION_CANONICALIZATION_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_db_qr_position_canonicalization.lua"
 )
@@ -5875,6 +5878,75 @@ def test_status_diagnostics_split_short_and_diag_in_lua51(pytestconfig):
     short_count, diag_count = int(match.group(1)), int(match.group(2))
     assert short_count <= 15
     assert diag_count > short_count
+
+
+def test_selftest_export_shape_and_secret_safety_in_lua51(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_SELFTEST_EXPORT_CHECK,
+    ).strip()
+
+    match = re.match(r"^ok selftest-export lines=(\d+)$", output)
+    assert match is not None, f"unexpected selftest output: {output!r}"
+    line_count = int(match.group(1))
+    assert 40 <= line_count <= 96
+
+
+def test_selftest_slash_command_delegates_to_shared_helper():
+    source = _lua_source()
+    slash_body = source[source.index("SlashCmdList.APSCOUT = function(msg)") :]
+    branch = _slice_between(
+        slash_body,
+        'elseif command == "selftest" then',
+        "    else\n        PrintHelp()",
+    )
+
+    assert "entryCreationKeyState.ToggleSelfTest(arg)" in branch
+    for forbidden in (
+        "MaybeTriggerScreenshot(",
+        "_RefreshQRMouse()",
+        "_RefreshQRVisibility()",
+        "_ResetQRFramePosition()",
+        "SendChatMessage",
+        "Screenshot()",
+        "BuildPayload(",
+    ):
+        assert forbidden not in branch
+    assert "SLASH_APSCOUT2" not in source
+    assert slash_body.count('SLASH_APSCOUT1 = "/apscout"') == 0
+    assert source.count('SLASH_APSCOUT1 = "/apscout"') == 1
+
+
+def test_selftest_export_helpers_keep_transport_contract():
+    source = _lua_source()
+    build_body = _slice_between(
+        source,
+        "entryCreationKeyState.BuildSelfTestReport = function()",
+        "entryCreationKeyState.ToggleSelfTest = function(arg)",
+    )
+    toggle_body = _slice_between(
+        source,
+        "entryCreationKeyState.ToggleSelfTest = function(arg)",
+        "local function PrintHelp()",
+    )
+
+    for body in (build_body, toggle_body):
+        assert "C_LFGList" not in body
+        assert "GetApplicantInfoForTransport" not in body
+        assert "UnitFullName" not in body
+        assert "UnitGUID" not in body
+        assert "BuildPayload(" not in body
+        assert "Screenshot()" not in body
+        assert "SendChatMessage" not in body
+        assert "CHAT_MSG_ADDON" not in body
+        assert "ApplicantScoutDB =" not in body
+    # The report may read the enabled/debug flags; nothing else in the DB.
+    assert "ApplicantScoutDB.enabled" in build_body
+    assert "ApplicantScoutDB.debug" in build_body
+    assert build_body.count("ApplicantScoutDB") == 4
+    # The toggle helper persists to the separate SV and never touches the DB.
+    assert "ApplicantScoutDB" not in toggle_body
+    assert "_G.ApplicantScoutSelfTest = {" in toggle_body
 
 
 def test_db_qr_position_canonicalization_in_lua51(pytestconfig):
