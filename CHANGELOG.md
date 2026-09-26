@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.13.0 - 26-Sep-2026 - Self-test export, help tiers and session status
+
+Paired release with ApplicantScout Companion `0.21.0`.
+
 - Show a short capture summary with `/apscout status`; keep detailed QR
   troubleshooting under `/apscout status diag`.
 - Open ApplicantScout settings from WoW's AddOn Compartment or Settings, and
@@ -12,6 +16,14 @@
   alongside CurseForge in the README.
 - Run Delve, follower dungeon and scenario listings through the normal
   scouting path with key level 0; NPC companions never enter the roster.
+- Check the addon health in-game with a self-test that can export an
+  isolated report for troubleshooting.
+- Find every command with two help tiers: short help plus the full list
+  behind `help all`.
+- Verify the QR capture path without sending anything using a dry-run probe
+  with a chat summary.
+- Fix roster, realm and offline edge cases without breaking protected
+  gameplay rules.
 
 ## 0.12.0 - 24-Sep-2026 - Group Finder movement and past-season ratings
 
