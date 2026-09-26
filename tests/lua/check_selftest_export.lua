@@ -157,7 +157,7 @@ assert(#captured == 0, "quiet session start leaked print output")
 local finished = run_selftest()
 harness.EndSession()
 
-assert(#finished == 5, "finish chat must be 5 lines, got " .. #finished)
+assert(#finished == 6, "finish chat must be 6 lines, got " .. #finished)
 assert(contains(finished, "finished"), "finish lost the summary line")
 assert(contains(finished, "copy window opened"), "finish lost the copy hint")
 assert(contains(finished, "/apscout selftest show"), "finish lost the reopen hint")
@@ -191,6 +191,7 @@ for _, required in ipairs({
     "inspect-pending", "inspect-age", "inspect-skipped", "inspect-exhausted",
     "payload-bytes", "payload-applicants", "payload-roster",
     "tex-pool", "qr-encode", "autohi", "libks", "leader-key",
+    "encode-ok", "encode-bytes", "encode-version", "encode-ms", "encode-skip",
     "hooks", "term-clear-dispatch",
     "run-dur", "d-sends", "d-recoveries", "d-shot-fail", "done",
 }) do
@@ -241,7 +242,7 @@ timers = {}
 in_combat = true
 run_selftest("start")
 local combat_finished = run_selftest()
-assert(#combat_finished == 5, "combat finish chat must stay 5 lines")
+assert(#combat_finished == 6, "combat finish chat must stay 6 lines")
 assert(contains(combat_finished, "deferred"), "combat finish lost the deferral hint")
 assert(contains(combat_finished, "/apscout selftest show"), "combat finish lost the reopen hint")
 assert(#shown_panels() == 0, "window must stay hidden in combat")

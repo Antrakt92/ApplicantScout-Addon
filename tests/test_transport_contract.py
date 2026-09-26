@@ -148,6 +148,9 @@ LUA_STATUS_DIAG_SPLIT_CHECK = (
 LUA_SELFTEST_EXPORT_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_selftest_export.lua"
 )
+LUA_SELFTEST_ENCODE_DRYRUN_CHECK = (
+    REPO_ROOT / "tests" / "lua" / "check_selftest_encode_dryrun.lua"
+)
 LUA_DB_QR_POSITION_CANONICALIZATION_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_db_qr_position_canonicalization.lua"
 )
@@ -5892,6 +5895,15 @@ def test_selftest_export_shape_and_secret_safety_in_lua51(pytestconfig):
     assert 40 <= line_count <= 96
 
 
+def test_selftest_encode_dryrun_in_lua51(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig,
+        LUA_SELFTEST_ENCODE_DRYRUN_CHECK,
+    ).strip()
+
+    assert output == "ok selftest-encode-dryrun bytes=86 version=4"
+
+
 def test_selftest_slash_command_delegates_to_shared_helper():
     source = _lua_source()
     slash_body = source[source.index("SlashCmdList.APSCOUT = function(msg)") :]
@@ -6008,6 +6020,56 @@ def test_unknown_slash_command_still_falls_back_to_showcase():
     tail = slash_body[slash_body.index('elseif command == "help" then') :]
 
     assert "    else\n        PrintHelp()" in tail
+
+
+def test_selftest_encode_dryrun_uses_genuine_path_without_pipeline_writes():
+    source = _lua_source()
+    probe_body = _slice_between(
+        source,
+        "-- Dry-run of the hex",
+        'add("encode-skip", encodeSkip)',
+    )
+
+    assert "_HexEncode(" in probe_body
+    assert "_qrencode" in probe_body
+    assert "QR_EC_LEVEL" in probe_body
+    assert "pcall(" in probe_body
+    for forbidden in (
+        "C_LFGList",
+        "GetApplicantInfoForTransport",
+        "UnitFullName",
+        "UnitGUID",
+        "BuildPayload(",
+        "Screenshot()",
+        "SendChatMessage",
+        "CHAT_MSG_ADDON",
+        "StaticPopup",
+        "ApplicantScoutDB",
+    ):
+        assert forbidden not in probe_body
+    assert re.search(r"S\.[A-Za-z_0-9]+\s*=(?!=)", probe_body) is None
+    assert (
+        re.search(
+            r"(pendingShotDirty|lastSnapshotHash|transportDirtyGeneration"
+            r"|qrPaintJobGen|lastQREncode\w*|lastPayload\w*|lastDelivery\w*"
+            r"|screenshotAwaitingResult|qrPaintInProgress|qrCaptureInProgress)"
+            r"\s*=(?!=)",
+            probe_body,
+        )
+        is None
+    )
+
+
+def test_selftest_encode_summary_stays_a_single_chat_line():
+    source = _lua_source()
+    toggle_body = _slice_between(
+        source,
+        "entryCreationKeyState.ToggleSelfTest = function(arg)",
+        "local function PrintHelp()",
+    )
+
+    assert 'print("  encode: " .. val("encode-ok")' in toggle_body
+    assert 'print("ASCOUT1: "' not in toggle_body
 
 
 def test_selftest_export_helpers_keep_transport_contract():
