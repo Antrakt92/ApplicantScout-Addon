@@ -905,6 +905,7 @@ StartSession = function()
     if isSessionActive then return end
     isSessionActive = true
     sessionGen = sessionGen + 1
+    entryCreationKeyState.applicantMemberInfoCache = nil
     entryCreationKeyState.ClearPendingForcedScreenshot()
 
     -- QR transport state reset: force fresh full snapshot at session start.
@@ -1044,6 +1045,7 @@ end
 
 entryCreationKeyState.ResetListingTransportState = function()
     if not isSessionActive then return false end
+    entryCreationKeyState.applicantMemberInfoCache = nil
 
     -- A same-party delist/relist is not a full transport-session restart, but
     -- every delivery decision owned by the old listing must be retired. In
@@ -5873,12 +5875,12 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
         return validAppIDs[a] < validAppIDs[b]
     end)
 
-    -- Member-info cache: per-member Blizzard reads are stable for a fixed
-    -- applicant roster, so reuse them across 0.5s transport polls instead of
-    -- re-querying every member on every tick. Keyed by clean wire identity
+    -- Reuse member reads across nearby 0.5s polls, but refresh within two
+    -- seconds: spec, equipment and temporarily restricted fields can change
+    -- without any applicant ID/member-count change. Keyed by clean wire identity
     -- (applicant ID + member index) — never by secret/opaque API tokens, which
-    -- must not drive table keys or comparisons. The whole cache drops when the
-    -- applicant-roster fingerprint changes.
+    -- must not drive table keys or comparisons. Listing/session boundaries and
+    -- manual reset also drop the cache even if Blizzard reuses applicant IDs.
     local applicantRosterFingerprint = 0
     for _, appIndex in ipairs(validAppOrder) do
         applicantRosterFingerprint =
@@ -5887,10 +5889,14 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
             ((applicantRosterFingerprint * 33) + validAppMemberCounts[appIndex]) % 4294967296
     end
     local memberInfoCache = entryCreationKeyState.applicantMemberInfoCache
+    local memberInfoCacheTime = GetTime()
     if not memberInfoCache
-       or memberInfoCache.rosterFingerprint ~= applicantRosterFingerprint then
+       or memberInfoCache.rosterFingerprint ~= applicantRosterFingerprint
+       or memberInfoCacheTime - memberInfoCache.createdAt >= 2
+       or memberInfoCacheTime < memberInfoCache.createdAt then
         memberInfoCache = {
             rosterFingerprint = applicantRosterFingerprint,
+            createdAt = memberInfoCacheTime,
             rows = {},
         }
         entryCreationKeyState.applicantMemberInfoCache = memberInfoCache
@@ -5935,10 +5941,9 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
             end
             local memberName = SafeStr(rawMemberName, "")
             -- Never cache failures, secrets, or placeholder names. The cache
-            -- key covers only the applicant roster fingerprint, so a cached
-            -- miss sticks until the roster changes: a 1-frame backend lag or
-            -- combat-secret name would empty the applicant domain for the
-            -- whole session. Uncached misses re-read on the next 0.5s poll
+            -- miss would delay recovery until the next cache expiry: a
+            -- one-frame backend lag or combat-secret name must recover on
+            -- the next eligible scan. Uncached misses re-read on the next 0.5s poll
             -- (bounded: <=5 members per applicant). The single SafeStr above
             -- serves both the cache decision and the emit path, so the reuse
             -- budgets are unchanged.
@@ -6244,8 +6249,7 @@ if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then
         entryCreationKeyState.applicantMemberInfoCache = nil
     end
     -- Fixtures that mutate the member data source behind an unchanged
-    -- applicant roster must reset the member-info cache explicitly, mirroring
-    -- the production rule that only roster changes invalidate it.
+    -- applicant roster can reset the cache without advancing the fixture clock.
     _addonNS.ApplicantScoutFixtureHarness.ResetApplicantMemberInfoCache = function()
         entryCreationKeyState.applicantMemberInfoCache = nil
     end
@@ -9982,6 +9986,7 @@ SlashCmdList.APSCOUT = function(msg)
         -- and in-flight inspect batch state, but preserves known spec cache so
         -- support recovery does not create unnecessary inspect churn.
         lastSnapshotHash = nil
+        entryCreationKeyState.applicantMemberInfoCache = nil
         pendingShotDirty = false
         entryCreationKeyState.ClearScreenshotFailureState()
         entryCreationKeyState.lastQuietFullPartySignature = nil
