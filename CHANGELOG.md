@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.13.1 - 27-Sep-2026 — Capture and applicant reliability
+
+Paired release with ApplicantScout Companion `0.21.1`.
+
+- Keep the active group session when WoW temporarily cannot provide a roster count.
+- Recover screenshot settings after a failed capture setup and retry safely.
+- Refresh applicant details and clear cached identities between group sessions.
+- Include the complete changelog in manual download packages.
+- Companion: shorter tooltips, safer updates, and fixes for settings, cached data
+  and foreground-window tracking. M+ DPS applies to all roles, including healers.
+
 ## 0.13.0 - 26-Sep-2026 - Self-test export, help tiers and session status
 
 Paired release with ApplicantScout Companion `0.21.0`.
