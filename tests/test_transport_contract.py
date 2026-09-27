@@ -2356,7 +2356,7 @@ def test_screenshot_cvars_are_leased_only_around_capture():
     assert "EnsureScreenshotCVars()" not in enabled_body
     assert "RestoreScreenshotCVars()" in events_body
     acquire_idx = screenshot_body.index(
-        "local screenshotCVarLeaseGeneration = AcquireScreenshotCVarLease()"
+        "local screenshotCVarLeaseGeneration, screenshotCVarsOK = AcquireScreenshotCVarLease()"
     )
     release_idx = screenshot_body.index("ReleaseScreenshotCVarLease(", acquire_idx)
     screenshot_idx = screenshot_body.index("Screenshot()", release_idx)
@@ -4492,6 +4492,17 @@ def test_roster_only_snapshot_gets_one_bounded_redundant_capture(pytestconfig):
     ).strip()
 
     assert output == "ok qr-capture-lifecycle mode=roster-only shots=2 attempts=2"
+
+
+@pytest.mark.parametrize("mode", [
+    "cvar-read-error", "cvar-write-error", "cvar-always-fail", "cvar-terminal-fail"
+])
+def test_screenshot_cvar_setup_failure_recovers_without_false_delivery(pytestconfig, mode):
+    output = _run_lua_script(pytestconfig, LUA_QR_CAPTURE_LIFECYCLE_CHECK, mode).strip()
+    attempts = 0 if mode == "cvar-always-fail" else 2
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode={mode} shots={attempts} attempts={attempts}"
+    )
 
 
 def test_screenshot_exception_keeps_same_snapshot_retryable(pytestconfig):

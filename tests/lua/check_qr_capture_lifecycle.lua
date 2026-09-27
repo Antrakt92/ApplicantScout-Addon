@@ -19,6 +19,10 @@ assert(fixture_mode == "applicants"
        or fixture_mode == "roster-only"
        or fixture_mode == "screenshot-failure"
        or fixture_mode == "screenshot-always-fail"
+       or fixture_mode == "cvar-read-error"
+       or fixture_mode == "cvar-write-error"
+       or fixture_mode == "cvar-always-fail"
+       or fixture_mode == "cvar-terminal-fail"
        or fixture_mode == "screenshot-event-failure"
        or fixture_mode == "screenshot-event-timeout"
        or fixture_mode == "screenshot-late-timeout-success"
@@ -351,8 +355,25 @@ local cvars = {
     screenshotFormat = "png",
     screenshotQuality = "3",
 }
-GetCVar = function(name) return cvars[name] end
-SetCVar = function(name, value) cvars[name] = tostring(value) end
+env.cvarFailures = 0
+GetCVar = function(name)
+    if fixture_mode == "cvar-read-error" and name == "screenshotFormat"
+       and cvars.screenshotQuality == "8" and env.cvarFailures == 0 then
+        env.cvarFailures = env.cvarFailures + 1
+        error("screenshot format unreadable")
+    end
+    return cvars[name]
+end
+SetCVar = function(name, value)
+    if name == "screenshotFormat" and value == "jpg"
+       and ((fixture_mode == "cvar-write-error" and env.cvarFailures == 0)
+            or fixture_mode == "cvar-always-fail"
+            or (fixture_mode == "cvar-terminal-fail" and env.cvarTerminalStarted)) then
+        env.cvarFailures = env.cvarFailures + 1
+        error("screenshot format write failed")
+    end
+    cvars[name] = tostring(value)
+end
 Screenshot = function()
     screenshot_attempts = screenshot_attempts + 1
     screenshot_attempt_cvars[#screenshot_attempt_cvars + 1] = {
@@ -1086,6 +1107,11 @@ for _ = 1, (overflow_interaction_close
         end
     end
 
+    if fixture_mode == "cvar-terminal-fail" and not env.cvarTerminalStarted
+       and #screenshot_times == 2 and cvars.screenshotQuality == "3" then
+        env.cvarTerminalStarted = true
+        SlashCmdList.APSCOUT("off")
+    end
     if restart_race and not restart_started then
         local state = harness.QRTransportState()
         if restart_phase == "overflow-settle"
@@ -2332,7 +2358,27 @@ for _ = 1, (overflow_interaction_close
     end
 end
 
-if transient_screenshot_failure or screenshot_event_failure then
+if fixture_mode == "cvar-terminal-fail" then
+    local state = harness.QRTransportState()
+    assert(env.cvarTerminalStarted and env.cvarFailures == 2,
+        "terminal CVar setup did not exhaust its pre-capture retry budget")
+    assert(#screenshot_times == 2 and screenshot_attempts == 2,
+        "terminal CVar failure invoked a physical screenshot")
+    assert(not state.captureInProgress and not state.paintInProgress
+        and not state.forceVisible and not state.terminalClearRetryScheduled,
+        "terminal CVar failures left a retry or visual lease active")
+elseif fixture_mode == "cvar-always-fail" then
+    local state = harness.QRTransportState()
+    assert(env.cvarFailures == 2, "CVar failures exceeded bounded retry budget")
+    assert(screenshot_attempts == 0 and state.lastSnapshotHash == nil,
+        "failed CVar setup captured or acknowledged a snapshot")
+    assert(not state.captureInProgress and not state.paintInProgress
+        and not state.forceVisible and not state.pendingShotDirty,
+        "failed CVar setup left the QR job active")
+elseif fixture_mode == "cvar-read-error" or fixture_mode == "cvar-write-error" then
+    assert(env.cvarFailures == 1 and screenshot_attempts == 2 and #screenshot_times == 2,
+        "transient CVar failure did not retry the unchanged snapshot")
+elseif transient_screenshot_failure or screenshot_event_failure then
     assert(transient_failure_checked and transient_restore_checked,
         "transient failure checkpoints did not run")
     assert(#screenshot_times == 2 and screenshot_attempts == 3,

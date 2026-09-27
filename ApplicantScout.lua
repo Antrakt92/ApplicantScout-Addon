@@ -3222,8 +3222,13 @@ local function AcquireScreenshotCVarLease()
     entryCreationKeyState.screenshotCVarLeaseGeneration =
         (entryCreationKeyState.screenshotCVarLeaseGeneration or 0) + 1
     local leaseGeneration = entryCreationKeyState.screenshotCVarLeaseGeneration
-    EnsureScreenshotCVars(true)
-    return leaseGeneration
+    local ok = pcall(EnsureScreenshotCVars, true)
+    if not ok then
+        -- Setup can fail after changing the first CVar, before the caller has
+        -- scheduled its lease release. Roll back partial writes immediately.
+        RestoreScreenshotCVars(true)
+    end
+    return leaseGeneration, ok
 end
 
 local function ReleaseScreenshotCVarLease(leaseGeneration, delay)
@@ -7501,7 +7506,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 dirtySincePaintStarted
                 or (entryCreationKeyState.transportDirtyGeneration or 0) ~= payloadDirtyGeneration
             lastShotTime = GetTime()
-            local screenshotCVarLeaseGeneration = AcquireScreenshotCVarLease()
+            local screenshotCVarLeaseGeneration, screenshotCVarsOK = AcquireScreenshotCVarLease()
             -- Schedule release before Screenshot() so even an unexpected API
             -- error cannot leave the user's global screenshot settings leased.
             ReleaseScreenshotCVarLease(
@@ -7681,6 +7686,12 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                 end)
             end
             return true
+            end
+
+            if not screenshotCVarsOK then
+                entryCreationKeyState.RecordTerminalClearPreCaptureFailureForCurrentJob()
+                FinishScreenshotAttempt(false, "screenshot CVar setup failed")
+                return
             end
 
             -- Screenshot() has no delivery return value. Arm the result
