@@ -672,8 +672,10 @@ end
 entryCreationKeyState.CleanGroupMemberCount = function()
     if type(GetNumGroupMembers) ~= "function" then return nil end
     local ok, value = pcall(GetNumGroupMembers)
-    if not ok or value == nil or IsSecretValue(value) then return nil end
-    return math.floor(SafeNumber(value, 0))
+    if not ok or IsSecretValue(value) then return nil end
+    local count = SafeNumber(value, -1)
+    if count < 0 or count > 40 or count ~= math.floor(count) then return nil end
+    return count
 end
 
 IsChatMessagingLockdown = function()
@@ -1087,9 +1089,10 @@ entryCreationKeyState.ResetListingTransportState = function()
 end
 
 local function _HasGroupRosterForTransport()
-    -- Secret-safety: unknown size fails closed (no transport roster).
+    -- Unknown size cannot start a session or confirm that an existing one ended.
     local groupMemberCount = entryCreationKeyState.AutoHiGroupMemberCount()
-    return groupMemberCount ~= nil and groupMemberCount > 0
+    if groupMemberCount == nil then return nil end
+    return groupMemberCount > 0
 end
 
 entryCreationKeyState.AutoHiGroupMemberCount = function()
@@ -1672,7 +1675,7 @@ CheckSessionTransition = function(lfgReadsAllowed)
         end
     end
     local transportActive = hosting or hasRoster
-        or (isSessionActive and not listingStateKnown)
+        or (isSessionActive and (not listingStateKnown or hasRoster == nil))
 
     if transportActive and not isSessionActive then
         StartSession()
@@ -4210,10 +4213,7 @@ end
 
 entryCreationKeyState.ReconcileRosterInspectMembership = function()
     local currentGUIDs = {}
-    local expectedCount = math.floor(SafeNumber(
-        GetNumGroupMembers and GetNumGroupMembers(),
-        0
-    ))
+    local expectedCount = entryCreationKeyState.CleanGroupMemberCount()
     local visitedCount = 0
     local complete = true
     _ForEachRosterUnit(function(unit)

@@ -311,4 +311,41 @@ do
     print = savedPrint
 end
 
+-- Reconciliation runs before the rest of GROUP_ROSTER_UPDATE. A failed
+-- count read must not abort the event and prevent transport invalidation.
+groupCountBehavior = "error"
+local eventOK, eventError = pcall(harness.FireEvent, "GROUP_ROSTER_UPDATE")
+assert(eventOK, "roster event propagated unreadable group size: " .. tostring(eventError))
+
+-- Malformed counts are unknown, never an authoritative empty roster or a
+-- rounded-down complete roster. Exercise the actual serialized-row boundary.
+groupCountBehavior = "clean"
+raidBehavior = "false"
+for _, value in ipairs({ false, {}, "invalid", -1, 2.5, 41, math.huge, 0/0 }) do
+    groupCountValue = value
+    assert_equal("invalid count is unknown", autoHiCount(), nil)
+    local rows, count, _, _, _, incomplete = harness.BuildRosterPayloadRows(0, 0)
+    assert_equal("invalid count emits no rows", rows, "")
+    assert_equal("invalid count emits zero records", count, 0)
+    assert_equal("invalid count withholds roster authority", incomplete, true)
+end
+groupCountValue = 0
+local _, _, _, _, _, incomplete = harness.BuildRosterPayloadRows(0, 0)
+assert_equal("clean zero remains authoritative", incomplete, false)
+
+-- A roster-only session cannot end until the party read confirms departure.
+C_LFGList.HasActiveEntryInfo = function() return false end
+groupCountValue = 5
+env.start_session_quietly(harness)
+for _, behavior in ipairs({ "error", "secret", "nil" }) do
+    groupCountBehavior = behavior
+    harness.CheckSessionTransition(true)
+    assert(harness.QRTransportState().sessionActive,
+        "unknown roster count ended active roster-only session: " .. behavior)
+end
+groupCountBehavior, groupCountValue = "clean", 0
+harness.CheckSessionTransition(true)
+assert(not harness.QRTransportState().sessionActive,
+    "confirmed departure did not end roster-only session")
+
 print("ok group-api-secret-safety")
