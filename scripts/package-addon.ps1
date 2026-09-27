@@ -18,12 +18,12 @@ $RequiredFiles = @(
     "ApplicantScout.lua",
     "LICENSE",
     "THIRD-PARTY-NOTICES.md",
+    "CHANGELOG.md",
     "media\logo.png",
     "libs\qrencode.lua"
 )
 $ReleaseInputFiles = $RequiredFiles + @(
     ".pkgmeta",
-    "CHANGELOG.md",
     "scripts\package-addon.ps1"
 )
 

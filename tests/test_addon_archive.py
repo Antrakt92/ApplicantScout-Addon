@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from pathlib import Path
+import shutil
+import subprocess
 import zipfile
+from pathlib import Path
 
 import pytest
 
 from scripts.check_addon_archive import (
-    ArchiveContractError,
     REQUIRED_ENTRIES,
+    ArchiveContractError,
     find_marketplace_archive,
     validate_marketplace_archive,
 )
@@ -98,3 +100,28 @@ def test_find_marketplace_archive_requires_exactly_one_zip(tmp_path: Path):
     _write_archive(tmp_path / "ApplicantScout-two.zip")
     with pytest.raises(ArchiveContractError, match="exactly one"):
         find_marketplace_archive(tmp_path)
+
+
+def test_manual_package_preserves_full_changelog_bytes(tmp_path: Path):
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is required for the manual package smoke test")
+    root = Path(__file__).resolve().parents[1]
+    subprocess.run(
+        [
+            powershell, "-NoProfile", "-NonInteractive", "-File",
+            str(root / "scripts" / "package-addon.ps1"),
+            "-AllowDirty", "-OutputDir", str(tmp_path),
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    archive_path = find_marketplace_archive(tmp_path)
+    with zipfile.ZipFile(archive_path) as archive:
+        assert archive.read("ApplicantScout/CHANGELOG.md") == (
+            root / "CHANGELOG.md"
+        ).read_bytes()
+    validate_marketplace_archive(archive_path)

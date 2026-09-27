@@ -2029,7 +2029,7 @@ def test_package_script_dirty_inputs_include_release_shaping_metadata():
     assert release_inputs is not None
     release_input_block = release_inputs.group(0)
     assert ".pkgmeta" in release_input_block
-    assert "CHANGELOG.md" in release_input_block
+    assert "$RequiredFiles +" in release_input_block
 
 
 def test_package_script_keeps_runtime_install_contract_minimal():
@@ -2046,13 +2046,13 @@ def test_package_script_keeps_runtime_install_contract_minimal():
         "ApplicantScout.lua",
         "LICENSE",
         "THIRD-PARTY-NOTICES.md",
+        "CHANGELOG.md",
         "media\\logo.png",
         "libs\\qrencode.lua",
     ):
         assert required in required_block
 
     assert "README.md" not in required_block
-    assert "CHANGELOG.md" not in required_block
 
 
 def test_toc_loads_qr_library_before_addon_runtime():
