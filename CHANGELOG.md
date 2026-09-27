@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-## 0.13.1 - 27-Sep-2026 — Capture and applicant reliability
+## 0.13.2 - 27-Sep-2026 — Capture and applicant reliability
 
-Paired release with ApplicantScout Companion `0.21.1`.
+Paired release with ApplicantScout Companion `0.21.2`.
 
 - Keep the active group session when WoW temporarily cannot provide a roster count.
 - Recover screenshot settings after a failed capture setup and retry safely.
