@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.13.3 - 02-Oct-2026 — Companion sorting and reliability
+
+Paired release with ApplicantScout Companion `0.22.0`.
+
+- Update overlay previews to show the keyboard-accessible grouped sort menu.
+- Companion: improve readability, detail refreshes, screenshot processing, settings persistence and update handling.
+
 ## 0.13.2 - 27-Sep-2026 — Capture and applicant reliability
 
 Paired release with ApplicantScout Companion `0.21.2`.
