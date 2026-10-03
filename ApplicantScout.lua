@@ -10212,7 +10212,7 @@ do
         local panel, urlBox, heading, body, hint, progress, back, nextButton, scroll, content
         local title, copyHint, languageButton, languageMenu, downloadButton, guideButton, laterButton, doneButton, detailsButton
         local menu, menuLabels, menuChecks, menuActions, greeting, styleButton, menuLanguage
-        local preview, previewCaption, reminder, reminderLabel, reminderHint, menuButton
+        local preview, previewCaption, reminder, reminderLabel, reminderHint, menuButton, quickDownloadButton
         local languageItems, stepButtons = {}, {}
         local requested, ready, queued, postponed = false, false, false, false
         local internalHide = false
@@ -10327,6 +10327,14 @@ do
             copyHint:SetText(ui.copy)
             downloadButton:SetText(page == 1 and ui.source or page == 3 and ui.wcl
                 or page >= 4 and ui.guide or ui.download)
+            downloadButton:SetWidth(page == 1 and 220 or 340)
+            downloadButton:GetFontString():SetWidth(downloadButton:GetWidth() - 16)
+            guideButton:ClearAllPoints()
+            guideButton:SetPoint("BOTTOMLEFT", page == 1 and 500 or 392, 136)
+            guideButton:SetWidth(page == 1 and 220 or 328)
+            guideButton:GetFontString():SetWidth(guideButton:GetWidth() - 16)
+            quickDownloadButton:SetText(ui.companionDownload)
+            quickDownloadButton:SetShown(page == 1)
             paintButton(downloadButton, page == 2 or page == 3)
             guideButton:SetShown(page < 4)
             guideButton:SetText(ui.guide)
@@ -10513,6 +10521,9 @@ do
             downloadButton = button("Select download link", 40, 136, 340, function() selectLink(links[page]) end,
                 "ApplicantScoutSetupLink")
             guideButton = button("Illustrated guide", 392, 136, 328, function() selectLink(guideURL) end)
+            quickDownloadButton = button("Select download link", 270, 136, 220,
+                function() selectLink(downloadURL) end, "ApplicantScoutSetupQuickDownload")
+            paintButton(quickDownloadButton, true)
             laterButton = button("Later", 24, 22, 96, later)
             doneButton = button("Already set up", 270, 256, 176, dismiss)
             back = button("Back", 430, 22, 106, function()

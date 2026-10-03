@@ -545,7 +545,7 @@ local function presentation(code, captions, chapters, summaries)
     end
 end
 
-presentation("enUS", {"More detail", "Short steps", "Select source link", "Select API Clients link"},
+presentation("enUS", {"More detail", "Short steps", "Project on GitHub", "Select API Clients link"},
     {"Companion", "Install", "Warcraft Logs", "Settings", "Check"}, {
     [[Install the free Windows Companion to see applicant results beside WoW.
 
@@ -581,7 +581,7 @@ Keep Client Secret private; enter it only in Companion.]],
 3. Check matching names and Warcraft Logs results. No names? Check Screenshots. No WCL? Click Test WCL.
 
 Finish guide stops reminders; it does not verify the installation.]]})
-presentation("ruRU", {"Подробнее", "Короткие шаги", "Ссылка на исходники", "Ссылка на API Clients"},
+presentation("ruRU", {"Подробнее", "Короткие шаги", "Проект на GitHub", "Ссылка на API Clients"},
     {"Companion", "Установка", "Warcraft Logs", "Настройки", "Проверка"}, {
     [[Установи бесплатный Companion для Windows, чтобы видеть результаты игроков рядом с WoW.
 
@@ -617,7 +617,7 @@ Client Secret держи в тайне и вводи только в Companion.]
 3. Проверь имена и логи. Нет имён? Проверь Screenshots. Нет WCL? Нажми Test WCL.
 
 Завершение гида отключает напоминания, но не проверяет установку.]]})
-presentation("deDE", {"Mehr Details", "Kurze Schritte", "Quellcode-Link markieren", "API-Clients-Link markieren"},
+presentation("deDE", {"Mehr Details", "Kurze Schritte", "Projekt auf GitHub", "API-Clients-Link markieren"},
     {"Companion", "Installation", "Warcraft Logs", "Einstellungen", "Prüfen"}, {
     [[Installiere den kostenlosen Windows-Companion, um Bewerberergebnisse neben WoW zu sehen.
 
@@ -653,7 +653,7 @@ Client Secret geheim halten und nur in Companion eingeben.]],
 3. Namen und Logs prüfen. Keine Namen? Screenshots prüfen. Kein WCL? Test WCL nutzen.
 
 Das Beenden der Anleitung stoppt Erinnerungen, prüft aber keine Installation.]]})
-presentation("frFR", {"Plus de détails", "Étapes courtes", "Sélectionner le lien du code", "Sélectionner API Clients"},
+presentation("frFR", {"Plus de détails", "Étapes courtes", "Projet sur GitHub", "Sélectionner API Clients"},
     {"Companion", "Installation", "Warcraft Logs", "Réglages", "Vérification"}, {
     [[Installez le Companion gratuit pour Windows pour voir les résultats des candidats à côté de WoW.
 
@@ -689,7 +689,7 @@ Gardez Client Secret privé et saisissez-le uniquement dans Companion.]],
 3. Vérifiez les noms et les logs. Aucun nom ? Vérifiez Screenshots. Pas de WCL ? Test WCL.
 
 Terminer le guide arrête les rappels sans vérifier l'installation.]]})
-presentation("esES", {"Más detalles", "Pasos breves", "Seleccionar código fuente", "Seleccionar API Clients"},
+presentation("esES", {"Más detalles", "Pasos breves", "Proyecto en GitHub", "Seleccionar API Clients"},
     {"Companion", "Instalación", "Warcraft Logs", "Ajustes", "Comprobar"}, {
     [[Instala el Companion gratuito para Windows para ver resultados junto a WoW.
 
@@ -725,7 +725,7 @@ Mantén Client Secret privado e introdúcelo solo en Companion.]],
 3. Comprueba nombres y logs. ¿Sin nombres? Revisa Screenshots. ¿Sin WCL? Test WCL.
 
 Finalizar la guía detiene los recordatorios, pero no verifica la instalación.]]})
-presentation("itIT", {"Più dettagli", "Passaggi brevi", "Seleziona link al codice", "Seleziona API Clients"},
+presentation("itIT", {"Più dettagli", "Passaggi brevi", "Progetto su GitHub", "Seleziona API Clients"},
     {"Companion", "Installazione", "Warcraft Logs", "Impostazioni", "Verifica"}, {
     [[Installa il Companion gratuito per Windows per vedere i risultati accanto a WoW.
 
@@ -761,7 +761,7 @@ Mantieni Client Secret privato e inseriscilo solo in Companion.]],
 3. Controlla nomi e log. Nessun nome? Controlla Screenshots. Nessun WCL? Test WCL.
 
 Terminare la guida interrompe i promemoria, senza verificare l'installazione.]]})
-presentation("ptBR", {"Mais detalhes", "Passos curtos", "Selecionar código-fonte", "Selecionar API Clients"},
+presentation("ptBR", {"Mais detalhes", "Passos curtos", "Projeto no GitHub", "Selecionar API Clients"},
     {"Companion", "Instalação", "Warcraft Logs", "Opções", "Verificar"}, {
     [[Instale o Companion gratuito para Windows para ver resultados ao lado do WoW.
 
@@ -797,7 +797,7 @@ Mantenha Client Secret privado e insira apenas no Companion.]],
 3. Confira nomes e logs. Sem nomes? Confira Screenshots. Sem WCL? Test WCL.
 
 Concluir o guia encerra os lembretes, mas não verifica a instalação.]]})
-presentation("koKR", {"자세히 보기", "간단한 단계", "소스 링크 선택", "API Clients 링크 선택"},
+presentation("koKR", {"자세히 보기", "간단한 단계", "GitHub 프로젝트", "API Clients 링크 선택"},
     {"Companion", "설치", "Warcraft Logs", "설정", "확인"}, {
     [[무료 Windows Companion을 설치하면 WoW 옆에서 신청자 결과를 볼 수 있습니다.
 
@@ -833,7 +833,7 @@ Client Secret은 비공개로 유지하고 Companion에만 입력하세요.]],
 3. 이름과 로그를 확인하세요. 이름이 없으면 Screenshots, WCL이 없으면 Test WCL을 확인하세요.
 
 가이드 완료는 알림만 중지하며 설치를 검증하지 않습니다.]]})
-presentation("zhCN", {"详细说明", "简明步骤", "选择源码链接", "选择 API Clients 链接"},
+presentation("zhCN", {"详细说明", "简明步骤", "GitHub 项目", "选择 API Clients 链接"},
     {"Companion", "安装", "Warcraft Logs", "设置", "检查"}, {
     [[安装免费的 Windows Companion，即可在 WoW 旁查看申请者结果。
 
@@ -869,7 +869,7 @@ Windows 构建未签名。运行前请核实来源。]],
 3. 核对姓名和日志。无姓名？检查 Screenshots。无 WCL？点击 Test WCL。
 
 完成指南只关闭提醒，不验证安装。]]})
-presentation("zhTW", {"詳細說明", "簡明步驟", "選取原始碼連結", "選取 API Clients 連結"},
+presentation("zhTW", {"詳細說明", "簡明步驟", "GitHub 專案", "選取 API Clients 連結"},
     {"Companion", "安裝", "Warcraft Logs", "設定", "檢查"}, {
     [[安裝免費的 Windows Companion，即可在 WoW 旁查看申請者結果。
 
@@ -964,3 +964,18 @@ for code, explanation in pairs(reminderExplanations) do
     page.body = page.body:gsub("[^\n]+$", function() return explanation .. " /apscout setup" end)
     page.summary = page.summary:gsub("[^\n]+$", function() return explanation .. " /apscout setup" end)
 end
+
+local downloadCaptions = {
+enUS = "Download Companion",
+deDE = "Companion herunterladen",
+esES = "Descargar Companion",
+esMX = "Descargar Companion",
+frFR = "Télécharger Companion",
+itIT = "Scarica Companion",
+ptBR = "Baixar Companion",
+ruRU = "Скачать Companion",
+koKR = "Companion 다운로드",
+zhCN = "下载 Companion",
+zhTW = "下載 Companion",
+}
+for code, caption in pairs(downloadCaptions) do locales[code].ui.companionDownload = caption end

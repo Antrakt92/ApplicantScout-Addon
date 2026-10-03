@@ -61,9 +61,12 @@ companion is installed, so finishing the guide does not verify the connection.
 
 The guide's links are selectable for **Ctrl+C**; WoW does not open your browser
 for you. **Illustrated guide** selects the browser guide with setup screenshots.
-The main link follows the step: source code, installer, Warcraft Logs API Clients,
+The main link follows the step: GitHub project, latest release, Warcraft Logs API Clients,
 then the browser guide. Switching between short and detailed instructions keeps
 your selected link intact.
+The introduction offers separate **Project on GitHub**, download and illustrated
+guide buttons. The download link always opens the latest Companion release;
+choose the Windows `.exe` installer under **Assets** there.
 Press **Escape** or choose **Later** to postpone it until the next login or reload.
 The window adapts when you change display size or UI scale. It hides during
 combat, loading, boss encounters and active Mythic+ runs, then resumes the same step.

@@ -382,6 +382,13 @@ if scenario == "design" or scenario == "design-export" then
     for _, f in ipairs(frames) do if f.kind == "EditBox" and f.parent == panel() then address = f end end
     local desiredPage = tonumber(arg[3]) or 2
     named("ApplicantScoutSetupStep" .. desiredPage).scripts.OnClick()
+    local quickDownload = named("ApplicantScoutSetupQuickDownload")
+    assert(quickDownload.shown == (desiredPage == 1), "download shortcut appears outside the introduction")
+    if desiredPage == 1 then
+        quickDownload.scripts.OnClick()
+        assert(address.text == "https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest"
+            and address.focused and address.selected, "intro download shortcut did not select the latest release")
+    end
     assert(ApplicantScoutDB.setupStep == desiredPage and not ApplicantScoutDB.setupDismissed, "step navigation completed setup")
     local expectedLinks = {
         "https://github.com/Antrakt92/ApplicantScout-Companion",
@@ -782,7 +789,7 @@ assert(url and not url.focused, "automatic panel stole keyboard focus")
 local downloadURL = "https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest"
 assert(url.text == "https://github.com/Antrakt92/ApplicantScout-Companion", "source address is incorrect")
 local sourceURL = "https://github.com/Antrakt92/ApplicantScout-Companion"
-button("Select source link").scripts.OnClick()
+button("Project on GitHub").scripts.OnClick()
 assert(url.text == sourceURL and url.focused and url.selected, "source action did not select the address")
 url:SetText("bad pasted address")
 url.scripts.OnTextChanged(url, true)

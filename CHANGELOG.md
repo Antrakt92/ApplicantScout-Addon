@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Separate the GitHub project, Companion download and illustrated guide links
+  on the introduction step.
+
 - Hide the setup scrollbar when the instructions fit, while keeping scrolling
   available for longer details.
 
