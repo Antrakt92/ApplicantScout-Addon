@@ -8537,6 +8537,9 @@ _SetEnabled = function(flag)
             _RunDisabledCleanup()
         end
         APSPrint(flag and "already enabled" or "already disabled")
+        if entryCreationKeyState.RefreshCompanionSetupForGameplay then
+            entryCreationKeyState.RefreshCompanionSetupForGameplay()
+        end
         return
     end
     if flag then
@@ -8551,6 +8554,9 @@ _SetEnabled = function(flag)
     -- Sync GUI checkbox if attached. Slash refresh without waiting for OnShow.
     if enabledCheckbox then
         enabledCheckbox:SetChecked(flag)
+    end
+    if entryCreationKeyState.RefreshCompanionSetupForGameplay then
+        entryCreationKeyState.RefreshCompanionSetupForGameplay()
     end
 end
 
@@ -10253,7 +10259,11 @@ do
             if missingFont then
                 code = "enUS"
                 if not applyFonts(code) then
-                    for _, entry in ipairs(fontEntries) do attachFont(entry, entry.template) end
+                    for _, entry in ipairs(fontEntries) do
+                        attachFont(entry, entry.isButton and {
+                            normal = entry.template, highlight = "GameFontHighlight", disabled = "GameFontDisable",
+                        } or entry.template)
+                    end
                 end
             end
             local language = locales[code]

@@ -54,6 +54,7 @@ local function widget()
         SetText = function(self, text) self.text = text end,
         GetText = function(self) return self.text end,
         SetFont = function(self, path, size, flags)
+            if scenario == "font-all-missing" then return false end
             if (scenario == "font-missing" or scenario == "retry-interaction") and path:find("2002", 1, true) then return false end
             if scenario == "font-error" and path:find("2002", 1, true) then error("missing font") end
             if scenario == "font-partial" and path:find("2002", 1, true) and size == 14 then return false end
@@ -159,6 +160,45 @@ local function login()
 end
 if scenario == "combat" then combat = true end
 login()
+if scenario == "font-all-missing" then
+    local found = false
+    for _, f in ipairs(frames) do
+        if f.text == "Back" and f.parent == panel() then
+            assert(f.normalFont == "GameFontNormal" and f.highlightFont == "GameFontHighlight"
+                and f.disabledFont == "GameFontDisable", "fallback lost distinct button states")
+            found = true
+        end
+    end
+    assert(found and shown(), "failed fonts prevented readable setup")
+    print("ok " .. scenario)
+    return
+end
+if scenario == "enabled-transition" then
+    assert(shown(), "first-run guide did not open")
+    harness.SetEnabled(false)
+    assert(not shown(), "disabling idle scouting left the automatic guide open")
+    harness.SetEnabled(true)
+    drain()
+    assert(shown(), "enabling scouting did not restore the unfinished guide")
+    button("Later").scripts.OnClick()
+    harness.SetEnabled(false)
+    harness.SetEnabled(true)
+    drain()
+    assert(not shown(), "toggle ignored the session postponement")
+    harness.SetEnabled(false)
+    SlashCmdList.APSCOUT("setup")
+    drain()
+    assert(shown(), "disabled scouting prevented manually requested setup")
+    harness.SetEnabled(false)
+    drain()
+    assert(shown(), "idempotent disable closed manually requested setup")
+    button("Already set up").scripts.OnClick()
+    harness.SetEnabled(true)
+    drain()
+    assert(not shown() and ApplicantScoutDB.setupDismissed, "enabling scouting reopened permanently dismissed setup")
+    print("ok " .. scenario)
+    return
+end
 if scenario == "retry-interaction" then
     local picker, menu, korean, scrollFrame, address
     for _, f in ipairs(frames) do
