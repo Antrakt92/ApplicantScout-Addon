@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from collections import Counter
 import json
-import pytest
 import re
 import shutil
 import subprocess
+from collections import Counter
 from pathlib import Path
+
+import pytest
 
 from scripts.check_addon_archive import (
     FORBIDDEN_NAMES,
@@ -14,10 +15,9 @@ from scripts.check_addon_archive import (
     REQUIRED_ENTRIES,
 )
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _ACTION_USES_RE = re.compile(r"(?m)^\s*uses:\s*([^\s#]+)\s*(?:#.*)?$")
-_SHA_REF_RE = re.compile(r"^[0-9a-f]{40}$", re.I)
+_SHA_REF_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 _CHOCO_INSTALL_LINE_RE = re.compile(
     r"(?im)^\s*(?:run:\s*)?choco\s+install\s+([A-Za-z0-9_.-]+)\b([^\r\n]*)"
 )
@@ -319,7 +319,7 @@ def _release_tool_install_args(workflow: str) -> dict[str, list[str]]:
             tool
             for tool in _RELEASE_TOOL_PACKAGES
             if tool != package_name
-            and re.search(rf"(?<![-\w]){re.escape(tool)}(?![-\w])", args, re.I)
+            and re.search(rf"(?<![-\w]){re.escape(tool)}(?![-\w])", args, re.IGNORECASE)
         ]
         assert not extra_release_tools, (
             "Install release-critical Chocolatey packages in separate commands "
@@ -2229,7 +2229,7 @@ def test_public_slash_help_and_handler_branches_are_symmetric():
     source = _read_repo_text("ApplicantScout.lua")
     help_roots = _help_command_roots(_lua_print_help_all_command_lines(source))
     handler_roots = _handler_command_roots(source)
-    hidden_aliases = {"settings", "nocompetitive", "nodebug", "help"}
+    hidden_aliases = {"settings", "nocompetitive", "nodebug", "help", "menu"}
 
     assert hidden_aliases <= handler_roots
     assert handler_roots - hidden_aliases == help_roots

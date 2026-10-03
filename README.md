@@ -52,8 +52,11 @@ The step bar lets you jump directly to any topic. Short instructions appear firs
 **More detail** expands the complete guide. The first step includes an example
 Companion overlay. Use **Next** and **Back** to move through it.
 **Later** postpones the guide and resumes the same step on your next login or reload;
-**Finish guide** or **Already set up** stops its automatic
-reminder. Reopen it with `/apscout setup`. The addon cannot detect whether the
+**Don’t show automatically again** is the only persistent opt-out. Closing or
+finishing the guide leaves reminders enabled unless you check that box. Older
+guide-completion preferences are reset once so you can make this choice explicitly.
+Open `/apscout` (or `/apscout menu`) for the addon menu, settings and guide,
+or `/apscout setup` for the guide. The addon cannot detect whether the
 companion is installed, so finishing the guide does not verify the connection.
 
 The guide's links are selectable for **Ctrl+C**; WoW does not open your browser

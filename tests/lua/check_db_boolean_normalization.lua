@@ -191,7 +191,7 @@ if scenario == "qr-visible" then
     assert_equal("disabled addon qrAlwaysVisible", ApplicantScoutDB.qrAlwaysVisible, false)
     ok = true
 else
-    ok, err = pcall(SlashCmdList.APSCOUT, "")
+    ok, err = pcall(SlashCmdList.APSCOUT, "help")
 end
 print = real_print
 if not ok then fail(tostring(err)) end

@@ -2,7 +2,7 @@ local ns = {}
 assert(loadfile("SetupLocales.lua"))("ApplicantScout", ns)
 local locales = ns.CompanionSetupLocales
 local supported = {"enUS", "deDE", "esES", "esMX", "frFR", "itIT", "ptBR", "ruRU", "koKR", "zhCN", "zhTW"}
-local keys = {"title", "step", "language", "download", "guide", "later", "done", "back", "next", "finish", "copy", "deferred", "automatic", "details", "less", "source", "wcl", "preview"}
+local keys = {"title", "step", "language", "download", "guide", "later", "done", "back", "next", "finish", "copy", "deferred", "automatic", "details", "less", "source", "wcl", "preview", "noAuto", "menu", "reminder"}
 local count = 0
 for _ in pairs(locales) do count = count + 1 end
 assert(count == #supported, "unexpected translation inventory")
@@ -12,6 +12,10 @@ for _, code in ipairs(supported) do
     assert(#language.pages == 5, "incomplete guide for " .. code)
     for _, key in ipairs(keys) do
         assert(type(language.ui[key]) == "string" and #language.ui[key] > 0, "missing caption " .. key .. " in " .. code)
+    end
+    assert(#language.menu == 19, "incomplete menu for " .. code)
+    for _, caption in ipairs(language.menu) do
+        assert(type(caption) == "string" and #caption > 0, "empty menu caption in " .. code)
     end
     assert(type(string.format(language.ui.step, 2, 5)) == "string", "invalid step format")
     for step, page in ipairs(language.pages) do

@@ -9,7 +9,7 @@ print = function() end
 local function load_with_db(db)
     ApplicantScoutDB = db
     local harness = env.load_addon()
-    local ok, err = pcall(SlashCmdList.APSCOUT, "")
+    local ok, err = pcall(SlashCmdList.APSCOUT, "help")
     if not ok then fail("slash normalization failed: " .. tostring(err)) end
     return harness
 end

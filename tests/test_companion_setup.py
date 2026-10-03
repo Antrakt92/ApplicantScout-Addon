@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
         "retry-interaction",
         "measurement-zero", "measurement-negative",
         "font-all-missing", "enabled-transition",
-        "resume-step",
+        "resume-step", "legacy-dismissed", "explicit-reminder",
     ],
 )
 def test_companion_setup_lifecycle(pytestconfig, scenario):
@@ -107,3 +107,11 @@ def test_setup_translations_load_before_runtime_and_are_packaged():
     assert toc.index("SetupLocales.lua") < toc.index("ApplicantScout.lua")
     package_script = (ROOT / "scripts/package-addon.ps1").read_text(encoding="utf-8")
     assert '"SetupLocales.lua"' in package_script
+
+
+@pytest.mark.parametrize("locale", ["enUS", "ruRU", "deDE", "frFR", "esES", "esMX", "itIT", "ptBR", "koKR", "zhCN", "zhTW"])
+def test_addon_menu_settings_and_lifecycle(pytestconfig, locale):
+    lua = pytestconfig.getoption("--lua51") or shutil.which("lua5.1")
+    assert lua
+    subprocess.run([lua, str(ROOT / "tests/lua/check_companion_setup.lua"), "menu", locale],
+                   cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8")

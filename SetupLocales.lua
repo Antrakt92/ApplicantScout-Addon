@@ -913,3 +913,54 @@ local previewCaptions = {
     zhCN = "Companion 示例", zhTW = "Companion 範例",
 }
 for code, caption in pairs(previewCaptions) do locales[code].ui.preview = caption end
+
+local reminderCaptions = {
+enUS = {"Don’t show automatically again", "Menu", "Close: until next login/reload. Reopen anytime: /apscout"},
+ruRU = {"Больше не показывать автоматически", "Меню", "Закрытие — до входа или /reload. Открыть снова: /apscout"},
+deDE = {"Nicht mehr automatisch anzeigen", "Menü", "Schließen: bis zum Login/Reload. Erneut öffnen: /apscout"},
+frFR = {"Ne plus afficher automatiquement", "Menu", "Fermer : jusqu’à la connexion/reload. Rouvrir : /apscout"},
+esES = {"No volver a mostrar automáticamente", "Menú", "Cerrar: hasta entrar/reload. Abrir de nuevo: /apscout"},
+esMX = {"No volver a mostrar automáticamente", "Menú", "Cerrar: hasta entrar/reload. Abrir de nuevo: /apscout"},
+itIT = {"Non mostrare più automaticamente", "Menu", "Chiudi: fino all’accesso/reload. Riapri: /apscout"},
+ptBR = {"Não mostrar automaticamente novamente", "Menu", "Fechar: até entrar/reload. Reabrir: /apscout"},
+koKR = {"다시 자동으로 표시하지 않기", "메뉴", "닫기: 다음 접속/reload까지. 다시 열기: /apscout"},
+zhCN = {"不再自动显示", "菜单", "关闭后下次登录/reload再显示。随时打开：/apscout"},
+zhTW = {"不再自動顯示", "選單", "關閉後下次登入/reload再顯示。隨時開啟：/apscout"},
+}
+for code, captions in pairs(reminderCaptions) do
+    locales[code].ui.noAuto, locales[code].ui.menu, locales[code].ui.reminder = unpack(captions)
+end
+
+local menuCaptions = {
+enUS = {"Addon settings", "Setup guide", "Enabled", "Mythic+ listing style", "Greeting on invite (Enter to save; empty = off)", "Greet new party members", "Always show QR (support)", "Debug messages (support)", "Take QR screenshot", "Move QR: Alt+drag", "Reset QR position", "Status in chat", "Close", "The addon sends applicants and roster by QR screenshot. Companion shows the results. Use Setup guide for installation; click the small Companion launcher to expand the overlay. /apscout opens this menu; /apscout help lists commands.", "Off", "Learning", "Relaxed", "Competitive", "Carry offered"},
+ruRU = {"Настройки аддона", "Мастер установки", "Аддон включён", "Стиль группы Mythic+", "Приветствие при приглашении (Enter — сохранить; пусто — выкл.)", "Приветствовать новых участников группы", "Всегда показывать QR (диагностика)", "Отладочные сообщения (диагностика)", "Скриншот QR", "Двигать QR: Alt+мышь", "Сбросить позицию QR", "Статус в чате", "Закрыть", "Аддон передаёт заявки и состав группы через QR на скриншоте. Результаты показывает Companion. Установка — в мастере; маленькое окно Companion раскрывается нажатием. /apscout открывает это меню; /apscout help — список команд.", "Выкл.", "Обучение", "Спокойно", "На результат", "Помощь с прохождением"},
+deDE = {"Addon-Einstellungen", "Einrichtungsassistent", "Aktiviert", "Mythic+-Gruppenstil", "Begrüßung bei Einladung (Enter speichern; leer = aus)", "Neue Gruppenmitglieder begrüßen", "QR immer anzeigen (Diagnose)", "Debugmeldungen (Diagnose)", "QR-Screenshot", "QR bewegen: Alt+ziehen", "QR-Position zurücksetzen", "Status im Chat", "Schließen", "Das Addon überträgt Bewerber und Gruppe per QR-Screenshot. Companion zeigt Ergebnisse. Installation: Einrichtungsassistent. Der kleine Companion-Launcher öffnet das Overlay. /apscout: Menü; /apscout help: Befehle.", "Aus", "Lernen", "Entspannt", "Wettbewerb", "Carry anbieten"},
+frFR = {"Réglages de l’addon", "Assistant d’installation", "Activé", "Style du groupe Mythic+", "Message à l’invitation (Entrée : enregistrer ; vide : désactivé)", "Saluer les nouveaux membres", "Toujours afficher le QR (diagnostic)", "Messages de débogage", "Capture du QR", "Déplacer QR : Alt+glisser", "Réinitialiser le QR", "État dans le chat", "Fermer", "L’addon transmet les candidats et le groupe par capture QR. Companion affiche les résultats. Installation : assistant. Cliquez sur le petit lanceur Companion pour ouvrir l’overlay. /apscout : menu ; /apscout help : commandes.", "Désactivé", "Apprentissage", "Détente", "Compétitif", "Aide proposée"},
+esES = {"Ajustes del addon", "Guía de instalación", "Activado", "Estilo del grupo Mythic+", "Saludo al invitar (Enter: guardar; vacío: desactivado)", "Saludar a nuevos miembros", "Mostrar QR siempre (diagnóstico)", "Mensajes de depuración", "Captura del QR", "Mover QR: Alt+arrastrar", "Restablecer QR", "Estado en el chat", "Cerrar", "El addon envía candidatos y grupo mediante capturas QR. Companion muestra los resultados. Instalación: guía. Pulsa el pequeño lanzador Companion para abrir la ventana. /apscout: menú; /apscout help: comandos.", "Desactivado", "Aprendizaje", "Relajado", "Competitivo", "Ofrecer ayuda"},
+itIT = {"Impostazioni addon", "Guida all’installazione", "Attivato", "Stile gruppo Mythic+", "Saluto all’invito (Invio: salva; vuoto: disattivato)", "Saluta nuovi membri", "Mostra sempre QR (diagnostica)", "Messaggi di debug", "Screenshot QR", "Sposta QR: Alt+trascina", "Ripristina QR", "Stato in chat", "Chiudi", "L’addon invia candidati e gruppo tramite screenshot QR. Companion mostra i risultati. Installazione: guida. Premi il piccolo launcher Companion per aprire l’overlay. /apscout: menu; /apscout help: comandi.", "Disattivato", "Apprendimento", "Rilassato", "Competitivo", "Aiuto offerto"},
+ptBR = {"Configurações do addon", "Guia de instalação", "Ativado", "Estilo do grupo Mythic+", "Saudação ao convidar (Enter: salvar; vazio: desativado)", "Saudar novos membros", "Mostrar QR sempre (diagnóstico)", "Mensagens de depuração", "Captura do QR", "Mover QR: Alt+arrastar", "Redefinir QR", "Status no chat", "Fechar", "O addon envia candidatos e grupo por capturas QR. Companion mostra os resultados. Instalação: guia. Clique no pequeno launcher Companion para abrir a janela. /apscout: menu; /apscout help: comandos.", "Desativado", "Aprendizado", "Relaxado", "Competitivo", "Oferecer ajuda"},
+koKR = {"애드온 설정", "설치 안내", "사용", "Mythic+ 그룹 스타일", "초대 인사 (Enter: 저장, 빈칸: 끄기)", "새 파티원에게 인사", "QR 항상 표시 (진단)", "디버그 메시지", "QR 스크린샷", "QR 이동: Alt+드래그", "QR 위치 초기화", "채팅 상태", "닫기", "애드온은 QR 스크린샷으로 지원자와 그룹을 전송합니다. Companion이 결과를 표시합니다. 설치 안내를 확인하세요. 작은 Companion 런처를 클릭하면 창이 열립니다. /apscout: 메뉴, /apscout help: 명령어.", "끄기", "학습", "편안하게", "경쟁", "도움 제공"},
+zhCN = {"插件设置", "安装向导", "启用插件", "Mythic+ 队伍风格", "邀请问候（Enter 保存；留空关闭）", "问候新队员", "始终显示 QR（诊断）", "调试消息", "QR 截图", "移动 QR：Alt+拖动", "重置 QR 位置", "聊天中显示状态", "关闭", "插件通过 QR 截图传递申请者和队伍信息，Companion 显示结果。安装请打开向导。点击 Companion 小启动窗口展开主窗口。/apscout 打开菜单；/apscout help 查看命令。", "关闭", "学习", "休闲", "竞技", "提供帮助"},
+zhTW = {"插件設定", "安裝指南", "啟用插件", "Mythic+ 隊伍風格", "邀請問候（Enter 儲存；留空關閉）", "問候新隊員", "永遠顯示 QR（診斷）", "偵錯訊息", "QR 截圖", "移動 QR：Alt+拖曳", "重設 QR 位置", "聊天中顯示狀態", "關閉", "插件透過 QR 截圖傳送申請者與隊伍資訊，Companion 顯示結果。安裝請開啟指南。點擊 Companion 小啟動視窗展開主視窗。/apscout 開啟選單；/apscout help 查看命令。", "關閉", "學習", "休閒", "競技", "提供協助"},
+esMX = {"Ajustes del addon", "Guía de instalación", "Activado", "Estilo del grupo Mythic+", "Saludo al invitar (Enter: guardar; vacío: desactivado)", "Saludar a nuevos miembros", "Mostrar QR siempre (diagnóstico)", "Mensajes de depuración", "Captura del QR", "Mover QR: Alt+arrastrar", "Restablecer QR", "Estado en el chat", "Cerrar", "El addon envía candidatos y grupo mediante capturas QR. Companion muestra los resultados. Instalación: guía. Pulsa el pequeño lanzador Companion para abrir la ventana. /apscout: menú; /apscout help: comandos.", "Desactivado", "Aprendizaje", "Relajado", "Competitivo", "Ofrecer ayuda"},
+}
+for code, captions in pairs(menuCaptions) do locales[code].menu = captions end
+
+local reminderExplanations = {
+enUS = "Only Don’t show automatically again disables future reminders. Closing or finishing returns next login/reload. The addon cannot verify Companion installation. Reopen: /apscout.",
+ruRU = "Только галочка «Больше не показывать автоматически» отключает напоминания. После закрытия или завершения окно вернётся при входе/reload. Аддон не проверяет установку Companion. Открыть: /apscout.",
+deDE = "Nur Nicht mehr automatisch anzeigen deaktiviert Erinnerungen. Nach Schließen oder Abschluss erscheint das Fenster beim Login/Reload erneut. Die Installation wird nicht geprüft. Öffnen: /apscout.",
+frFR = "Seule la case Ne plus afficher automatiquement désactive les rappels. Après fermeture ou fin du guide, il revient à la connexion/reload. L’installation n’est pas vérifiée. Ouvrir : /apscout.",
+esES = "Solo No volver a mostrar automáticamente desactiva los avisos. Al cerrar o finalizar, vuelve al entrar/reload. No se verifica la instalación. Abrir: /apscout.",
+itIT = "Solo Non mostrare più automaticamente disattiva i promemoria. Dopo chiusura o fine guida, riappare all’accesso/reload. L’installazione non viene verificata. Apri: /apscout.",
+ptBR = "Somente Não mostrar automaticamente novamente desativa os lembretes. Ao fechar ou concluir, volta ao entrar/reload. A instalação não é verificada. Abrir: /apscout.",
+koKR = "다시 자동으로 표시하지 않기만 알림을 끕니다. 닫거나 완료하면 다음 접속/reload에 다시 표시합니다. 설치는 검증하지 않습니다. 열기: /apscout.",
+zhCN = "只有“不再自动显示”关闭提醒。关闭或完成后下次登录/reload再次显示。插件无法验证安装。打开：/apscout。",
+zhTW = "只有「不再自動顯示」關閉提醒。關閉或完成後下次登入/reload再次顯示。插件無法驗證安裝。開啟：/apscout。",
+esMX = "Solo No volver a mostrar automáticamente desactiva los avisos. Al cerrar o finalizar, vuelve al entrar/reload. No se verifica la instalación. Abrir: /apscout.",
+}
+for code, explanation in pairs(reminderExplanations) do
+    local page = locales[code].pages[5]
+    page.body = page.body:gsub("[^\n]+$", function() return explanation .. " /apscout setup" end)
+    page.summary = page.summary:gsub("[^\n]+$", function() return explanation .. " /apscout setup" end)
+end

@@ -41,7 +41,7 @@ assert(normalize(emoji) == emoji, "Auto Hi normalization is not idempotent")
 
 local realPrint = print
 print = function() end
-local ok, err = pcall(SlashCmdList.APSCOUT, "")
+local ok, err = pcall(SlashCmdList.APSCOUT, "help")
 print = realPrint
 assert(ok, tostring(err))
 assert(#ApplicantScoutDB.autoHiMessage == 160,

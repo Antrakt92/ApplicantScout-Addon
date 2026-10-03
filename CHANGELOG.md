@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an explicit automatic-reminder checkbox and an `/apscout` menu with addon
+  settings, setup help and troubleshooting controls in every supported language.
+  Older guide-completion flags no longer hide the first reminder.
+
 - Refresh first-run setup with a clearer step bar, short instructions, expandable
   details, an overlay example and links matched to each step. Resume unfinished
   setup after Later instead of starting over.

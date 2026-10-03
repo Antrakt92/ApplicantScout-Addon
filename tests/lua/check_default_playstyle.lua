@@ -20,7 +20,7 @@ end
 
 local real_print = print
 print = function() end
-local ok, err = pcall(SlashCmdList.APSCOUT, "")
+local ok, err = pcall(SlashCmdList.APSCOUT, "help")
 print = real_print
 if not ok then fail(tostring(err)) end
 

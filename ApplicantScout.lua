@@ -50,6 +50,7 @@ local DB_DEFAULTS = {
     enabled = true,
     debug = false,
     setupDismissed = false,
+    setupAutoHidden = false,
     autoMPlusPlaystyle = AUTO_MPLUS_PLAYSTYLE_DEFAULT,
     -- Empty string disables auto greeting. User text is normalized on load and
     -- when edited; the addon never sends a default chat message silently.
@@ -861,8 +862,10 @@ InitDB = function()
         entryCreationKeyState.NormalizeAutoHiMessage(ApplicantScoutDB.autoHiMessage)
     ApplicantScoutDB.enabled =
         entryCreationKeyState.NormalizeSavedBoolean(ApplicantScoutDB.enabled)
-    ApplicantScoutDB.setupDismissed =
-        entryCreationKeyState.NormalizeSavedBoolean(ApplicantScoutDB.setupDismissed)
+    ApplicantScoutDB.setupAutoHidden =
+        entryCreationKeyState.NormalizeSavedBoolean(ApplicantScoutDB.setupAutoHidden)
+    -- Older completion buttons did not represent an explicit reminder preference.
+    ApplicantScoutDB.setupDismissed = ApplicantScoutDB.setupAutoHidden
     ApplicantScoutDB.debug =
         entryCreationKeyState.NormalizeSavedBoolean(ApplicantScoutDB.debug)
     ApplicantScoutDB.autoHiGreetNewPartyMembers =
@@ -9908,7 +9911,9 @@ SlashCmdList.APSCOUT = function(msg)
     InitDB()
     msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
     local command, arg = msg:match("^(%S+)%s*(.-)$")
-    if msg == "on" then
+    if msg == "" or msg == "menu" then
+        entryCreationKeyState.ShowAddonMenu()
+    elseif msg == "on" then
         _SetEnabled(true)
     elseif msg == "off" then
         _SetEnabled(false)
@@ -10206,7 +10211,8 @@ do
         end
         local panel, urlBox, heading, body, hint, progress, back, nextButton, scroll, content
         local title, copyHint, languageButton, languageMenu, downloadButton, guideButton, laterButton, doneButton, detailsButton
-        local preview, previewCaption
+        local menu, menuLabels, menuChecks, menuActions, greeting, styleButton, menuLanguage
+        local preview, previewCaption, reminder, reminderLabel, reminderHint, menuButton
         local languageItems, stepButtons = {}, {}
         local requested, ready, queued, postponed = false, false, false, false
         local internalHide = false
@@ -10240,18 +10246,20 @@ do
             end
         end
 
-        local function resize()
+        local function resize(target)
+            target = target or panel
+            if not target then return end
             local height, width = UIParent:GetHeight(), UIParent:GetWidth()
             if not IsSecretValue(height) and not IsSecretValue(width)
                 and type(height) == "number" and height > 0 and height < math.huge
                 and type(width) == "number" and width > 0 and width < math.huge then
-                panel:SetScale(math.min(1, height / 780, width / 800))
+                target:SetScale(math.min(1, height / 780, width / 800))
             end
         end
 
         local function dismiss()
-            ApplicantScoutDB.setupDismissed = true
             ApplicantScoutDB.setupStep = nil
+            postponed = true
             requested = false
             hide()
         end
@@ -10321,6 +10329,10 @@ do
             guideButton:SetShown(page < 4)
             guideButton:SetText(ui.guide)
             detailsButton:SetText(expanded and ui.less or ui.details)
+            reminder:SetChecked(ApplicantScoutDB.setupAutoHidden)
+            reminderLabel:SetText(ui.noAuto)
+            reminderHint:SetText(ui.reminder)
+            menuButton:SetText(ui.menu)
             laterButton:SetText(ui.later)
             doneButton:SetText(ui.done)
             back:SetText(ui.back)
@@ -10481,11 +10493,23 @@ do
                 scroll:SetVerticalScroll(0)
                 languageMenu:Hide()
             end, "ApplicantScoutSetupDetails")
+            reminder = CreateFrame("CheckButton", "ApplicantScoutSetupNoAuto", panel, "UICheckButtonTemplate")
+            reminder:SetSize(28, 28)
+            reminder:SetHitRectInsets(0, -264, 0, 0)
+            reminder:SetPoint("BOTTOMLEFT", 128, 24)
+            reminder:SetScript("OnClick", function(self)
+                ApplicantScoutDB.setupAutoHidden = self:GetChecked() and true or false
+                ApplicantScoutDB.setupDismissed = ApplicantScoutDB.setupAutoHidden
+                requested = true
+            end)
+            reminderLabel = label(-688, "GameFontHighlightSmall", 32, 164, 252)
+            reminderHint = label(-670, "GameFontHighlightSmall", 14, 24, 712, 10)
+            menuButton = button("Menu", 458, 256, 278, function() entryCreationKeyState.ShowAddonMenu() end)
             downloadButton = button("Select download link", 40, 136, 340, function() selectLink(links[page]) end,
                 "ApplicantScoutSetupLink")
             guideButton = button("Illustrated guide", 392, 136, 328, function() selectLink(guideURL) end)
             laterButton = button("Later", 24, 22, 96, later)
-            doneButton = button("Already set up", 128, 22, 176, dismiss)
+            doneButton = button("Already set up", 270, 256, 176, dismiss)
             back = button("Back", 430, 22, 106, function()
                 if page > 1 then navigate(page - 1) end
             end)
@@ -10551,7 +10575,7 @@ do
             return ready and not entryCreationKeyState.qrGameplayLoadingActive
                 and not entryCreationKeyState.qrGameplaySuppressed
                 and entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) == false
-                and (requested or (not postponed and not ApplicantScoutDB.setupDismissed and ApplicantScoutDB.enabled))
+                and (requested or (not postponed and not ApplicantScoutDB.setupAutoHidden and ApplicantScoutDB.enabled))
         end
 
         local function tryShow()
@@ -10570,17 +10594,168 @@ do
 
         -- Reuse transport gameplay/loading recovery so both surfaces resume together.
         entryCreationKeyState.RefreshCompanionSetupForGameplay = function()
+            if menu and (entryCreationKeyState.qrGameplayLoadingActive
+                or entryCreationKeyState.qrGameplaySuppressed
+                or entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) ~= false) then menu:Hide() end
             if not canShow() then hide(); return end
             if not panel or not panel:IsShown() then queue() end
         end
 
         entryCreationKeyState.ShowCompanionSetup = function()
+            if menu then menu:Hide() end
             requested, postponed, page, expanded = true, false, 1, false
             if panel then refresh() end
             queue()
             if not canShow() then
                 APSPrint(locales[localeCode()].ui.deferred)
             end
+        end
+
+        local styleTokens = {"disabled", "Learning", "FunRelaxed", "FunSerious", "Expert"}
+        local function refreshMenu()
+            local code = localeCode()
+            if not applyFonts(code) then code = "enUS"; applyFonts(code) end
+            local language = locales[code]
+            local captions = language.menu
+            for index, region in pairs(menuLabels) do region:SetText(captions[index]) end
+            for index, control in pairs(menuChecks) do
+                control.label:SetText(index == 20 and language.ui.noAuto or captions[index])
+                local key = control.key
+                control:SetChecked(ApplicantScoutDB[key])
+            end
+            for index, control in pairs(menuActions) do control:SetText(captions[index]) end
+            local style = 1
+            for index, token in ipairs(styleTokens) do
+                if ApplicantScoutDB.autoMPlusPlaystyle == token then style = index end
+            end
+            styleButton:SetText(captions[4] .. ": " .. captions[14 + style])
+            if not greeting:HasFocus() then greeting:SetText(ApplicantScoutDB.autoHiMessage) end
+            menuLanguage:SetText(language.name .. " / Language")
+        end
+        entryCreationKeyState.ShowAddonMenu = function()
+            InitDB()
+            if entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) ~= false then
+                APSPrint("/apscout: leave combat to open the menu")
+                return
+            end
+            later()
+            if not menu then
+                menu = CreateFrame("Frame", "ApplicantScoutMenu", UIParent, "BackdropTemplate")
+                menu:SetSize(760, 740)
+                menu:SetPoint("CENTER")
+                menu:SetFrameStrata("DIALOG")
+                menu:SetClampedToScreen(true)
+                menu:EnableMouse(true)
+                menu:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1})
+                menu:SetBackdropColor(0.035, 0.045, 0.065, 0.98)
+                menu:SetBackdropBorderColor(0.22, 0.70, 0.63, 1)
+                table.insert(UISpecialFrames, "ApplicantScoutMenu")
+                menuLabels, menuChecks, menuActions = {}, {}, {}
+                local function line(index, y, height, size)
+                    local region = menu:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                    region:SetPoint("TOPLEFT", 32, y)
+                    region:SetSize(696, height)
+                    region:SetJustifyH("LEFT")
+                    region:SetJustifyV("TOP")
+                    registerFont(region, size or 12, "GameFontHighlight")
+                    menuLabels[index] = region
+                end
+                local function action(index, x, y, width, callback, name)
+                    local control = CreateFrame("Button", name, menu, "BackdropTemplate")
+                    control:SetPoint("TOPLEFT", x, y)
+                    control:SetSize(width, 36)
+                    control:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1})
+                    local text = control:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                    text:SetPoint("CENTER")
+                    text:SetSize(width - 16, 32)
+                    control:SetFontString(text)
+                    registerFont(control, 12, "GameFontNormal", true)
+                    paintButton(control, index == 2)
+                    control:SetScript("OnClick", callback)
+                    if index then menuActions[index] = control end
+                    return control
+                end
+                local function check(index, key, y, callback)
+                    local control = CreateFrame("CheckButton", "ApplicantScoutMenuCheck" .. index, menu, "UICheckButtonTemplate")
+                    control:SetPoint("TOPLEFT", 32, y)
+                    control:SetSize(28, 28)
+                    control:SetHitRectInsets(0, -650, 0, 0)
+                    local text = control:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                    text:SetPoint("TOPLEFT", 36, -4)
+                    text:SetSize(650, 28)
+                    text:SetJustifyH("LEFT")
+                    registerFont(text, 12, "GameFontHighlight")
+                    control.key, control.label = key, text
+                    control:SetScript("OnClick", function(self)
+                        callback(self:GetChecked() and true or false)
+                        refreshMenu()
+                    end)
+                    menuChecks[index] = control
+                end
+                line(1, -28, 32, 20)
+                line(14, -76, 90, 14)
+                action(2, 32, -178, 340, function()
+                    menu:Hide()
+                    entryCreationKeyState.ShowCompanionSetup()
+                end)
+                menuLanguage = action(nil, 388, -178, 340, function()
+                    local current = localeCode()
+                    for index, code in ipairs(languageOrder) do
+                        if code == current then
+                            ApplicantScoutDB.setupLocale = languageOrder[index % #languageOrder + 1]
+                            break
+                        end
+                    end
+                    refreshMenu()
+                end)
+                check(3, "enabled", -236, _SetEnabled)
+                styleButton = action(nil, 32, -278, 696, function()
+                    local current = ApplicantScoutDB.autoMPlusPlaystyle
+                    for index, token in ipairs(styleTokens) do
+                        if token == current then _SetAutoMPlusPlaystyle(styleTokens[index % #styleTokens + 1], true); break end
+                    end
+                    refreshMenu()
+                end)
+                line(5, -332, 24)
+                greeting = CreateFrame("EditBox", "ApplicantScoutMenuGreeting", menu, "InputBoxTemplate")
+                greeting:SetPoint("TOPLEFT", 38, -362)
+                greeting:SetSize(680, 28)
+                greeting:SetAutoFocus(false)
+                greeting:SetMaxBytes(entryCreationKeyState.AUTO_HI_MAX_BYTES)
+                registerFont(greeting, 12, "GameFontHighlight")
+                greeting:SetScript("OnEnterPressed", function(self)
+                    entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)
+                    self:ClearFocus()
+                end)
+                greeting:SetScript("OnEditFocusLost", function(self)
+                    entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)
+                end)
+                greeting:SetScript("OnEscapePressed", function(self)
+                    self:SetText(ApplicantScoutDB.autoHiMessage)
+                    self:ClearFocus()
+                end)
+                check(6, "autoHiGreetNewPartyMembers", -408, function(value)
+                    ApplicantScoutDB.autoHiGreetNewPartyMembers = value
+                    if not value then entryCreationKeyState.ClearAutoHiAttemptState("new-party") end
+                end)
+                check(7, "qrAlwaysVisible", -446, function(value)
+                    ApplicantScoutDB.qrAlwaysVisible = value
+                    _RefreshQRVisibility()
+                end)
+                check(8, "debug", -484, _SetDebug)
+                check(20, "setupAutoHidden", -522, function(value)
+                    ApplicantScoutDB.setupAutoHidden, ApplicantScoutDB.setupDismissed = value, value
+                end)
+                action(9, 32, -578, 340, entryCreationKeyState.RequestForcedSnapshot)
+                action(12, 388, -578, 340, function() SlashCmdList.APSCOUT("status") end)
+                action(10, 32, -626, 340, entryCreationKeyState.ToggleQRMoveMode)
+                action(11, 388, -626, 340, entryCreationKeyState.ResetQRPositionForSupport)
+                action(13, 544, -682, 184, function() menu:Hide() end)
+                menu:SetScript("OnHide", function() greeting:ClearFocus() end)
+            end
+            resize(menu)
+            refreshMenu()
+            menu:Show()
         end
 
         local watcher = CreateFrame("Frame")
@@ -10593,8 +10768,9 @@ do
                 page = savedPage()
                 ready = true
                 queue()
-            elseif panel then
-                resize()
+            else
+                resize(panel)
+                if menu then resize(menu) end
             end
         end)
     end)()

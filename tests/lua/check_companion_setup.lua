@@ -53,6 +53,9 @@ local function widget()
         SetTexture = function(self, path) self.texture = path end,
         SetHeight = function(self, height) self.height = height end,
         SetWidth = function(self, width) self.width = width end,
+        SetChecked = function(self, value) self.checked = value end,
+        GetChecked = function(self) return self.checked end,
+        HasFocus = function(self) return self.focused end,
         SetEnabled = function(self, enabled) self.enabled = enabled end,
         IsEnabled = function(self) return self.enabled ~= false end,
         SetScale = function(self, scale) self.scale = scale end,
@@ -132,7 +135,8 @@ UIParent = widget()
 UISpecialFrames = {}
 if scenario == "small-display" then UIParent.width, UIParent.height = 500, 480 end
 ApplicantScoutDB = scenario == "disabled" and {enabled = false, autoHiMessage = "hello"}
-    or scenario == "dismissed" and {setupDismissed = true}
+    or scenario == "dismissed" and {setupDismissed = true, setupAutoHidden = true}
+    or scenario == "legacy-dismissed" and {setupDismissed = true}
     or scenario == "corrupt" and {setupDismissed = {}}
     or {}
 if scenario == "language-saved" then ApplicantScoutDB.setupLocale = "ruRU" end
@@ -204,6 +208,114 @@ local function login()
 end
 if scenario == "combat" then combat = true end
 login()
+if scenario == "legacy-dismissed" or scenario == "explicit-reminder" then
+    assert(shown(), "old completion flag blocked first explicit-preference onboarding")
+    assert(not ApplicantScoutDB.setupAutoHidden, "old dismissal was treated as explicit consent")
+    local choice = named("ApplicantScoutSetupNoAuto")
+    choice:SetChecked(true)
+    choice.scripts.OnClick(choice)
+    assert(ApplicantScoutDB.setupAutoHidden and shown(), "checkbox failed to save without closing")
+    event("PLAYER_REGEN_ENABLED")
+    drain()
+    assert(shown(), "saving preference unexpectedly closed the active guide")
+    button("Later").scripts.OnClick()
+    frames, pending, fontstrings = {}, {}, {}
+    harness = env.load_addon({})
+    watcher = frames[#frames]
+    login()
+    assert(not shown(), "explicit opt-out was ignored on reload")
+    SlashCmdList.APSCOUT("setup")
+    drain()
+    assert(shown() and named("ApplicantScoutSetupNoAuto").checked, "manual reopening lost preference")
+    choice = named("ApplicantScoutSetupNoAuto")
+    choice:SetChecked(false)
+    choice.scripts.OnClick(choice)
+    button("Later").scripts.OnClick()
+    frames, pending, fontstrings = {}, {}, {}
+    harness = env.load_addon({})
+    watcher = frames[#frames]
+    login()
+    assert(shown(), "unchecking failed to restore automatic reminder")
+    print("ok " .. scenario)
+    return
+end
+if scenario == "menu" or scenario == "menu-export" then
+    SlashCmdList.APSCOUT("")
+    local hub = named("ApplicantScoutMenu")
+    assert(hub.shown and not shown(), "bare command did not replace guide with menu")
+    local ns = {}
+    assert(loadfile("SetupLocales.lua"))("ApplicantScout", ns)
+    local language = ns.CompanionSetupLocales[clientLocale]
+    assert(hasText(language.menu[14]), "menu explanation was not localized")
+    if scenario == "menu-export" then
+        local items = {}
+        local function export(f, kind)
+            local point = f.point
+            local parent = f.parent
+            local x, y = point[2], -point[3]
+            if parent ~= hub then x, y = x + parent.point[2], y - parent.point[3] end
+            local font = rawget(f, "fontObject") or rawget(f, "normalFont")
+            items[#items + 1] = {kind, x, y, f.width, f.height, f.text or "",
+                type(font) == "table" and font.fontSize or 12, {}, {}, "", true, f.name or ""}
+        end
+        for _, f in ipairs(frames) do
+            if f.parent == hub then export(f, f.kind) end
+        end
+        for _, f in ipairs(fontstrings) do
+            if f.parent == hub or (f.parent.parent == hub and f.parent.kind == "CheckButton") then export(f, "text") end
+        end
+        local function json(value)
+            if type(value) == "string" then
+                return '"' .. value:gsub('\\', '\\\\'):gsub('"', '\\"'):gsub('\n', '\\n'):gsub('\r', '\\r') .. '"'
+            elseif type(value) == "number" then return tostring(value)
+            elseif type(value) == "boolean" then return value and "true" or "false"
+            elseif type(value) == "table" then
+                local entries = {}
+                for _, item in ipairs(value) do entries[#entries + 1] = json(item) end
+                return "[" .. table.concat(entries, ",") .. "]"
+            end
+            return "null"
+        end
+        print(json(items))
+        return
+    end
+    for index, key in pairs({[3] = "enabled", [6] = "autoHiGreetNewPartyMembers",
+        [7] = "qrAlwaysVisible", [8] = "debug", [20] = "setupAutoHidden"}) do
+        local control = named("ApplicantScoutMenuCheck" .. index)
+        for _, value in ipairs({true, false}) do
+            control:SetChecked(value)
+            control.scripts.OnClick(control)
+            assert(ApplicantScoutDB[key] == value, "menu setting did not save: " .. key)
+        end
+    end
+    button(language.menu[4] .. ": " .. language.menu[18]).scripts.OnClick()
+    assert(ApplicantScoutDB.autoMPlusPlaystyle == "Expert", "menu style skipped canonical setting helper")
+    local edit = named("ApplicantScoutMenuGreeting")
+    edit:SetFocus()
+    edit:SetText("pending greeting")
+    local choice = named("ApplicantScoutMenuCheck20")
+    choice:SetChecked(false)
+    choice.scripts.OnClick(choice)
+    assert(edit.text == "pending greeting", "changing settings discarded the focused greeting")
+    edit:SetText("hello menu")
+    edit.scripts.OnEnterPressed(edit)
+    assert(ApplicantScoutDB.autoHiMessage == "hello menu", "menu greeting was not saved")
+    edit:SetText("discard me")
+    edit.scripts.OnEscapePressed(edit)
+    assert(edit.text == "hello menu" and ApplicantScoutDB.autoHiMessage == "hello menu", "escape saved canceled greeting")
+    button(language.menu[2]).scripts.OnClick()
+    drain()
+    assert(shown() and not hub.shown, "menu guide action left overlapping windows")
+    SlashCmdList.APSCOUT("menu")
+    assert(hub.shown and not shown(), "menu alias did not reopen same hub")
+    combat = true
+    event("PLAYER_REGEN_DISABLED")
+    assert(not hub.shown, "combat left menu visible")
+    SlashCmdList.APSCOUT("")
+    assert(not hub.shown, "manual menu bypassed combat restriction")
+    print("ok " .. scenario)
+    return
+end
 if scenario:find("saved-step", 1, true) then
     local expected = scenario == "saved-step" and 3 or 1
     local ns = {}
@@ -407,7 +519,7 @@ if scenario == "enabled-transition" then
     button("Already set up").scripts.OnClick()
     harness.SetEnabled(true)
     drain()
-    assert(not shown() and ApplicantScoutDB.setupDismissed, "enabling scouting reopened permanently dismissed setup")
+    assert(not shown() and not ApplicantScoutDB.setupAutoHidden, "completion changed reminder preference or reopened this session")
     print("ok " .. scenario)
     return
 end
@@ -688,7 +800,7 @@ drain()
 assert(shown(), "postponed guide could not be reopened manually")
 for _ = 1, 4 do button("Next").scripts.OnClick() end
 button("Finish guide").scripts.OnClick()
-assert(ApplicantScoutDB.setupDismissed and not shown(), "Finish did not persist guide dismissal")
+assert(ApplicantScoutDB.setupDismissed == priorDismissal and not shown(), "Finish changed explicit reminder preference")
 SlashCmdList.APSCOUT("setup")
 drain()
 button("Next").scripts.OnClick()
@@ -736,7 +848,7 @@ for _, activity in ipairs({ "challenge", "encounter" }) do
     assert(shown(), "setup retained a stale activity latch after transport recovery")
 end
 button("Already set up").scripts.OnClick()
-assert(ApplicantScoutDB.setupDismissed == true and not shown(), "explicit close did not persist")
+assert(ApplicantScoutDB.setupDismissed == priorDismissal and not shown(), "completion changed reminder preference")
 for _ = 1, 3 do
     event("PLAYER_ENTERING_WORLD")
     event("LOADING_SCREEN_DISABLED")
@@ -753,5 +865,5 @@ frames, pending = {}, {}
 harness = env.load_addon({})
 watcher = frames[#frames]
 login()
-assert(not shown(), "reload forgot account-wide dismissal")
+assert((not not shown()) == (not ApplicantScoutDB.setupAutoHidden and ApplicantScoutDB.enabled), "reload ignored explicit reminder preference")
 print("ok " .. scenario)
