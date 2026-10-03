@@ -1,5 +1,9 @@
 local scenario = assert(arg[1], "scenario required")
 local clientLocale = arg[2] or "enUS"
+local fallbackLocale = arg[2] or "ruRU"
+local blockedFont = {ruRU = "ARIALN", frFR = "ARIALN", koKR = "2002", zhCN = "ARKai_T", zhTW = "arheiuhk_bd"}
+local expectedFallback = {ruRU = "Fonts\\2002.TTF", frFR = "Fonts\\FRIZQT__.TTF",
+    koKR = "Fonts\\K_Pagetext.ttf", zhCN = "Fonts\\ARKai_C.ttf", zhTW = "Fonts\\ARKai_T.ttf"}
 GetLocale = function() return clientLocale end
 if scenario == "locale-api-error" then GetLocale = function() error("unavailable") end end
 if scenario == "locale-api-missing" then GetLocale = nil end
@@ -19,6 +23,9 @@ IsInGroup = function() return false end
 GetTime = function() return now end
 C_Timer.After = function(delay, callback)
     pending[#pending + 1] = { due = now + delay, callback = callback }
+end
+local function koreanFont(path)
+    return type(path) == "string" and (path:find("2002", 1, true) or path:find("K_Pagetext", 1, true))
 end
 local function widget()
     local frame = { scripts = {}, events = {}, shown = true, text = "", focused = false }
@@ -55,19 +62,20 @@ local function widget()
         GetText = function(self) return self.text end,
         SetFont = function(self, path, size, flags)
             if scenario == "font-all-missing" then return false end
-            if (scenario == "font-missing" or scenario == "retry-interaction") and path:find("2002", 1, true) then return false end
-            if scenario == "font-error" and path:find("2002", 1, true) then error("missing font") end
-            if scenario == "font-partial" and path:find("2002", 1, true) and size == 14 then return false end
+            if scenario == "font-compatible-fallback" and path:find(blockedFont[fallbackLocale], 1, true) then return false end
+            if (scenario == "font-missing" or scenario == "retry-interaction") and koreanFont(path) then return false end
+            if scenario == "font-error" and koreanFont(path) then error("missing font") end
+            if scenario == "font-partial" and koreanFont(path) and size == 14 then return false end
             self.font, self.fontSize, self.fontFlags = path, size, flags
-            if scenario == "font-cold" and path:find("2002", 1, true) and not fontColdUntil then
+            if scenario == "font-cold" and koreanFont(path) and not fontColdUntil then
                 fontColdUntil = now + 0.4
             end
             if scenario == "font-nil-return" then return nil end
             return true
         end,
         GetFont = function(self)
-            if scenario == "font-cold" and self.font:find("2002", 1, true) and now < fontColdUntil then return nil end
-            if scenario == "font-false-success" and self.font:find("2002", 1, true) then
+            if scenario == "font-cold" and koreanFont(self.font) and now < fontColdUntil then return nil end
+            if scenario == "font-false-success" and koreanFont(self.font) then
                 return "Fonts\\FRIZQT__.TTF", self.fontSize, self.fontFlags
             end
             return self.font, self.fontSize, self.fontFlags
@@ -110,6 +118,7 @@ ApplicantScoutDB = scenario == "disabled" and {enabled = false, autoHiMessage = 
 if scenario == "language-saved" then ApplicantScoutDB.setupLocale = "ruRU" end
 if scenario == "language-invalid" then ApplicantScoutDB.setupLocale = {} end
 if scenario == "language-invalid-string" then ApplicantScoutDB.setupLocale = "xxXX" end
+if scenario == "font-compatible-fallback" then ApplicantScoutDB.setupLocale = fallbackLocale end
 local harness = env.load_addon({})
 local watcher = frames[#frames]
 assert(watcher.events.PLAYER_LOGIN, "setup lifecycle watcher missing")
@@ -160,6 +169,21 @@ local function login()
 end
 if scenario == "combat" then combat = true end
 login()
+if scenario == "font-compatible-fallback" then
+    local ns = {}
+    assert(loadfile("SetupLocales.lua"))("ApplicantScout", ns)
+    local found = false
+    for _, f in ipairs(fontstrings) do
+        if f.text == ns.CompanionSetupLocales[fallbackLocale].pages[1].body then
+            assert(f.fontObject.font == expectedFallback[fallbackLocale], "fallback used an incompatible font")
+            found = true
+        end
+    end
+    assert(found and shown() and ApplicantScoutDB.setupLocale == fallbackLocale,
+        "compatible font was available but the selected language was lost")
+    print("ok " .. scenario)
+    return
+end
 if scenario == "font-all-missing" then
     local found = false
     for _, f in ipairs(frames) do

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep the selected setup language when a compatible backup WoW font is available.
 - Keep automatic setup in sync with scouting on/off, while preserving manual
   help and reminder preferences. Retain distinct button states with fallback fonts.
 - Keep the selected link, reading position and language menu intact during font

@@ -10132,28 +10132,34 @@ do
         local languageAliases = {ruRU = "Russian", koKR = "Korean", zhCN = "Simplified", zhTW = "Traditional"}
         -- Output language can differ from the client install's available fonts.
         -- Own these FontObjects so other windows and Blizzard templates stay intact.
-        local fontPaths = {ruRU = "Fonts\\ARIALN.TTF", koKR = "Fonts\\2002.TTF",
-            zhCN = "Fonts\\ARKai_T.ttf", zhTW = "Fonts\\arheiuhk_bd.TTF"}
+        local latinFonts = {"Fonts\\ARIALN.TTF", "Fonts\\FRIZQT__.TTF", "Fonts\\2002.TTF", "Fonts\\ARKai_T.ttf"}
+        local fontPaths = {
+            ruRU = {"Fonts\\ARIALN.TTF", "Fonts\\2002.TTF", "Fonts\\ARKai_T.ttf", "Fonts\\MORPHEUS_CYR.TTF"},
+            koKR = {"Fonts\\2002.TTF", "Fonts\\K_Pagetext.ttf"},
+            zhCN = {"Fonts\\ARKai_T.ttf", "Fonts\\ARKai_C.ttf", "Fonts\\ARHei.TTF"},
+            zhTW = {"Fonts\\arheiuhk_bd.TTF", "Fonts\\ARKai_T.ttf", "Fonts\\ARKai_C.ttf", "Fonts\\ARHei.TTF"},
+        }
         local fonts, fontEntries = {}, {}
         local function fontFor(code, size, tone)
             local key = code .. size .. (tone or "")
             if fonts[key] then return fonts[key] end
             local font = CreateFont("ApplicantScoutSetupFont_" .. key)
-            local ok = pcall(font.SetFont, font, fontPaths[code] or "Fonts\\ARIALN.TTF", size, "")
-            if ok then
-                local readOK, path, actualSize, flags = pcall(font.GetFont, font)
-                local expectedPath = fontPaths[code] or "Fonts\\ARIALN.TTF"
-                -- SetFont can return nil despite applying; read back the effective face.
-                if readOK and not IsSecretValue(path) and not IsSecretValue(actualSize)
-                    and not IsSecretValue(flags) and type(path) == "string"
-                    and path:gsub("/", "\\"):lower() == expectedPath:lower()
-                    and type(actualSize) == "number" and math.abs(actualSize - size) <= 0.01
-                    and (flags == nil or flags == "") then
-                    if tone == "disabled" then font:SetTextColor(0.5, 0.5, 0.5)
-                    elseif tone == "normal" then font:SetTextColor(1, 0.82, 0)
-                    else font:SetTextColor(1, 1, 1) end
-                    fonts[key] = font
-                    return font
+            for _, expectedPath in ipairs(fontPaths[code] or latinFonts) do
+                local ok = pcall(font.SetFont, font, expectedPath, size, "")
+                if ok then
+                    local readOK, path, actualSize, flags = pcall(font.GetFont, font)
+                    -- SetFont can return nil despite applying; read back the effective face.
+                    if readOK and not IsSecretValue(path) and not IsSecretValue(actualSize)
+                        and not IsSecretValue(flags) and type(path) == "string"
+                        and path:gsub("/", "\\"):lower() == expectedPath:lower()
+                        and type(actualSize) == "number" and math.abs(actualSize - size) <= 0.01
+                        and (flags == nil or flags == "") then
+                        if tone == "disabled" then font:SetTextColor(0.5, 0.5, 0.5)
+                        elseif tone == "normal" then font:SetTextColor(1, 0.82, 0)
+                        else font:SetTextColor(1, 1, 1) end
+                        fonts[key] = font
+                        return font
+                    end
                 end
             end
         end

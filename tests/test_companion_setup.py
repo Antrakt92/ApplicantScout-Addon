@@ -34,6 +34,16 @@ def test_companion_setup_lifecycle(pytestconfig, scenario):
     assert result.stdout.strip().endswith(f"ok {scenario}")
 
 
+@pytest.mark.parametrize("locale", ["ruRU", "frFR", "koKR", "zhCN", "zhTW"])
+def test_setup_compatible_fallback_keeps_the_selected_language(pytestconfig, locale):
+    lua = pytestconfig.getoption("--lua51") or shutil.which("lua5.1")
+    assert lua, "Lua 5.1 is required for setup language tests"
+    subprocess.run(
+        [lua, str(ROOT / "tests/lua/check_companion_setup.lua"), "font-compatible-fallback", locale],
+        cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8",
+    )
+
+
 @pytest.mark.parametrize("locale", [
     "enUS", "enGB", "deDE", "esES", "esMX", "frFR", "itIT", "ptBR", "ruRU",
     "koKR", "zhCN", "zhTW", "unknown",

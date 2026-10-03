@@ -64,8 +64,9 @@ is available on every step and remembers an explicit choice across characters
 and reloads. Choose **Auto (WoW)** to return to the client language. Supported
 locales are English, German, Spanish (Spain and Latin America), French, Italian,
 Brazilian Portuguese, Russian, Korean, Simplified Chinese and Traditional Chinese.
-The guide switches its own fonts with the language. If the client cannot load
-the required font, it shows a readable English explanation and keeps your saved
+The guide switches its own fonts with the language and tries compatible bundled
+WoW fonts when the preferred face is unavailable. If none can load, it shows a
+readable English explanation and keeps your saved
 choice. Non-Latin language choices also have English names in the selector.
 An unknown client locale uses English. Companion's own interface and the linked
 illustrated guide remain in English; translated steps keep its exact field names
