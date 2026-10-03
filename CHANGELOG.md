@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep the selected link, reading position and language menu intact during font
+  recovery, and update language-choice fonts once they become available.
 - Close setup with Escape, adapt it to display changes, and preserve readable
   button states and fallback text when fonts cannot be applied.
 - Switch setup fonts with the selected language and keep a readable English

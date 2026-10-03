@@ -8,6 +8,7 @@ local frames, pending = {}, {}
 local fontstrings = {}
 local now = 1000
 local fontColdUntil
+local measuredHeight = 450
 local combat = false
 local challenge, encounter = false, false
 InCombatLockdown = function() return combat end
@@ -41,16 +42,19 @@ local function widget()
         GetStringHeight = function()
             if scenario == "measurement-invalid" then return math.huge end
             if scenario == "measurement-error" then error("font not ready") end
-            return 450
+            if scenario == "measurement-zero" then return 0 end
+            if scenario == "measurement-negative" then return -1 end
+            return measuredHeight
         end,
         SetScrollChild = function(self, child) self.child = child end,
         SetVerticalScroll = function(self, offset) self.offset = offset end,
+        GetVerticalScroll = function(self) return rawget(self, "offset") or 0 end,
         GetEffectiveScale = function() return 1 end,
         GetFrameLevel = function() return 1 end,
         SetText = function(self, text) self.text = text end,
         GetText = function(self) return self.text end,
         SetFont = function(self, path, size, flags)
-            if scenario == "font-missing" and path:find("2002", 1, true) then return false end
+            if (scenario == "font-missing" or scenario == "retry-interaction") and path:find("2002", 1, true) then return false end
             if scenario == "font-error" and path:find("2002", 1, true) then error("missing font") end
             if scenario == "font-partial" and path:find("2002", 1, true) and size == 14 then return false end
             self.font, self.fontSize, self.fontFlags = path, size, flags
@@ -155,6 +159,32 @@ local function login()
 end
 if scenario == "combat" then combat = true end
 login()
+if scenario == "retry-interaction" then
+    local picker, menu, korean, scrollFrame, address
+    for _, f in ipairs(frames) do
+        if f.name == "ApplicantScoutSetupLanguageButton" then picker = f end
+        if f.name == "ApplicantScoutSetupLanguage_koKR" then korean, menu = f, f.parent end
+        if f.template == "UIPanelScrollFrameTemplate" then scrollFrame = f end
+        if f.kind == "EditBox" and f.parent == panel() then address = f end
+    end
+    korean.scripts.OnClick()
+    button("Illustrated guide").scripts.OnClick()
+    local selected = address.text
+    scrollFrame:SetVerticalScroll(150)
+    picker.scripts.OnClick()
+    drain()
+    assert(address.text == selected and address.focused and address.selected,
+        "font retries replaced the selected link or interrupted copying")
+    assert(scrollFrame.offset == 150, "font retries reset reading position")
+    assert(menu.shown, "font retries closed the open language picker")
+    korean.scripts.OnClick()
+    scrollFrame:SetVerticalScroll(150)
+    measuredHeight = 300
+    drain()
+    assert(scrollFrame.offset == 22, "font retries did not clamp scroll after content became shorter")
+    print("ok " .. scenario)
+    return
+end
 if scenario == "parent-hide" then
     assert(shown(), "guide did not open")
     panel().scripts.OnHide(panel()) -- Parent hiding fires OnHide without clearing IsShown.
@@ -164,7 +194,7 @@ if scenario == "parent-hide" then
     print("ok " .. scenario)
     return
 end
-if scenario == "measurement-invalid" or scenario == "measurement-error" then
+if scenario:find("measurement-", 1, true) then
     for _, f in ipairs(frames) do
         if f.template == "UIPanelScrollFrameTemplate" then
             assert(f.child.height == 600, "bad font measurement poisoned scroll content geometry")
@@ -221,6 +251,11 @@ if scenario:find("font-", 1, true) then
     end
     named("ApplicantScoutSetupLanguage_koKR").scripts.OnClick()
     if scenario == "font-cold" or scenario == "font-false-success" then drain() end
+    if scenario == "font-cold" then
+        local choice = named("ApplicantScoutSetupLanguage_koKR")
+        assert(type(choice.normalFont) == "table" and choice.normalFont.font == "Fonts\\2002.TTF",
+            "cold font recovered in the body but not in the language picker")
+    end
     assert(ApplicantScoutDB.setupLocale == "koKR", "font handling lost language preference")
     local found = false
     for _, f in ipairs(fontstrings) do

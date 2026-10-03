@@ -10241,6 +10241,8 @@ do
 
         local refresh
         refresh = function(isRetry)
+            local scrollOK, priorScroll = pcall(scroll.GetVerticalScroll, scroll)
+            priorScroll = scrollOK and SafeNumber(priorScroll, 0) or 0
             if not isRetry then
                 fontRetryGeneration = fontRetryGeneration + 1
                 fontRetryAttempts = 0
@@ -10260,8 +10262,11 @@ do
             heading:SetText(step.title)
             body:SetText((missingFont and "This WoW installation could not load the selected language's font. Showing English; your language choice is saved.\n\n" or "") .. step.body)
             local measured, textHeight = pcall(body.GetStringHeight, body)
-            content:SetHeight(math.max(290, (measured and SafeNumber(textHeight, 588) or 588) + 12))
-            scroll:SetVerticalScroll(0)
+            textHeight = measured and SafeNumber(textHeight, 0) or 0
+            if textHeight <= 0 then textHeight = 588 end
+            local contentHeight = math.max(290, textHeight + 12)
+            content:SetHeight(contentHeight)
+            scroll:SetVerticalScroll(isRetry and math.max(0, math.min(priorScroll, contentHeight - 290)) or 0)
             hint:SetText(step.hint)
             title:SetText(ui.title)
             progress:SetText(string.format(ui.step, page, #pages))
@@ -10274,11 +10279,18 @@ do
             doneButton:SetText(ui.done)
             back:SetText(ui.back)
             languageItems.auto:SetText(ui.automatic)
-            languageMenu:Hide()
-            selectedURL = links[page]
-            urlBox:ClearFocus()
-            urlBox:SetText(selectedURL)
-            urlBox:SetCursorPosition(0)
+            for _, choiceCode in ipairs(languageOrder) do
+                local font = resolveFont({size = 11, isButton = true}, choiceCode)
+                if font then attachFont({region = languageItems[choiceCode], isButton = true}, font) end
+            end
+            -- A font retry changes rendering, not the user's current interaction.
+            if not isRetry then
+                languageMenu:Hide()
+                selectedURL = links[page]
+                urlBox:ClearFocus()
+                urlBox:SetText(selectedURL)
+                urlBox:SetCursorPosition(0)
+            end
             back:SetEnabled(page > 1)
             nextButton:SetText(page == #pages and ui.finish or ui.next)
             -- Cold font readback can be inconclusive. Retry briefly, never forever.
