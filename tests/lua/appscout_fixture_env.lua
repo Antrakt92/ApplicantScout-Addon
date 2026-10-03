@@ -383,9 +383,12 @@ end
 
 env.load_addon = function(qr)
     local fixtureHarness = {}
+    local setupNamespace = {}
+    assert(loadfile("SetupLocales.lua"))("ApplicantScout", setupNamespace)
     local chunk = assert(loadfile("ApplicantScout.lua"))
     chunk("ApplicantScout", {
         QR = qr or {},
+        CompanionSetupLocales = setupNamespace.CompanionSetupLocales,
         ApplicantScoutFixtureHarness = fixtureHarness,
     })
     fixtureHarness.HashSnapshot = fixture_hash_snapshot

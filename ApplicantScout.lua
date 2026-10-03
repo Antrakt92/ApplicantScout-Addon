@@ -10121,66 +10121,28 @@ do
     (function()
         local downloadURL = "https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest"
         local guideURL = "https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/GETTING_STARTED.md"
-        local pages = {
-            {
-                title = "Why you need the Windows companion",
-                body = "ApplicantScout has two parts. This WoW addon collects your Group Finder applicants and party/raid roster. The free Windows companion fetches Warcraft Logs results and shows the applicant table beside WoW. The addon alone cannot show that table.\n\n"
-                    .. "How data travels:\nAddon -> QR code -> normal WoW screenshot -> Companion -> Warcraft Logs -> overlay.\n\n"
-                    .. "WoW addons cannot make these web requests directly. The addon briefly displays a QR image and uses WoW's screenshot function. Companion reads it from your Screenshots folder locally; the screenshot itself is not uploaded to Warcraft Logs.\n\n"
-                    .. "Both parts are open source. You can inspect the code on GitHub. No WoW memory reading, code injection or automatic invitations; you choose whom to invite. No Blizzard password is needed.",
-                link = "https://github.com/Antrakt92/ApplicantScout-Companion",
-                hint = "Source code is public. This is an independent project, not an official Blizzard app.",
-            },
-            {
-                title = "Install ApplicantScout Companion",
-                body = "1. Select the download link below, press Ctrl+C, then paste it into your browser.\n\n"
-                    .. "2. On GitHub's latest release, expand Assets and download ApplicantScoutCompanionSetup-*.exe. This is the Windows installer, not an Excel file. Do not choose Source code or the .sha256 checksum.\n\n"
-                    .. "3. Run the installer, then open ApplicantScout Companion from the Windows Start menu. The app opens its first-run settings.\n\n"
-                    .. "The portable ZIP is an alternative if you prefer to unpack and run the app yourself.\n\n"
-                    .. "Current Windows releases are unsigned, so Windows SmartScreen may show an unknown publisher. Use the official GitHub release linked here and decide whether you trust the source. Open source and checksums do not guarantee publisher identity.",
-                link = downloadURL,
-                hint = "Windows is required. Use Illustrated guide for setup screenshots in your browser.",
-            },
-            {
-                title = "Connect your free Warcraft Logs account",
-                body = "1. Create a free Warcraft Logs account or sign in, then open API Clients using the link below.\n\n"
-                    .. "2. Choose Create Client and name it ApplicantScout.\n\n"
-                    .. "3. Set Redirect URL to exactly http://localhost. Leave Public Client UNCHECKED, then create the client.\n\n"
-                    .. "4. Copy the generated Client ID and Client Secret into the matching fields in Companion Settings. Use Test WCL to check the connection.\n\n"
-                    .. "These are API credentials for reading public Warcraft Logs data, not your WoW login. Keep the Client Secret private and enter it only in Companion, never in WoW chat or a support screenshot.\n\n"
-                    .. "The Illustrated guide includes the Create Client form. Companion also has a WCL setup example in Settings.",
-                link = "https://www.warcraftlogs.com/api/clients/",
-                hint = "If Test WCL fails, check both copied fields before continuing.",
-            },
-            {
-                title = "Choose folders and startup options",
-                body = "1. In Companion Settings, select the Screenshots folder inside the WoW client you actually play: _retail_\\Screenshots (or _ptr_ / _xptr_ for PTR). If it does not exist, take a normal screenshot in WoW first.\n\n"
-                    .. "2. Leave Mythic+ and the raid difficulties you want checked. Optional RaiderIO addon data adds dungeon and raid context.\n\n"
-                    .. "3. Keep Start and stop with WoW checked if you want Companion to open with the game. A hidden Windows sign-in watcher waits for WoW. If Windows blocks it, use Enable watcher or Repair watcher in Settings. You can also launch Companion manually.\n\n"
-                    .. "4. Share usage statistics is optional and starts off. Choose whether to enable it; scouting works without it.\n\n"
-                    .. "5. Click Start companion to save the first setup. Keep the app running alongside WoW.",
-                link = guideURL,
-                hint = "Select the client-specific Screenshots folder, not Interface or AddOns.",
-            },
-            {
-                title = "Check your first applicant or party results",
-                body = "1. Keep Companion running, return to WoW and use /apscout on. Test out of combat and before starting a Mythic+ key.\n\n"
-                    .. "2. Open your Group Finder listing with applicants, or join a group and select Party in Companion.\n\n"
-                    .. "3. If only the small Companion launcher is visible, click it to open the full overlay. If it is missing, use Show overlay from the Windows tray menu.\n\n"
-                    .. "4. The addon briefly shows a QR code and takes a screenshot automatically. Check that the overlay shows the same player names, then Warcraft Logs results where public logs exist.\n\n"
-                    .. "No names? Check the Screenshots folder and try /apscout shotnow. Names but no WCL? Use Test WCL; some players have no public logs. Updates pause in combat, active Mythic+ runs and raid boss encounters.\n\n"
-                    .. "Finish guide stops its automatic first-login reminder. It does not verify your installation: the addon cannot detect Companion. Reopen any step with /apscout setup.",
-                link = guideURL,
-                hint = "Keep this addon updated through CurseForge:\nhttps://www.curseforge.com/wow/addons/applicantscout-lfg-overlay",
-            },
-        }
+        local locales = _addonNS.CompanionSetupLocales
+        local languageOrder = {"enUS", "deDE", "esES", "esMX", "frFR", "itIT", "ptBR", "ruRU", "koKR", "zhCN", "zhTW"}
+        local links = {"https://github.com/Antrakt92/ApplicantScout-Companion", downloadURL,
+            "https://www.warcraftlogs.com/api/clients/", guideURL, guideURL}
+        local function localeCode()
+            local saved = ApplicantScoutDB.setupLocale
+            if type(saved) == "string" and locales[saved] then return saved end
+            local ok, code = false, nil
+            if type(_G.GetLocale) == "function" then ok, code = pcall(_G.GetLocale) end
+            if ok and code == "enGB" then code = "enUS" end
+            return ok and type(code) == "string" and locales[code] and code or "enUS"
+        end
         local panel, urlBox, heading, body, hint, progress, back, nextButton, scroll, content
+        local title, copyHint, languageButton, languageMenu, downloadButton, guideButton, laterButton, doneButton
+        local languageItems = {}
         local requested, ready, queued, postponed = false, false, false, false
         local page, selectedURL = 1, downloadURL
 
         local function hide()
             if panel then
                 urlBox:ClearFocus()
+                languageMenu:Hide()
                 panel:Hide()
             end
         end
@@ -10206,6 +10168,8 @@ do
         end
 
         local function refresh()
+            local language = locales[localeCode()]
+            local pages, ui = language.pages, language.ui
             local step = pages[page]
             heading:SetText(step.title)
             body:SetText(step.body)
@@ -10213,13 +10177,24 @@ do
             content:SetHeight(type(textHeight) == "number" and math.max(290, textHeight + 12) or 600)
             scroll:SetVerticalScroll(0)
             hint:SetText(step.hint)
-            progress:SetText("Step " .. page .. " of " .. #pages)
-            selectedURL = step.link
+            title:SetText(ui.title)
+            progress:SetText(string.format(ui.step, page, #pages))
+            languageButton:SetText(ui.language .. ": " .. language.name
+                .. (localeCode() == "enUS" and "" or " / Language"))
+            copyHint:SetText(ui.copy)
+            downloadButton:SetText(ui.download)
+            guideButton:SetText(ui.guide)
+            laterButton:SetText(ui.later)
+            doneButton:SetText(ui.done)
+            back:SetText(ui.back)
+            languageItems.auto:SetText(ui.automatic)
+            languageMenu:Hide()
+            selectedURL = links[page]
             urlBox:ClearFocus()
             urlBox:SetText(selectedURL)
             urlBox:SetCursorPosition(0)
             back:SetEnabled(page > 1)
-            nextButton:SetText(page == #pages and "Finish guide" or "Next")
+            nextButton:SetText(page == #pages and ui.finish or ui.next)
         end
 
         local function createPanel()
@@ -10250,7 +10225,7 @@ do
                 line:SetJustifyV("TOP")
                 return line
             end
-            label(-22, "GameFontNormalLarge", 26):SetText("ApplicantScout: first-time setup")
+            title = label(-22, "GameFontNormalLarge", 26)
             progress = label(-54, "GameFontHighlightSmall", 20)
             heading = label(-82, "GameFontNormalLarge", 30)
             scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
@@ -10281,7 +10256,7 @@ do
                     self:HighlightText()
                 end
             end)
-            label(-496, "GameFontHighlightSmall", 20):SetText("Select a link, then press Ctrl+C. Paste it into your browser outside WoW.")
+            copyHint = label(-496, "GameFontHighlightSmall", 20)
             local function button(text, x, y, width, action)
                 local widget = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
                 widget:SetSize(width, 26)
@@ -10290,15 +10265,50 @@ do
                 widget:SetScript("OnClick", action)
                 return widget
             end
-            button("Select download link", 24, 74, 178, function() selectLink(downloadURL) end)
-            button("Illustrated guide", 210, 74, 150, function() selectLink(guideURL) end)
-            button("Later", 24, 22, 90, later)
-            button("Already set up", 122, 22, 138, dismiss)
+            downloadButton = button("Select download link", 24, 74, 178, function() selectLink(downloadURL) end)
+            guideButton = button("Illustrated guide", 210, 74, 150, function() selectLink(guideURL) end)
+            laterButton = button("Later", 24, 22, 90, later)
+            doneButton = button("Already set up", 122, 22, 138, dismiss)
             back = button("Back", 446, 22, 90, function()
                 if page > 1 then page = page - 1; refresh() end
             end)
             nextButton = button("Next", 544, 22, 112, function()
-                if page == #pages then dismiss() else page = page + 1; refresh() end
+                if page == #links then dismiss() else page = page + 1; refresh() end
+            end)
+            languageButton = CreateFrame("Button", "ApplicantScoutSetupLanguageButton", panel, "UIPanelButtonTemplate")
+            languageButton:SetSize(300, 26)
+            languageButton:SetPoint("TOPRIGHT", -24, -48)
+            languageButton:SetNormalFontObject("GameFontHighlightSmall")
+            languageMenu = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+            languageMenu:SetSize(530, 156)
+            languageMenu:SetPoint("TOPRIGHT", languageButton, "BOTTOMRIGHT", 0, -4)
+            languageMenu:SetFrameLevel(panel:GetFrameLevel() + 10)
+            languageMenu:EnableMouse(true)
+            languageMenu:SetBackdrop({
+                bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+                edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                tile = true, tileSize = 16, edgeSize = 16,
+                insets = {left = 4, right = 4, top = 4, bottom = 4},
+            })
+            languageMenu:SetBackdropColor(0.06, 0.07, 0.09, 1)
+            local function languageItem(code, index, text)
+                local item = CreateFrame("Button", "ApplicantScoutSetupLanguage_" .. code, languageMenu, "UIPanelButtonTemplate")
+                item:SetSize(166, 28)
+                item:SetPoint("TOPLEFT", 12 + ((index - 1) % 3) * 172, -12 - math.floor((index - 1) / 3) * 34)
+                item:SetNormalFontObject("GameFontHighlightSmall")
+                item:SetText(text)
+                item:SetScript("OnClick", function()
+                    ApplicantScoutDB.setupLocale = code ~= "auto" and code or nil
+                    refresh()
+                end)
+                languageItems[code] = item
+            end
+            languageItem("auto", 1, "Auto (WoW)")
+            for index, code in ipairs(languageOrder) do
+                languageItem(code, index + 1, locales[code].name)
+            end
+            languageButton:SetScript("OnClick", function()
+                if languageMenu:IsShown() then languageMenu:Hide() else languageMenu:Show() end
             end)
             local cross = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
             cross:SetPoint("TOPRIGHT", -2, -2)
@@ -10338,7 +10348,7 @@ do
             if panel then refresh() end
             queue()
             if not canShow() then
-                APSPrint("Setup will open when loading, combat or the current encounter/key ends.")
+                APSPrint(locales[localeCode()].ui.deferred)
             end
         end
 

@@ -7,6 +7,9 @@
 ---@type table
 Enum = {}
 
+---@type fun(): string
+GetLocale = nil
+
 ---@type any
 C_PlayerInteractionManager = nil
 

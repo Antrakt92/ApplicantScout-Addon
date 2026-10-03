@@ -16,6 +16,7 @@ if (-not $OutputDir) {
 $RequiredFiles = @(
     "ApplicantScout.toc",
     "ApplicantScout.lua",
+    "SetupLocales.lua",
     "LICENSE",
     "THIRD-PARTY-NOTICES.md",
     "CHANGELOG.md",

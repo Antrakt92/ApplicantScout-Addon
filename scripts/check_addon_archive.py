@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path, PurePosixPath
 import zipfile
-
+from pathlib import Path, PurePosixPath
 
 ADDON_NAME = "ApplicantScout"
 REQUIRED_ENTRIES = frozenset(
     {
         PurePosixPath(f"{ADDON_NAME}/ApplicantScout.toc"),
         PurePosixPath(f"{ADDON_NAME}/ApplicantScout.lua"),
+        PurePosixPath(f"{ADDON_NAME}/SetupLocales.lua"),
         PurePosixPath(f"{ADDON_NAME}/LICENSE"),
         PurePosixPath(f"{ADDON_NAME}/CHANGELOG.md"),
         PurePosixPath(f"{ADDON_NAME}/THIRD-PARTY-NOTICES.md"),

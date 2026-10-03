@@ -56,6 +56,15 @@ companion is installed, so finishing the guide does not verify the connection.
 The guide's links are selectable for **Ctrl+C**; WoW does not open your browser
 for you. **Illustrated guide** selects the browser guide with setup screenshots.
 
+The guide follows your WoW client language automatically. Its language selector
+is available on every step and remembers an explicit choice across characters
+and reloads. Choose **Auto (WoW)** to return to the client language. Supported
+locales are English, German, Spanish (Spain and Latin America), French, Italian,
+Brazilian Portuguese, Russian, Korean, Simplified Chinese and Traditional Chinese.
+An unknown client locale uses English. Companion's own interface and the linked
+illustrated guide remain in English; translated steps keep its exact field names
+such as **Test WCL** so you can find them.
+
 1. Install the addon through [CurseForge](https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay)
    or [Wago](https://addons.wago.io/addons/ANzke264),
    or download the packaged ZIP from the

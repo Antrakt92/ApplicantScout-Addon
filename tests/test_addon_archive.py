@@ -125,3 +125,10 @@ def test_manual_package_preserves_full_changelog_bytes(tmp_path: Path):
             root / "CHANGELOG.md"
         ).read_bytes()
     validate_marketplace_archive(archive_path)
+
+
+def test_marketplace_archive_rejects_missing_setup_translations(tmp_path: Path):
+    archive_path = tmp_path / "ApplicantScout-0.5.3.zip"
+    _write_archive(archive_path, omit="ApplicantScout/SetupLocales.lua")
+    with pytest.raises(ArchiveContractError, match="SetupLocales.lua"):
+        validate_marketplace_archive(archive_path)

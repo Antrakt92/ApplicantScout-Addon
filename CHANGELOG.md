@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Read the setup guide in every supported WoW client language, or pick a language
+  on any step. Your choice is remembered across characters and reloads.
 - Walk through Companion installation, Warcraft Logs credentials, startup options
   and first results in a five-step in-game guide with selectable links.
 - Postpone first-run setup with Later, or stop its reminder after finishing the guide.

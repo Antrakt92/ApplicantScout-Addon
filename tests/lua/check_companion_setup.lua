@@ -1,4 +1,8 @@
 local scenario = assert(arg[1], "scenario required")
+local clientLocale = arg[2] or "enUS"
+GetLocale = function() return clientLocale end
+if scenario == "locale-api-error" then GetLocale = function() error("unavailable") end end
+if scenario == "locale-api-missing" then GetLocale = nil end
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 local frames, pending = {}, {}
 local fontstrings = {}
@@ -33,6 +37,7 @@ local function widget()
         SetScrollChild = function(self, child) self.child = child end,
         SetVerticalScroll = function(self, offset) self.offset = offset end,
         GetEffectiveScale = function() return 1 end,
+        GetFrameLevel = function() return 1 end,
         SetText = function(self, text) self.text = text end,
         GetText = function(self) return self.text end,
         SetFocus = function(self) self.focused = true end,
@@ -48,9 +53,9 @@ local function widget()
     setmetatable(frame, { __index = function(_, key) return methods[key] or noop end })
     return frame
 end
-CreateFrame = function(kind, _, parent, template)
+CreateFrame = function(kind, name, parent, template)
     local frame = widget()
-    frame.kind, frame.parent, frame.template = kind, parent, template
+    frame.kind, frame.name, frame.parent, frame.template = kind, name, parent, template
     frames[#frames + 1] = frame
     return frame
 end
@@ -60,6 +65,9 @@ ApplicantScoutDB = scenario == "disabled" and {enabled = false, autoHiMessage = 
     or scenario == "dismissed" and {setupDismissed = true}
     or scenario == "corrupt" and {setupDismissed = {}}
     or {}
+if scenario == "language-saved" then ApplicantScoutDB.setupLocale = "ruRU" end
+if scenario == "language-invalid" then ApplicantScoutDB.setupLocale = {} end
+if scenario == "language-invalid-string" then ApplicantScoutDB.setupLocale = "xxXX" end
 local harness = env.load_addon({})
 local watcher = frames[#frames]
 assert(watcher.events.PLAYER_LOGIN, "setup lifecycle watcher missing")
@@ -109,6 +117,49 @@ local function login()
 end
 if scenario == "combat" then combat = true end
 login()
+if scenario:find("language", 1, true) or scenario:find("locale-api", 1, true) then
+    local namespace = {}
+    assert(loadfile("SetupLocales.lua"))("ApplicantScout", namespace)
+    local locales = namespace.CompanionSetupLocales
+    local automatic = clientLocale == "enGB" and "enUS" or clientLocale
+    if not locales[automatic] or scenario:find("locale-api", 1, true) then automatic = "enUS" end
+    local code = scenario == "language-saved" and "ruRU" or automatic
+    local function named(name)
+        for _, f in ipairs(frames) do if f.name == name then return f end end
+        error("missing named control " .. name)
+    end
+    local function hasText(text)
+        for _, f in ipairs(fontstrings) do if f.text == text then return true end end
+        return false
+    end
+    assert(shown() and hasText(locales[code].pages[1].title), "client or saved language was not selected")
+    local initialPanel = panel()
+    button(locales[code].ui.next).scripts.OnClick()
+    local picker = named("ApplicantScoutSetupLanguageButton")
+    picker.scripts.OnClick()
+    local target = code == "ruRU" and "deDE" or "ruRU"
+    local choice = named("ApplicantScoutSetupLanguage_" .. target)
+    assert(choice.parent.shown, "language menu did not open")
+    choice.scripts.OnClick()
+    assert(not choice.parent.shown and ApplicantScoutDB.setupLocale == target, "language choice was not saved or menu stayed open")
+    assert(hasText(locales[target].pages[2].title), "language switch reset or failed to translate the current step")
+    assert(panel() == initialPanel, "language switch allocated another panel")
+    for step = 2, 5 do
+        assert(hasText(locales[target].pages[step].body), "step body did not switch language")
+        if step < 5 then button(locales[target].ui.next).scripts.OnClick() end
+    end
+    -- Reload must keep the explicit language even when the client differs.
+    frames, pending, fontstrings = {}, {}, {}
+    harness = env.load_addon({})
+    watcher = frames[#frames]
+    login()
+    assert(hasText(locales[target].pages[1].title), "reload lost the selected language")
+    named("ApplicantScoutSetupLanguage_auto").scripts.OnClick()
+    assert(ApplicantScoutDB.setupLocale == nil, "automatic language preference was not restored")
+    assert(hasText(locales[automatic].pages[1].title), "automatic language did not follow the client or fallback")
+    print("ok " .. scenario .. " " .. clientLocale)
+    return
+end
 if scenario == "postponed" then
     button("Later").scripts.OnClick()
     assert(not ApplicantScoutDB.setupDismissed and not shown(), "Later persisted dismissal")
@@ -202,11 +253,19 @@ button("Next").scripts.OnClick()
 button("Next").scripts.OnClick()
 assert(url.text == "https://www.warcraftlogs.com/api/clients/", "WCL step did not expose API Clients link")
 local resumedURL = url.text
+local languageButton, languageMenu
+for _, f in ipairs(frames) do
+    if f.name == "ApplicantScoutSetupLanguageButton" then languageButton = f end
+    if f.name == "ApplicantScoutSetupLanguage_auto" then languageMenu = f.parent end
+end
 for _, pair in ipairs({ {"PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED"},
     {"ENCOUNTER_START", "ENCOUNTER_END"}, {"CHALLENGE_MODE_START", "CHALLENGE_MODE_COMPLETED"},
     {"LOADING_SCREEN_ENABLED", "LOADING_SCREEN_DISABLED"} }) do
+    languageButton.scripts.OnClick()
+    assert(languageMenu.shown, "language menu cannot open on a later step")
     event(pair[1])
     assert(not shown() and not url.focused, "gameplay/loading left setup visible or focused")
+    assert(not languageMenu.shown, "gameplay left the language menu visible")
     drain()
     assert(not shown(), "queued work reopened setup during gameplay/loading")
     event(pair[2])
