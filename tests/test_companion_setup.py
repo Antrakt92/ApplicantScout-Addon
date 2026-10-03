@@ -10,7 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize(
-    "scenario", ["first-run", "watcher-first", "dismissed", "disabled", "corrupt", "combat"]
+    "scenario",
+    [
+        "first-run", "watcher-first", "dismissed", "disabled", "corrupt", "combat",
+        "postponed", "small-display",
+    ],
 )
 def test_companion_setup_lifecycle(pytestconfig, scenario):
     lua = pytestconfig.getoption("--lua51") or shutil.which("lua5.1")

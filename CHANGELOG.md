@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Walk through Companion installation, Warcraft Logs credentials, startup options
+  and first results in a five-step in-game guide with selectable links.
+- Postpone first-run setup with Later, or stop its reminder after finishing the guide.
+
 ## 0.13.5 - 02-Oct-2026 — Companion sorting and reliability
 
 Paired release with ApplicantScout Companion `0.22.2`.

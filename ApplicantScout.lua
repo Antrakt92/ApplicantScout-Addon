@@ -10117,144 +10117,237 @@ end
 -- Setup is account-wide and independent of transport: QR has no return channel
 -- that could establish whether the Windows app is installed or running.
 do
-    local downloadURL = "https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest"
-    local panel, urlBox
-    local requested, ready, queued = false, false, false
+    -- Isolate wizard locals from the main chunk's Lua 5.1 local-variable limit.
+    (function()
+        local downloadURL = "https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest"
+        local guideURL = "https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/GETTING_STARTED.md"
+        local pages = {
+            {
+                title = "Why you need the Windows companion",
+                body = "ApplicantScout has two parts. This WoW addon collects your Group Finder applicants and party/raid roster. The free Windows companion fetches Warcraft Logs results and shows the applicant table beside WoW. The addon alone cannot show that table.\n\n"
+                    .. "How data travels:\nAddon -> QR code -> normal WoW screenshot -> Companion -> Warcraft Logs -> overlay.\n\n"
+                    .. "WoW addons cannot make these web requests directly. The addon briefly displays a QR image and uses WoW's screenshot function. Companion reads it from your Screenshots folder locally; the screenshot itself is not uploaded to Warcraft Logs.\n\n"
+                    .. "Both parts are open source. You can inspect the code on GitHub. No WoW memory reading, code injection or automatic invitations; you choose whom to invite. No Blizzard password is needed.",
+                link = "https://github.com/Antrakt92/ApplicantScout-Companion",
+                hint = "Source code is public. This is an independent project, not an official Blizzard app.",
+            },
+            {
+                title = "Install ApplicantScout Companion",
+                body = "1. Select the download link below, press Ctrl+C, then paste it into your browser.\n\n"
+                    .. "2. On GitHub's latest release, expand Assets and download ApplicantScoutCompanionSetup-*.exe. This is the Windows installer, not an Excel file. Do not choose Source code or the .sha256 checksum.\n\n"
+                    .. "3. Run the installer, then open ApplicantScout Companion from the Windows Start menu. The app opens its first-run settings.\n\n"
+                    .. "The portable ZIP is an alternative if you prefer to unpack and run the app yourself.\n\n"
+                    .. "Current Windows releases are unsigned, so Windows SmartScreen may show an unknown publisher. Use the official GitHub release linked here and decide whether you trust the source. Open source and checksums do not guarantee publisher identity.",
+                link = downloadURL,
+                hint = "Windows is required. Use Illustrated guide for setup screenshots in your browser.",
+            },
+            {
+                title = "Connect your free Warcraft Logs account",
+                body = "1. Create a free Warcraft Logs account or sign in, then open API Clients using the link below.\n\n"
+                    .. "2. Choose Create Client and name it ApplicantScout.\n\n"
+                    .. "3. Set Redirect URL to exactly http://localhost. Leave Public Client UNCHECKED, then create the client.\n\n"
+                    .. "4. Copy the generated Client ID and Client Secret into the matching fields in Companion Settings. Use Test WCL to check the connection.\n\n"
+                    .. "These are API credentials for reading public Warcraft Logs data, not your WoW login. Keep the Client Secret private and enter it only in Companion, never in WoW chat or a support screenshot.\n\n"
+                    .. "The Illustrated guide includes the Create Client form. Companion also has a WCL setup example in Settings.",
+                link = "https://www.warcraftlogs.com/api/clients/",
+                hint = "If Test WCL fails, check both copied fields before continuing.",
+            },
+            {
+                title = "Choose folders and startup options",
+                body = "1. In Companion Settings, select the Screenshots folder inside the WoW client you actually play: _retail_\\Screenshots (or _ptr_ / _xptr_ for PTR). If it does not exist, take a normal screenshot in WoW first.\n\n"
+                    .. "2. Leave Mythic+ and the raid difficulties you want checked. Optional RaiderIO addon data adds dungeon and raid context.\n\n"
+                    .. "3. Keep Start and stop with WoW checked if you want Companion to open with the game. A hidden Windows sign-in watcher waits for WoW. If Windows blocks it, use Enable watcher or Repair watcher in Settings. You can also launch Companion manually.\n\n"
+                    .. "4. Share usage statistics is optional and starts off. Choose whether to enable it; scouting works without it.\n\n"
+                    .. "5. Click Start companion to save the first setup. Keep the app running alongside WoW.",
+                link = guideURL,
+                hint = "Select the client-specific Screenshots folder, not Interface or AddOns.",
+            },
+            {
+                title = "Check your first applicant or party results",
+                body = "1. Keep Companion running, return to WoW and use /apscout on. Test out of combat and before starting a Mythic+ key.\n\n"
+                    .. "2. Open your Group Finder listing with applicants, or join a group and select Party in Companion.\n\n"
+                    .. "3. If only the small Companion launcher is visible, click it to open the full overlay. If it is missing, use Show overlay from the Windows tray menu.\n\n"
+                    .. "4. The addon briefly shows a QR code and takes a screenshot automatically. Check that the overlay shows the same player names, then Warcraft Logs results where public logs exist.\n\n"
+                    .. "No names? Check the Screenshots folder and try /apscout shotnow. Names but no WCL? Use Test WCL; some players have no public logs. Updates pause in combat, active Mythic+ runs and raid boss encounters.\n\n"
+                    .. "Finish guide stops its automatic first-login reminder. It does not verify your installation: the addon cannot detect Companion. Reopen any step with /apscout setup.",
+                link = guideURL,
+                hint = "Keep this addon updated through CurseForge:\nhttps://www.curseforge.com/wow/addons/applicantscout-lfg-overlay",
+            },
+        }
+        local panel, urlBox, heading, body, hint, progress, back, nextButton, scroll, content
+        local requested, ready, queued, postponed = false, false, false, false
+        local page, selectedURL = 1, downloadURL
 
-    local function hide()
-        if panel then
-            urlBox:ClearFocus()
-            panel:Hide()
-        end
-    end
-
-    local function dismiss()
-        ApplicantScoutDB.setupDismissed = true
-        requested = false
-        hide()
-    end
-
-    local function createPanel()
-        panel = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-        panel:SetSize(620, 408)
-        panel:SetPoint("CENTER")
-        panel:SetFrameStrata("DIALOG")
-        panel:SetClampedToScreen(true)
-        panel:EnableMouse(true)
-        panel:SetBackdrop({
-            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-            tile = true, tileSize = 16, edgeSize = 16,
-            insets = { left = 4, right = 4, top = 4, bottom = 4 },
-        })
-        panel:SetBackdropColor(0.06, 0.07, 0.09, 0.98)
-        panel:SetBackdropBorderColor(0.35, 0.45, 0.5, 1)
-        local function label(text, y, template, height)
-            local line = panel:CreateFontString(nil, "OVERLAY", template)
-            line:SetPoint("TOPLEFT", 24, y)
-            line:SetSize(572, height)
-            line:SetJustifyH("LEFT")
-            line:SetJustifyV("TOP")
-            line:SetText(text)
-            return line
-        end
-        label("ApplicantScout: set up the companion", -24, "GameFontNormalLarge", 26)
-        label("This addon needs the free ApplicantScout Companion for Windows. "
-            .. "The Windows app shows Warcraft Logs and RaiderIO beside Group Finder.",
-            -64, "GameFontHighlight", 48)
-        label("1. Copy the link below into your browser and download the Windows installer.\n"
-            .. "2. Open the app. Follow its setup guide for Warcraft Logs and your WoW Screenshots folder.\n"
-            .. "3. Keep the app running, then open a listing or join a group in WoW.",
-            -118, "GameFontHighlight", 92)
-        urlBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
-        urlBox:SetSize(560, 28)
-        urlBox:SetPoint("TOPLEFT", 30, -222)
-        urlBox:SetFontObject("GameFontHighlightSmall")
-        urlBox:SetAutoFocus(false)
-        urlBox:SetMaxLetters(256)
-        urlBox:SetText(downloadURL)
-        urlBox:SetCursorPosition(0)
-        urlBox:SetScript("OnEscapePressed", dismiss)
-        urlBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
-        urlBox:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
-        -- Keep the copied address trustworthy after an accidental keypress/paste.
-        urlBox:SetScript("OnTextChanged", function(self, userInput)
-            if userInput then
-                self:SetText(downloadURL)
-                self:HighlightText()
+        local function hide()
+            if panel then
+                urlBox:ClearFocus()
+                panel:Hide()
             end
-        end)
-        label("Select the link, then press Ctrl+C. Open this guide again with /apscout setup.",
-            -260, "GameFontHighlightSmall", 32)
-        label("Keep this addon updated through CurseForge:\n"
-            .. "https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay",
-            -292, "GameFontHighlightSmall", 44)
-        local select = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-        select:SetSize(140, 28)
-        select:SetPoint("BOTTOMLEFT", 24, 24)
-        select:SetText("Select download link")
-        select:SetScript("OnClick", function()
+        end
+
+        local function dismiss()
+            ApplicantScoutDB.setupDismissed = true
+            requested = false
+            hide()
+        end
+
+        local function later()
+            postponed = true
+            requested = false
+            hide()
+        end
+
+        local function selectLink(url)
+            selectedURL = url
+            urlBox:SetText(url)
+            urlBox:SetCursorPosition(0)
             urlBox:SetFocus()
             urlBox:HighlightText()
+        end
+
+        local function refresh()
+            local step = pages[page]
+            heading:SetText(step.title)
+            body:SetText(step.body)
+            local textHeight = body:GetStringHeight()
+            content:SetHeight(type(textHeight) == "number" and math.max(290, textHeight + 12) or 600)
+            scroll:SetVerticalScroll(0)
+            hint:SetText(step.hint)
+            progress:SetText("Step " .. page .. " of " .. #pages)
+            selectedURL = step.link
+            urlBox:ClearFocus()
+            urlBox:SetText(selectedURL)
+            urlBox:SetCursorPosition(0)
+            back:SetEnabled(page > 1)
+            nextButton:SetText(page == #pages and "Finish guide" or "Next")
+        end
+
+        local function createPanel()
+            panel = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+            panel:SetSize(680, 620)
+            panel:SetPoint("CENTER")
+            panel:SetFrameStrata("DIALOG")
+            panel:SetClampedToScreen(true)
+            panel:EnableMouse(true)
+            -- Keep the guide usable on smaller displays without changing UI scale.
+            local height, width = UIParent:GetHeight(), UIParent:GetWidth()
+            if type(height) == "number" and height > 0 and type(width) == "number" and width > 0 then
+                panel:SetScale(math.min(1, height / 660, width / 720))
+            end
+            panel:SetBackdrop({
+                bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+                edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                tile = true, tileSize = 16, edgeSize = 16,
+                insets = { left = 4, right = 4, top = 4, bottom = 4 },
+            })
+            panel:SetBackdropColor(0.06, 0.07, 0.09, 0.98)
+            panel:SetBackdropBorderColor(0.35, 0.45, 0.5, 1)
+            local function label(y, template, height)
+                local line = panel:CreateFontString(nil, "OVERLAY", template)
+                line:SetPoint("TOPLEFT", 24, y)
+                line:SetSize(632, height)
+                line:SetJustifyH("LEFT")
+                line:SetJustifyV("TOP")
+                return line
+            end
+            label(-22, "GameFontNormalLarge", 26):SetText("ApplicantScout: first-time setup")
+            progress = label(-54, "GameFontHighlightSmall", 20)
+            heading = label(-82, "GameFontNormalLarge", 30)
+            scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
+            scroll:SetPoint("TOPLEFT", 24, -122)
+            scroll:SetSize(608, 290)
+            content = CreateFrame("Frame", nil, scroll)
+            content:SetSize(608, 600)
+            scroll:SetScrollChild(content)
+            body = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            body:SetPoint("TOPLEFT")
+            body:SetWidth(608)
+            body:SetJustifyH("LEFT")
+            body:SetJustifyV("TOP")
+            hint = label(-418, "GameFontHighlightSmall", 40)
+            urlBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+            urlBox:SetSize(620, 28)
+            urlBox:SetPoint("TOPLEFT", 30, -462)
+            urlBox:SetFontObject("GameFontHighlightSmall")
+            urlBox:SetAutoFocus(false)
+            urlBox:SetMaxLetters(256)
+            urlBox:SetScript("OnEscapePressed", later)
+            urlBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+            urlBox:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+            -- Keep each selected official address intact after accidental typing/paste.
+            urlBox:SetScript("OnTextChanged", function(self, userInput)
+                if userInput then
+                    self:SetText(selectedURL)
+                    self:HighlightText()
+                end
+            end)
+            label(-496, "GameFontHighlightSmall", 20):SetText("Select a link, then press Ctrl+C. Paste it into your browser outside WoW.")
+            local function button(text, x, y, width, action)
+                local widget = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+                widget:SetSize(width, 26)
+                widget:SetPoint("BOTTOMLEFT", x, y)
+                widget:SetText(text)
+                widget:SetScript("OnClick", action)
+                return widget
+            end
+            button("Select download link", 24, 74, 178, function() selectLink(downloadURL) end)
+            button("Illustrated guide", 210, 74, 150, function() selectLink(guideURL) end)
+            button("Later", 24, 22, 90, later)
+            button("Already set up", 122, 22, 138, dismiss)
+            back = button("Back", 446, 22, 90, function()
+                if page > 1 then page = page - 1; refresh() end
+            end)
+            nextButton = button("Next", 544, 22, 112, function()
+                if page == #pages then dismiss() else page = page + 1; refresh() end
+            end)
+            local cross = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
+            cross:SetPoint("TOPRIGHT", -2, -2)
+            cross:SetScript("OnClick", later)
+            refresh()
+            panel:Hide()
+        end
+
+        local function canShow()
+            return ready and not entryCreationKeyState.qrGameplayLoadingActive
+                and not entryCreationKeyState.qrGameplaySuppressed
+                and entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) == false
+                and (requested or (not postponed and not ApplicantScoutDB.setupDismissed and ApplicantScoutDB.enabled))
+        end
+
+        local function tryShow()
+            queued = false
+            if not canShow() then hide(); return end
+            if not panel then createPanel() end
+            panel:Show()
+        end
+
+        local function queue()
+            if queued then return end
+            queued = true
+            C_Timer.After(0.2, tryShow)
+        end
+
+        -- Reuse transport gameplay/loading recovery so both surfaces resume together.
+        entryCreationKeyState.RefreshCompanionSetupForGameplay = function()
+            if not canShow() then hide(); return end
+            if not panel or not panel:IsShown() then queue() end
+        end
+
+        entryCreationKeyState.ShowCompanionSetup = function()
+            requested, postponed, page = true, false, 1
+            if panel then refresh() end
+            queue()
+            if not canShow() then
+                APSPrint("Setup will open when loading, combat or the current encounter/key ends.")
+            end
+        end
+
+        local watcher = CreateFrame("Frame")
+        watcher:RegisterEvent("PLAYER_LOGIN")
+        watcher:SetScript("OnEvent", function()
+            InitDB()
+            ready = true
+            queue()
         end)
-        local close = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-        close:SetSize(110, 28)
-        close:SetPoint("BOTTOMRIGHT", -24, 24)
-        close:SetText("Close")
-        close:SetScript("OnClick", dismiss)
-        local cross = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
-        cross:SetPoint("TOPRIGHT", -2, -2)
-        cross:SetScript("OnClick", dismiss)
-        panel:Hide()
-    end
-
-    local function canShow()
-        return ready and not entryCreationKeyState.qrGameplayLoadingActive
-            and not entryCreationKeyState.qrGameplaySuppressed
-            and entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) == false
-            and (requested or (not ApplicantScoutDB.setupDismissed and ApplicantScoutDB.enabled))
-    end
-
-    local function tryShow()
-        queued = false
-        if not canShow() then
-            hide()
-            return
-        end
-        if not panel then createPanel() end
-        panel:Show()
-    end
-
-    local function queue()
-        if queued then return end
-        queued = true
-        -- Recheck current gameplay state after this short presentation delay.
-        C_Timer.After(0.2, tryShow)
-    end
-
-    -- Use the transport's reconciled state, including delayed loading recovery
-    -- and clean API evidence after missed end events; do not latch those twice.
-    entryCreationKeyState.RefreshCompanionSetupForGameplay = function()
-        if not canShow() then
-            hide()
-            return
-        end
-        if not panel or not panel:IsShown() then queue() end
-    end
-
-    entryCreationKeyState.ShowCompanionSetup = function()
-        requested = true
-        queue()
-        if not canShow() then
-            APSPrint("Setup will open when loading, combat or the current encounter/key ends.")
-        end
-    end
-
-    local watcher = CreateFrame("Frame")
-    watcher:RegisterEvent("PLAYER_LOGIN")
-    watcher:SetScript("OnEvent", function()
-        InitDB()
-        ready = true
-        queue()
-    end)
+    end)()
 end

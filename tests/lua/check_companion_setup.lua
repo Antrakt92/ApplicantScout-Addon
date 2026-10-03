@@ -24,8 +24,14 @@ local function widget()
         Show = function(self) self.shown = true end,
         Hide = function(self) self.shown = false end,
         IsShown = function(self) return self.shown end,
-        GetWidth = function() return 1920 end,
-        GetHeight = function() return 1080 end,
+        GetWidth = function(self) return self.width or 1920 end,
+        GetHeight = function(self) return self.height or 1080 end,
+        SetSize = function(self, width, height) self.width, self.height = width, height end,
+        SetHeight = function(self, height) self.height = height end,
+        SetScale = function(self, scale) self.scale = scale end,
+        GetStringHeight = function() return 450 end,
+        SetScrollChild = function(self, child) self.child = child end,
+        SetVerticalScroll = function(self, offset) self.offset = offset end,
         GetEffectiveScale = function() return 1 end,
         SetText = function(self, text) self.text = text end,
         GetText = function(self) return self.text end,
@@ -49,6 +55,7 @@ CreateFrame = function(kind, _, parent, template)
     return frame
 end
 UIParent = widget()
+if scenario == "small-display" then UIParent.width, UIParent.height = 500, 480 end
 ApplicantScoutDB = scenario == "disabled" and {enabled = false, autoHiMessage = "hello"}
     or scenario == "dismissed" and {setupDismissed = true}
     or scenario == "corrupt" and {setupDismissed = {}}
@@ -102,6 +109,15 @@ local function login()
 end
 if scenario == "combat" then combat = true end
 login()
+if scenario == "postponed" then
+    button("Later").scripts.OnClick()
+    assert(not ApplicantScoutDB.setupDismissed and not shown(), "Later persisted dismissal")
+    frames, pending = {}, {}
+    harness = env.load_addon({})
+    watcher = frames[#frames]
+    login()
+    assert(shown(), "postponed guide did not return after reload")
+end
 if scenario == "dismissed" or scenario == "disabled" then
     assert(not shown(), "dismissed or disabled install was nagged")
     SlashCmdList.APSCOUT("setup")
@@ -124,17 +140,28 @@ else
     assert(shown(), "first login did not show setup")
 end
 local initialPanel = panel()
+if scenario == "small-display" then
+    assert(initialPanel.width * initialPanel.scale < UIParent.width, "guide exceeds narrow screen")
+    assert(initialPanel.height * initialPanel.scale < UIParent.height, "guide exceeds short screen")
+end
+local scroll
+for _, f in ipairs(frames) do
+    if f.kind == "ScrollFrame" and f.parent == initialPanel then scroll = f end
+end
+assert(scroll and scroll.child.height > scroll.height, "long instructions cannot scroll")
+scroll:SetVerticalScroll(80)
 local url
 for _, f in ipairs(frames) do if f.kind == "EditBox" and f.parent == initialPanel then url = f end end
 assert(url and not url.focused, "automatic panel stole keyboard focus")
 local downloadURL = "https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest"
-assert(url.text == downloadURL, "download address is incorrect")
+assert(url.text == "https://github.com/Antrakt92/ApplicantScout-Companion", "source address is incorrect")
 button("Select download link").scripts.OnClick()
-assert(url.focused and url.selected, "copy action did not select the address")
+assert(url.text == downloadURL and url.focused and url.selected, "copy action did not select the address")
 url:SetText("bad pasted address")
 url.scripts.OnTextChanged(url, true)
 assert(url.text == downloadURL, "download address remained editable")
 local curseforgeURL = "https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay"
+for _ = 1, 4 do button("Next").scripts.OnClick() end
 local hasCurseForgeLabel = false
 for _, fontstring in ipairs(fontstrings) do
     if fontstring.text and fontstring.text:find(curseforgeURL, 1, true) then
@@ -143,6 +170,38 @@ for _, fontstring in ipairs(fontstrings) do
     end
 end
 assert(hasCurseForgeLabel, "setup panel is missing the CurseForge update label")
+for _ = 1, 4 do button("Back").scripts.OnClick() end
+-- Navigation keeps one panel and never silently completes account setup.
+local priorDismissal = ApplicantScoutDB.setupDismissed
+button("Next").scripts.OnClick()
+assert(scroll.offset == 0, "navigation retained previous page's scroll offset")
+assert(ApplicantScoutDB.setupDismissed == priorDismissal, "navigation changed setup dismissal")
+button("Illustrated guide").scripts.OnClick()
+local guideURL = "https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/GETTING_STARTED.md"
+assert(url.text == guideURL and url.focused and url.selected, "illustrated guide was not selectable")
+url:SetText("bad pasted guide")
+url.scripts.OnTextChanged(url, true)
+assert(url.text == guideURL, "guide address remained editable")
+button("Select download link").scripts.OnClick()
+assert(url.text == downloadURL and url.selected, "download action did not restore official address")
+button("Back").scripts.OnClick()
+button("Later").scripts.OnClick()
+assert(ApplicantScoutDB.setupDismissed == priorDismissal and not shown(), "Later changed persistent dismissal")
+event("PLAYER_REGEN_ENABLED")
+drain()
+assert(not shown(), "postponed setup nagged again in the same session")
+SlashCmdList.APSCOUT("setup")
+drain()
+assert(shown(), "postponed guide could not be reopened manually")
+for _ = 1, 4 do button("Next").scripts.OnClick() end
+button("Finish guide").scripts.OnClick()
+assert(ApplicantScoutDB.setupDismissed and not shown(), "Finish did not persist guide dismissal")
+SlashCmdList.APSCOUT("setup")
+drain()
+button("Next").scripts.OnClick()
+button("Next").scripts.OnClick()
+assert(url.text == "https://www.warcraftlogs.com/api/clients/", "WCL step did not expose API Clients link")
+local resumedURL = url.text
 for _, pair in ipairs({ {"PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED"},
     {"ENCOUNTER_START", "ENCOUNTER_END"}, {"CHALLENGE_MODE_START", "CHALLENGE_MODE_COMPLETED"},
     {"LOADING_SCREEN_ENABLED", "LOADING_SCREEN_DISABLED"} }) do
@@ -154,6 +213,7 @@ for _, pair in ipairs({ {"PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED"},
     drain()
     assert(shown(), "setup did not resume after gameplay/loading")
     assert(panel() == initialPanel, "setup allocated a duplicate panel")
+    assert(url.text == resumedURL, "gameplay resume lost the current guide step")
 end
 for _, activity in ipairs({ "challenge", "encounter" }) do
     if activity == "challenge" then challenge = true else encounter = true end
@@ -174,7 +234,7 @@ for _, activity in ipairs({ "challenge", "encounter" }) do
         "transport did not reconcile the missed activity end")
     assert(shown(), "setup retained a stale activity latch after transport recovery")
 end
-button("Close").scripts.OnClick()
+button("Already set up").scripts.OnClick()
 assert(ApplicantScoutDB.setupDismissed == true and not shown(), "explicit close did not persist")
 for _ = 1, 3 do
     event("PLAYER_ENTERING_WORLD")

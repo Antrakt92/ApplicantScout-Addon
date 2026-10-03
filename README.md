@@ -46,6 +46,16 @@ or turn it off in settings. Auto Hi greetings are optional.
 
 ## Quick Setup
 
+On your first login, the addon opens a five-step guide covering the companion,
+Windows installer, Warcraft Logs API client, Screenshots folder and first results.
+Use **Next** and **Back** to move through it. **Later** postpones the guide until
+your next login or reload; **Finish guide** or **Already set up** stops its automatic
+reminder. Reopen it with `/apscout setup`. The addon cannot detect whether the
+companion is installed, so finishing the guide does not verify the connection.
+
+The guide's links are selectable for **Ctrl+C**; WoW does not open your browser
+for you. **Illustrated guide** selects the browser guide with setup screenshots.
+
 1. Install the addon through [CurseForge](https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay)
    or [Wago](https://addons.wago.io/addons/ANzke264),
    or download the packaged ZIP from the
