@@ -40,6 +40,20 @@ local function widget()
         GetFrameLevel = function() return 1 end,
         SetText = function(self, text) self.text = text end,
         GetText = function(self) return self.text end,
+        SetFont = function(self, path, size, flags)
+            if scenario == "font-missing" and path:find("2002", 1, true) then return false end
+            if scenario == "font-error" and path:find("2002", 1, true) then error("missing font") end
+            self.font, self.fontSize, self.fontFlags = path, size, flags
+            return true
+        end,
+        SetFontObject = function(self, font) self.fontObject = font end,
+        SetNormalFontObject = function(self, font) self.normalFont = font end,
+        SetHighlightFontObject = function(self, font) self.highlightFont = font end,
+        SetDisabledFontObject = function(self, font) self.disabledFont = font end,
+        GetFontString = function(self)
+            if not rawget(self, "fontstring") then self.fontstring = widget() end
+            return self.fontstring
+        end,
         SetFocus = function(self) self.focused = true end,
         ClearFocus = function(self) self.focused = false end,
         HighlightText = function(self) self.selected = true end,
@@ -80,6 +94,7 @@ local function event(name)
         watcher.scripts.OnEvent(watcher, name)
     end
 end
+CreateFont = function() return widget() end
 local function drain(untilTime)
     local count = 0
     while #pending > 0 do
@@ -117,6 +132,52 @@ local function login()
 end
 if scenario == "combat" then combat = true end
 login()
+if scenario == "font-missing" or scenario == "font-error" or scenario == "font-switch" then
+    local function named(name)
+        for _, f in ipairs(frames) do if f.name == name then return f end end
+        error("missing control " .. name)
+    end
+    named("ApplicantScoutSetupLanguage_koKR").scripts.OnClick()
+    assert(ApplicantScoutDB.setupLocale == "koKR", "font handling lost language preference")
+    local found = false
+    for _, f in ipairs(fontstrings) do
+        if scenario == "font-switch" and f.text:find("Companion", 1, true) and rawget(f, "fontObject") then
+            assert(f.fontObject.font == "Fonts\\2002.TTF", "Korean text kept the client font")
+            found = true
+        elseif scenario ~= "font-switch" and f.text:find("could not load", 1, true) then
+            assert(f.fontObject.font == "Fonts\\ARIALN.TTF", "fallback text did not get a readable font")
+            found = true
+        end
+    end
+    assert(found, "selected font or readable fallback missing")
+    assert(named("ApplicantScoutSetupLanguage_koKR").text:find("Korean", 1, true), "picker has no readable alias")
+    if scenario == "font-switch" then
+        for code, path in pairs({zhCN = "Fonts\\ARKai_T.ttf", zhTW = "Fonts\\arheiuhk_bd.TTF"}) do
+            named("ApplicantScoutSetupLanguage_" .. code).scripts.OnClick()
+            for _, f in ipairs(fontstrings) do
+                if rawget(f, "fontObject") then
+                    assert(f.fontObject.font == path, "Chinese text kept the previous language's font")
+                end
+            end
+        end
+    end
+    named("ApplicantScoutSetupLanguage_ruRU").scripts.OnClick()
+    for _, f in ipairs(frames) do
+        if type(rawget(f, "normalFont")) == "table" and f.parent == panel() then
+            assert(f.normalFont == f.highlightFont and f.normalFont == f.disabledFont,
+                "button interaction states revert to the client font")
+            assert(f.normalFont.font == "Fonts\\ARIALN.TTF", "button did not switch font")
+        end
+    end
+    for _, f in ipairs(fontstrings) do
+        if rawget(f, "fontObject") then
+            assert(f.fontObject.font == "Fonts\\ARIALN.TTF", "switch did not refresh every text region")
+            assert(not f.text:find("could not load", 1, true), "font warning remained after recovery")
+        end
+    end
+    print("ok " .. scenario)
+    return
+end
 if scenario:find("language", 1, true) or scenario:find("locale-api", 1, true) then
     local namespace = {}
     assert(loadfile("SetupLocales.lua"))("ApplicantScout", namespace)

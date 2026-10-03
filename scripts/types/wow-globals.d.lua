@@ -94,3 +94,7 @@ securecallfunction = nil
 UNKNOWN = ""
 ---@type string
 UNKNOWNOBJECT = ""
+
+---@param name string
+---@return any
+function CreateFont(name) end

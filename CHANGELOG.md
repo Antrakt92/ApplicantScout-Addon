@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Switch setup fonts with the selected language and keep a readable English
+  fallback when the client cannot load its font.
 - Read the setup guide in every supported WoW client language, or pick a language
   on any step. Your choice is remembered across characters and reloads.
 - Walk through Companion installation, Warcraft Logs credentials, startup options

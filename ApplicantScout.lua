@@ -10123,6 +10123,40 @@ do
         local guideURL = "https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/GETTING_STARTED.md"
         local locales = _addonNS.CompanionSetupLocales
         local languageOrder = {"enUS", "deDE", "esES", "esMX", "frFR", "itIT", "ptBR", "ruRU", "koKR", "zhCN", "zhTW"}
+        local languageAliases = {ruRU = "Russian", koKR = "Korean", zhCN = "Simplified", zhTW = "Traditional"}
+        -- Output language can differ from the client install's available fonts.
+        -- Own these FontObjects so other windows and Blizzard templates stay intact.
+        local fontPaths = {ruRU = "Fonts\\ARIALN.TTF", koKR = "Fonts\\2002.TTF",
+            zhCN = "Fonts\\ARKai_T.ttf", zhTW = "Fonts\\arheiuhk_bd.TTF"}
+        local fonts, fontEntries = {}, {}
+        local function fontFor(code, size)
+            local key = code .. size
+            if fonts[key] then return fonts[key] end
+            local font = CreateFont("ApplicantScoutSetupFont_" .. key)
+            local ok, loaded = pcall(font.SetFont, font, fontPaths[code] or "Fonts\\ARIALN.TTF", size, "")
+            if ok and loaded then fonts[key] = font; return font end
+        end
+        local function registerFont(region, size, template, isButton)
+            fontEntries[#fontEntries + 1] = {region = region, size = size, template = template, isButton = isButton}
+        end
+        local function attachFont(entry, font)
+            if entry.isButton then
+                entry.region:SetNormalFontObject(font)
+                entry.region:SetHighlightFontObject(font)
+                entry.region:SetDisabledFontObject(font)
+            else
+                entry.region:SetFontObject(font)
+            end
+        end
+        local function applyFonts(code)
+            local resolved = {}
+            for index, entry in ipairs(fontEntries) do
+                resolved[index] = fontFor(code, entry.size)
+                if not resolved[index] then return false end
+            end
+            for index, entry in ipairs(fontEntries) do attachFont(entry, resolved[index]) end
+            return true
+        end
         local links = {"https://github.com/Antrakt92/ApplicantScout-Companion", downloadURL,
             "https://www.warcraftlogs.com/api/clients/", guideURL, guideURL}
         local function localeCode()
@@ -10168,11 +10202,19 @@ do
         end
 
         local function refresh()
-            local language = locales[localeCode()]
+            local code = localeCode()
+            local missingFont = not applyFonts(code)
+            if missingFont then
+                code = "enUS"
+                if not applyFonts(code) then
+                    for _, entry in ipairs(fontEntries) do attachFont(entry, entry.template) end
+                end
+            end
+            local language = locales[code]
             local pages, ui = language.pages, language.ui
             local step = pages[page]
             heading:SetText(step.title)
-            body:SetText(step.body)
+            body:SetText((missingFont and "This WoW installation could not load the selected language's font. Showing English; your language choice is saved.\n\n" or "") .. step.body)
             local textHeight = body:GetStringHeight()
             content:SetHeight(type(textHeight) == "number" and math.max(290, textHeight + 12) or 600)
             scroll:SetVerticalScroll(0)
@@ -10180,7 +10222,7 @@ do
             title:SetText(ui.title)
             progress:SetText(string.format(ui.step, page, #pages))
             languageButton:SetText(ui.language .. ": " .. language.name
-                .. (localeCode() == "enUS" and "" or " / Language"))
+                .. (code == "enUS" and "" or " / Language"))
             copyHint:SetText(ui.copy)
             downloadButton:SetText(ui.download)
             guideButton:SetText(ui.guide)
@@ -10223,6 +10265,7 @@ do
                 line:SetSize(632, height)
                 line:SetJustifyH("LEFT")
                 line:SetJustifyV("TOP")
+                registerFont(line, template == "GameFontNormalLarge" and 16 or 12, template)
                 return line
             end
             title = label(-22, "GameFontNormalLarge", 26)
@@ -10239,6 +10282,7 @@ do
             body:SetWidth(608)
             body:SetJustifyH("LEFT")
             body:SetJustifyV("TOP")
+            registerFont(body, 14, "GameFontHighlight")
             hint = label(-418, "GameFontHighlightSmall", 40)
             urlBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
             urlBox:SetSize(620, 28)
@@ -10262,6 +10306,7 @@ do
                 widget:SetSize(width, 26)
                 widget:SetPoint("BOTTOMLEFT", x, y)
                 widget:SetText(text)
+                registerFont(widget, 12, "GameFontNormal", true)
                 widget:SetScript("OnClick", action)
                 return widget
             end
@@ -10279,6 +10324,7 @@ do
             languageButton:SetSize(300, 26)
             languageButton:SetPoint("TOPRIGHT", -24, -48)
             languageButton:SetNormalFontObject("GameFontHighlightSmall")
+            registerFont(languageButton, 12, "GameFontHighlightSmall", true)
             languageMenu = CreateFrame("Frame", nil, panel, "BackdropTemplate")
             languageMenu:SetSize(530, 156)
             languageMenu:SetPoint("TOPRIGHT", languageButton, "BOTTOMRIGHT", 0, -4)
@@ -10296,6 +10342,8 @@ do
                 item:SetSize(166, 28)
                 item:SetPoint("TOPLEFT", 12 + ((index - 1) % 3) * 172, -12 - math.floor((index - 1) / 3) * 34)
                 item:SetNormalFontObject("GameFontHighlightSmall")
+                local font = fontFor(code == "auto" and "enUS" or code, 11)
+                if font then attachFont({region = item, isButton = true}, font) end
                 item:SetText(text)
                 item:SetScript("OnClick", function()
                     ApplicantScoutDB.setupLocale = code ~= "auto" and code or nil
@@ -10304,8 +10352,10 @@ do
                 languageItems[code] = item
             end
             languageItem("auto", 1, "Auto (WoW)")
+            registerFont(languageItems.auto, 11, "GameFontHighlightSmall", true)
             for index, code in ipairs(languageOrder) do
-                languageItem(code, index + 1, locales[code].name)
+                languageItem(code, index + 1, locales[code].name
+                    .. (languageAliases[code] and " / " .. languageAliases[code] or ""))
             end
             languageButton:SetScript("OnClick", function()
                 if languageMenu:IsShown() then languageMenu:Hide() else languageMenu:Show() end

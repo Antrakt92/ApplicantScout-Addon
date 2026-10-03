@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
     "scenario",
     [
         "first-run", "watcher-first", "dismissed", "disabled", "corrupt", "combat",
-        "postponed", "small-display",
+        "postponed", "small-display", "font-switch", "font-missing", "font-error",
     ],
 )
 def test_companion_setup_lifecycle(pytestconfig, scenario):
