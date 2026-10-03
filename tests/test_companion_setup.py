@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
     [
         "first-run", "watcher-first", "dismissed", "disabled", "corrupt", "combat",
         "postponed", "small-display", "font-switch", "font-missing", "font-error",
+        "font-partial", "font-false-success", "font-nil-return", "font-cold", "escape", "resize",
+        "parent-hide", "measurement-invalid", "measurement-error",
     ],
 )
 def test_companion_setup_lifecycle(pytestconfig, scenario):

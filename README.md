@@ -55,6 +55,9 @@ companion is installed, so finishing the guide does not verify the connection.
 
 The guide's links are selectable for **Ctrl+C**; WoW does not open your browser
 for you. **Illustrated guide** selects the browser guide with setup screenshots.
+Press **Escape** or choose **Later** to postpone it until the next login or reload.
+The window adapts when you change display size or UI scale. It hides during
+combat, loading, boss encounters and active Mythic+ runs, then resumes the same step.
 
 The guide follows your WoW client language automatically. Its language selector
 is available on every step and remembers an explicit choice across characters

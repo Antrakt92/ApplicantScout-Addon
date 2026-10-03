@@ -7,6 +7,7 @@ local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 local frames, pending = {}, {}
 local fontstrings = {}
 local now = 1000
+local fontColdUntil
 local combat = false
 local challenge, encounter = false, false
 InCombatLockdown = function() return combat end
@@ -26,14 +27,22 @@ local function widget()
         SetScript = function(self, name, fn) self.scripts[name] = fn end,
         HookScript = function(self, name, fn) self.scripts[name] = fn end,
         Show = function(self) self.shown = true end,
-        Hide = function(self) self.shown = false end,
+        Hide = function(self)
+            local wasShown = self.shown
+            self.shown = false
+            if wasShown and self.scripts.OnHide then self.scripts.OnHide(self) end
+        end,
         IsShown = function(self) return self.shown end,
         GetWidth = function(self) return self.width or 1920 end,
         GetHeight = function(self) return self.height or 1080 end,
         SetSize = function(self, width, height) self.width, self.height = width, height end,
         SetHeight = function(self, height) self.height = height end,
         SetScale = function(self, scale) self.scale = scale end,
-        GetStringHeight = function() return 450 end,
+        GetStringHeight = function()
+            if scenario == "measurement-invalid" then return math.huge end
+            if scenario == "measurement-error" then error("font not ready") end
+            return 450
+        end,
         SetScrollChild = function(self, child) self.child = child end,
         SetVerticalScroll = function(self, offset) self.offset = offset end,
         GetEffectiveScale = function() return 1 end,
@@ -43,11 +52,24 @@ local function widget()
         SetFont = function(self, path, size, flags)
             if scenario == "font-missing" and path:find("2002", 1, true) then return false end
             if scenario == "font-error" and path:find("2002", 1, true) then error("missing font") end
+            if scenario == "font-partial" and path:find("2002", 1, true) and size == 14 then return false end
             self.font, self.fontSize, self.fontFlags = path, size, flags
+            if scenario == "font-cold" and path:find("2002", 1, true) and not fontColdUntil then
+                fontColdUntil = now + 0.4
+            end
+            if scenario == "font-nil-return" then return nil end
             return true
+        end,
+        GetFont = function(self)
+            if scenario == "font-cold" and self.font:find("2002", 1, true) and now < fontColdUntil then return nil end
+            if scenario == "font-false-success" and self.font:find("2002", 1, true) then
+                return "Fonts\\FRIZQT__.TTF", self.fontSize, self.fontFlags
+            end
+            return self.font, self.fontSize, self.fontFlags
         end,
         SetFontObject = function(self, font) self.fontObject = font end,
         SetNormalFontObject = function(self, font) self.normalFont = font end,
+        SetTextColor = function(self, r, g, b) self.color = {r, g, b} end,
         SetHighlightFontObject = function(self, font) self.highlightFont = font end,
         SetDisabledFontObject = function(self, font) self.disabledFont = font end,
         GetFontString = function(self)
@@ -74,6 +96,7 @@ CreateFrame = function(kind, name, parent, template)
     return frame
 end
 UIParent = widget()
+UISpecialFrames = {}
 if scenario == "small-display" then UIParent.width, UIParent.height = 500, 480 end
 ApplicantScoutDB = scenario == "disabled" and {enabled = false, autoHiMessage = "hello"}
     or scenario == "dismissed" and {setupDismissed = true}
@@ -132,19 +155,79 @@ local function login()
 end
 if scenario == "combat" then combat = true end
 login()
-if scenario == "font-missing" or scenario == "font-error" or scenario == "font-switch" then
+if scenario == "parent-hide" then
+    assert(shown(), "guide did not open")
+    panel().scripts.OnHide(panel()) -- Parent hiding fires OnHide without clearing IsShown.
+    event("PLAYER_REGEN_ENABLED")
+    drain()
+    assert(shown(), "hiding the parent incorrectly postponed the guide")
+    print("ok " .. scenario)
+    return
+end
+if scenario == "measurement-invalid" or scenario == "measurement-error" then
+    for _, f in ipairs(frames) do
+        if f.template == "UIPanelScrollFrameTemplate" then
+            assert(f.child.height == 600, "bad font measurement poisoned scroll content geometry")
+        end
+    end
+    assert(shown(), "measurement failure prevented setup")
+    print("ok " .. scenario)
+    return
+end
+if scenario == "escape" then
+    assert(shown(), "guide did not open")
+    local registered = 0
+    for _, name in ipairs(UISpecialFrames) do
+        if name == panel().name and name == "ApplicantScoutCompanionSetup" then registered = registered + 1 end
+    end
+    assert(registered == 1, "setup is not registered once for global Escape")
+    SlashCmdList.APSCOUT("setup") -- Queue a reopen, then close before its timer runs.
+    panel():Hide() -- Blizzard CloseSpecialWindows calls Hide on registered frames.
+    event("PLAYER_REGEN_ENABLED")
+    drain()
+    assert(not shown() and not ApplicantScoutDB.setupDismissed, "Escape closed permanently or immediately reopened")
+    SlashCmdList.APSCOUT("setup")
+    drain()
+    assert(shown(), "Escape prevented manual reopening")
+    frames, pending, fontstrings = {}, {}, {}
+    harness = env.load_addon({})
+    watcher = frames[#frames]
+    login()
+    assert(shown(), "Escape did not postpone until reload")
+    assert(#UISpecialFrames == 1, "reload registered duplicate Escape entries")
+    print("ok " .. scenario)
+    return
+end
+if scenario == "resize" then
+    button("Next").scripts.OnClick()
+    local before = panel()
+    UIParent.width, UIParent.height = 500, 480
+    event("DISPLAY_SIZE_CHANGED")
+    assert(panel().scale == 500 / 720, "display resize retained stale scale")
+    UIParent.width, UIParent.height = 1920, 1080
+    event("UI_SCALE_CHANGED")
+    assert(panel().scale == 1 and panel() == before, "UI scale change replaced or failed to resize the panel")
+    UIParent.width = 0 / 0
+    event("UI_SCALE_CHANGED")
+    assert(panel().scale == 1, "invalid dimensions poisoned the scale")
+    assert(button("Back") and shown(), "resize lost guide state")
+    print("ok " .. scenario)
+    return
+end
+if scenario:find("font-", 1, true) then
     local function named(name)
         for _, f in ipairs(frames) do if f.name == name then return f end end
         error("missing control " .. name)
     end
     named("ApplicantScoutSetupLanguage_koKR").scripts.OnClick()
+    if scenario == "font-cold" or scenario == "font-false-success" then drain() end
     assert(ApplicantScoutDB.setupLocale == "koKR", "font handling lost language preference")
     local found = false
     for _, f in ipairs(fontstrings) do
-        if scenario == "font-switch" and f.text:find("Companion", 1, true) and rawget(f, "fontObject") then
+        if (scenario == "font-switch" or scenario == "font-nil-return" or scenario == "font-cold") and f.text:find("Companion", 1, true) and rawget(f, "fontObject") then
             assert(f.fontObject.font == "Fonts\\2002.TTF", "Korean text kept the client font")
             found = true
-        elseif scenario ~= "font-switch" and f.text:find("could not load", 1, true) then
+        elseif scenario ~= "font-switch" and scenario ~= "font-nil-return" and scenario ~= "font-cold" and f.text:find("could not load", 1, true) then
             assert(f.fontObject.font == "Fonts\\ARIALN.TTF", "fallback text did not get a readable font")
             found = true
         end
@@ -162,11 +245,14 @@ if scenario == "font-missing" or scenario == "font-error" or scenario == "font-s
         end
     end
     named("ApplicantScoutSetupLanguage_ruRU").scripts.OnClick()
+    drain() -- A stale fallback retry must not replace the newer language choice.
     for _, f in ipairs(frames) do
         if type(rawget(f, "normalFont")) == "table" and f.parent == panel() then
-            assert(f.normalFont == f.highlightFont and f.normalFont == f.disabledFont,
+            assert(f.normalFont.font == f.highlightFont.font and f.normalFont.font == f.disabledFont.font,
                 "button interaction states revert to the client font")
             assert(f.normalFont.font == "Fonts\\ARIALN.TTF", "button did not switch font")
+            assert(f.normalFont.color[2] == 0.82 and f.disabledFont.color[1] == 0.5,
+                "font switch erased enabled/disabled button contrast")
         end
     end
     for _, f in ipairs(fontstrings) do

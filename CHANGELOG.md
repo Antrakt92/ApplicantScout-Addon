@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Close setup with Escape, adapt it to display changes, and preserve readable
+  button states and fallback text when fonts cannot be applied.
 - Switch setup fonts with the selected language and keep a readable English
   fallback when the client cannot load its font.
 - Read the setup guide in every supported WoW client language, or pick a language

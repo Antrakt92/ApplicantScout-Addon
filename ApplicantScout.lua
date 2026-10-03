@@ -10129,29 +10129,54 @@ do
         local fontPaths = {ruRU = "Fonts\\ARIALN.TTF", koKR = "Fonts\\2002.TTF",
             zhCN = "Fonts\\ARKai_T.ttf", zhTW = "Fonts\\arheiuhk_bd.TTF"}
         local fonts, fontEntries = {}, {}
-        local function fontFor(code, size)
-            local key = code .. size
+        local function fontFor(code, size, tone)
+            local key = code .. size .. (tone or "")
             if fonts[key] then return fonts[key] end
             local font = CreateFont("ApplicantScoutSetupFont_" .. key)
-            local ok, loaded = pcall(font.SetFont, font, fontPaths[code] or "Fonts\\ARIALN.TTF", size, "")
-            if ok and loaded then fonts[key] = font; return font end
+            local ok = pcall(font.SetFont, font, fontPaths[code] or "Fonts\\ARIALN.TTF", size, "")
+            if ok then
+                local readOK, path, actualSize, flags = pcall(font.GetFont, font)
+                local expectedPath = fontPaths[code] or "Fonts\\ARIALN.TTF"
+                -- SetFont can return nil despite applying; read back the effective face.
+                if readOK and not IsSecretValue(path) and not IsSecretValue(actualSize)
+                    and not IsSecretValue(flags) and type(path) == "string"
+                    and path:gsub("/", "\\"):lower() == expectedPath:lower()
+                    and type(actualSize) == "number" and math.abs(actualSize - size) <= 0.01
+                    and (flags == nil or flags == "") then
+                    if tone == "disabled" then font:SetTextColor(0.5, 0.5, 0.5)
+                    elseif tone == "normal" then font:SetTextColor(1, 0.82, 0)
+                    else font:SetTextColor(1, 1, 1) end
+                    fonts[key] = font
+                    return font
+                end
+            end
         end
         local function registerFont(region, size, template, isButton)
             fontEntries[#fontEntries + 1] = {region = region, size = size, template = template, isButton = isButton}
         end
         local function attachFont(entry, font)
             if entry.isButton then
-                entry.region:SetNormalFontObject(font)
-                entry.region:SetHighlightFontObject(font)
-                entry.region:SetDisabledFontObject(font)
+                local states = type(font) == "table" and font.normal and font or nil
+                entry.region:SetNormalFontObject(states and states.normal or font)
+                entry.region:SetHighlightFontObject(states and states.highlight or font)
+                entry.region:SetDisabledFontObject(states and states.disabled or font)
             else
                 entry.region:SetFontObject(font)
+            end
+        end
+        local function resolveFont(entry, code)
+            if not entry.isButton then return fontFor(code, entry.size) end
+            local normal = fontFor(code, entry.size, "normal")
+            local highlight = fontFor(code, entry.size)
+            local disabled = fontFor(code, entry.size, "disabled")
+            if normal and highlight and disabled then
+                return {normal = normal, highlight = highlight, disabled = disabled}
             end
         end
         local function applyFonts(code)
             local resolved = {}
             for index, entry in ipairs(fontEntries) do
-                resolved[index] = fontFor(code, entry.size)
+                resolved[index] = resolveFont(entry, code)
                 if not resolved[index] then return false end
             end
             for index, entry in ipairs(fontEntries) do attachFont(entry, resolved[index]) end
@@ -10171,13 +10196,26 @@ do
         local title, copyHint, languageButton, languageMenu, downloadButton, guideButton, laterButton, doneButton
         local languageItems = {}
         local requested, ready, queued, postponed = false, false, false, false
+        local internalHide = false
+        local fontRetryGeneration, fontRetryAttempts, fontPending = 0, 0, false
         local page, selectedURL = 1, downloadURL
 
         local function hide()
             if panel then
                 urlBox:ClearFocus()
                 languageMenu:Hide()
+                internalHide = true
                 panel:Hide()
+                internalHide = false
+            end
+        end
+
+        local function resize()
+            local height, width = UIParent:GetHeight(), UIParent:GetWidth()
+            if not IsSecretValue(height) and not IsSecretValue(width)
+                and type(height) == "number" and height > 0 and height < math.huge
+                and type(width) == "number" and width > 0 and width < math.huge then
+                panel:SetScale(math.min(1, height / 660, width / 720))
             end
         end
 
@@ -10201,9 +10239,15 @@ do
             urlBox:HighlightText()
         end
 
-        local function refresh()
+        local refresh
+        refresh = function(isRetry)
+            if not isRetry then
+                fontRetryGeneration = fontRetryGeneration + 1
+                fontRetryAttempts = 0
+            end
             local code = localeCode()
             local missingFont = not applyFonts(code)
+            fontPending = missingFont
             if missingFont then
                 code = "enUS"
                 if not applyFonts(code) then
@@ -10215,8 +10259,8 @@ do
             local step = pages[page]
             heading:SetText(step.title)
             body:SetText((missingFont and "This WoW installation could not load the selected language's font. Showing English; your language choice is saved.\n\n" or "") .. step.body)
-            local textHeight = body:GetStringHeight()
-            content:SetHeight(type(textHeight) == "number" and math.max(290, textHeight + 12) or 600)
+            local measured, textHeight = pcall(body.GetStringHeight, body)
+            content:SetHeight(math.max(290, (measured and SafeNumber(textHeight, 588) or 588) + 12))
             scroll:SetVerticalScroll(0)
             hint:SetText(step.hint)
             title:SetText(ui.title)
@@ -10237,19 +10281,31 @@ do
             urlBox:SetCursorPosition(0)
             back:SetEnabled(page > 1)
             nextButton:SetText(page == #pages and ui.finish or ui.next)
+            -- Cold font readback can be inconclusive. Retry briefly, never forever.
+            if missingFont and fontRetryAttempts < 3 then
+                fontRetryAttempts = fontRetryAttempts + 1
+                local generation = fontRetryGeneration
+                C_Timer.After(0.2 * fontRetryAttempts, function()
+                    if generation == fontRetryGeneration and panel:IsShown() then refresh(true) end
+                end)
+            end
         end
 
         local function createPanel()
-            panel = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+            panel = CreateFrame("Frame", "ApplicantScoutCompanionSetup", UIParent, "BackdropTemplate")
             panel:SetSize(680, 620)
             panel:SetPoint("CENTER")
             panel:SetFrameStrata("DIALOG")
             panel:SetClampedToScreen(true)
             panel:EnableMouse(true)
             -- Keep the guide usable on smaller displays without changing UI scale.
-            local height, width = UIParent:GetHeight(), UIParent:GetWidth()
-            if type(height) == "number" and height > 0 and type(width) == "number" and width > 0 then
-                panel:SetScale(math.min(1, height / 660, width / 720))
+            resize()
+            if type(UISpecialFrames) == "table" then
+                local registered = false
+                for _, name in ipairs(UISpecialFrames) do
+                    if name == "ApplicantScoutCompanionSetup" then registered = true; break end
+                end
+                if not registered then table.insert(UISpecialFrames, "ApplicantScoutCompanionSetup") end
             end
             panel:SetBackdrop({
                 bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -10265,6 +10321,7 @@ do
                 line:SetSize(632, height)
                 line:SetJustifyH("LEFT")
                 line:SetJustifyV("TOP")
+                if template == "GameFontNormalLarge" then line:SetTextColor(1, 0.82, 0) end
                 registerFont(line, template == "GameFontNormalLarge" and 16 or 12, template)
                 return line
             end
@@ -10342,7 +10399,7 @@ do
                 item:SetSize(166, 28)
                 item:SetPoint("TOPLEFT", 12 + ((index - 1) % 3) * 172, -12 - math.floor((index - 1) / 3) * 34)
                 item:SetNormalFontObject("GameFontHighlightSmall")
-                local font = fontFor(code == "auto" and "enUS" or code, 11)
+                local font = resolveFont({size = 11, isButton = true}, code == "auto" and "enUS" or code)
                 if font then attachFont({region = item, isButton = true}, font) end
                 item:SetText(text)
                 item:SetScript("OnClick", function()
@@ -10363,8 +10420,14 @@ do
             local cross = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
             cross:SetPoint("TOPRIGHT", -2, -2)
             cross:SetScript("OnClick", later)
+            panel:SetScript("OnHide", function()
+                urlBox:ClearFocus()
+                languageMenu:Hide()
+                -- Escape hides special frames directly; gameplay hides must still resume.
+                if not internalHide and not panel:IsShown() then requested, postponed = false, true end
+            end)
             refresh()
-            panel:Hide()
+            hide()
         end
 
         local function canShow()
@@ -10377,7 +10440,8 @@ do
         local function tryShow()
             queued = false
             if not canShow() then hide(); return end
-            if not panel then createPanel() end
+            if not panel then createPanel()
+            elseif fontPending then refresh(true) end
             panel:Show()
         end
 
@@ -10404,10 +10468,16 @@ do
 
         local watcher = CreateFrame("Frame")
         watcher:RegisterEvent("PLAYER_LOGIN")
-        watcher:SetScript("OnEvent", function()
-            InitDB()
-            ready = true
-            queue()
+        watcher:RegisterEvent("DISPLAY_SIZE_CHANGED")
+        watcher:RegisterEvent("UI_SCALE_CHANGED")
+        watcher:SetScript("OnEvent", function(_, event)
+            if event == "PLAYER_LOGIN" then
+                InitDB()
+                ready = true
+                queue()
+            elseif panel then
+                resize()
+            end
         end)
     end)()
 end
