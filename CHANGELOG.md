@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Refresh first-run setup with a clearer step bar, short instructions, expandable
+  details, an overlay example and links matched to each step. Resume unfinished
+  setup after Later instead of starting over.
 - Keep the selected setup language when a compatible backup WoW font is available.
 - Keep automatic setup in sync with scouting on/off, while preserving manual
   help and reminder preferences. Retain distinct button states with fallback fonts.

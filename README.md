@@ -48,13 +48,19 @@ or turn it off in settings. Auto Hi greetings are optional.
 
 On your first login, the addon opens a five-step guide covering the companion,
 Windows installer, Warcraft Logs API client, Screenshots folder and first results.
-Use **Next** and **Back** to move through it. **Later** postpones the guide until
-your next login or reload; **Finish guide** or **Already set up** stops its automatic
+The step bar lets you jump directly to any topic. Short instructions appear first;
+**More detail** expands the complete guide. The first step includes an example
+Companion overlay. Use **Next** and **Back** to move through it.
+**Later** postpones the guide and resumes the same step on your next login or reload;
+**Finish guide** or **Already set up** stops its automatic
 reminder. Reopen it with `/apscout setup`. The addon cannot detect whether the
 companion is installed, so finishing the guide does not verify the connection.
 
 The guide's links are selectable for **Ctrl+C**; WoW does not open your browser
 for you. **Illustrated guide** selects the browser guide with setup screenshots.
+The main link follows the step: source code, installer, Warcraft Logs API Clients,
+then the browser guide. Switching between short and detailed instructions keeps
+your selected link intact.
 Press **Escape** or choose **Later** to postpone it until the next login or reload.
 The window adapts when you change display size or UI scale. It hides during
 combat, loading, boss encounters and active Mythic+ runs, then resumes the same step.

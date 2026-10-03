@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
         "retry-interaction",
         "measurement-zero", "measurement-negative",
         "font-all-missing", "enabled-transition",
+        "resume-step",
     ],
 )
 def test_companion_setup_lifecycle(pytestconfig, scenario):
@@ -40,6 +41,27 @@ def test_setup_compatible_fallback_keeps_the_selected_language(pytestconfig, loc
     assert lua, "Lua 5.1 is required for setup language tests"
     subprocess.run(
         [lua, str(ROOT / "tests/lua/check_companion_setup.lua"), "font-compatible-fallback", locale],
+        cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("locale", ["enUS", "deDE", "esES", "esMX", "frFR", "itIT", "ptBR", "ruRU", "koKR", "zhCN", "zhTW"])
+@pytest.mark.parametrize("step", [1, 2, 3, 4, 5])
+def test_setup_step_actions_details_and_control_bounds(pytestconfig, locale, step):
+    lua = pytestconfig.getoption("--lua51") or shutil.which("lua5.1")
+    assert lua, "Lua 5.1 is required for setup design tests"
+    subprocess.run(
+        [lua, str(ROOT / "tests/lua/check_companion_setup.lua"), "design", locale, str(step)],
+        cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("scenario", ["saved-step", "saved-step-zero", "saved-step-high", "saved-step-fraction", "saved-step-nan", "saved-step-string", "saved-step-table"])
+def test_setup_saved_progress_is_validated(pytestconfig, scenario):
+    lua = pytestconfig.getoption("--lua51") or shutil.which("lua5.1")
+    assert lua, "Lua 5.1 is required for setup progress tests"
+    subprocess.run(
+        [lua, str(ROOT / "tests/lua/check_companion_setup.lua"), scenario, "ruRU"],
         cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8",
     )
 

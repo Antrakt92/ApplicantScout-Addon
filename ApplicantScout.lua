@@ -10155,7 +10155,7 @@ do
                         and type(actualSize) == "number" and math.abs(actualSize - size) <= 0.01
                         and (flags == nil or flags == "") then
                         if tone == "disabled" then font:SetTextColor(0.5, 0.5, 0.5)
-                        elseif tone == "normal" then font:SetTextColor(1, 0.82, 0)
+                        elseif tone == "normal" then font:SetTextColor(0.88, 0.94, 1)
                         else font:SetTextColor(1, 1, 1) end
                         fonts[key] = font
                         return font
@@ -10205,12 +10205,30 @@ do
             return ok and type(code) == "string" and locales[code] and code or "enUS"
         end
         local panel, urlBox, heading, body, hint, progress, back, nextButton, scroll, content
-        local title, copyHint, languageButton, languageMenu, downloadButton, guideButton, laterButton, doneButton
-        local languageItems = {}
+        local title, copyHint, languageButton, languageMenu, downloadButton, guideButton, laterButton, doneButton, detailsButton
+        local preview, previewCaption
+        local languageItems, stepButtons = {}, {}
         local requested, ready, queued, postponed = false, false, false, false
         local internalHide = false
         local fontRetryGeneration, fontRetryAttempts, fontPending = 0, 0, false
-        local page, selectedURL = 1, downloadURL
+        local page, selectedURL, expanded = 1, downloadURL, false
+        local viewHeight = 196
+
+        local function savedPage()
+            local value = ApplicantScoutDB.setupStep
+            if not IsSecretValue(value) and type(value) == "number" and value >= 1
+                and value <= #links and value == math.floor(value) then return value end
+            return 1
+        end
+
+        local function paintButton(widget, primary, selected)
+            widget.setupPrimary, widget.setupSelected = primary, selected
+            if primary then widget:SetBackdropColor(0.04, 0.34, 0.31, 1)
+            elseif selected then widget:SetBackdropColor(0.08, 0.20, 0.24, 1)
+            else widget:SetBackdropColor(0.09, 0.12, 0.17, 1) end
+            if primary or selected then widget:SetBackdropBorderColor(0.22, 0.70, 0.63, 1)
+            else widget:SetBackdropBorderColor(0.23, 0.29, 0.36, 1) end
+        end
 
         local function hide()
             if panel then
@@ -10227,12 +10245,13 @@ do
             if not IsSecretValue(height) and not IsSecretValue(width)
                 and type(height) == "number" and height > 0 and height < math.huge
                 and type(width) == "number" and width > 0 and width < math.huge then
-                panel:SetScale(math.min(1, height / 660, width / 720))
+                panel:SetScale(math.min(1, height / 780, width / 800))
             end
         end
 
         local function dismiss()
             ApplicantScoutDB.setupDismissed = true
+            ApplicantScoutDB.setupStep = nil
             requested = false
             hide()
         end
@@ -10275,22 +10294,33 @@ do
             local language = locales[code]
             local pages, ui = language.pages, language.ui
             local step = pages[page]
+            ApplicantScoutDB.setupStep = page
             heading:SetText(step.title)
-            body:SetText((missingFont and "This WoW installation could not load the selected language's font. Showing English; your language choice is saved.\n\n" or "") .. step.body)
+            local showPreview = page == 1 and not expanded
+            body:SetWidth(showPreview and 400 or 664)
+            preview:SetShown(showPreview)
+            previewCaption:SetShown(showPreview)
+            previewCaption:SetText(ui.preview)
+            body:SetText((missingFont and "This WoW installation could not load the selected language's font. Showing English; your language choice is saved.\n\n" or "")
+                .. (expanded and step.body or step.summary))
             local measured, textHeight = pcall(body.GetStringHeight, body)
             textHeight = measured and SafeNumber(textHeight, 0) or 0
             if textHeight <= 0 then textHeight = 588 end
-            local contentHeight = math.max(290, textHeight + 12)
+            local contentHeight = math.max(viewHeight, textHeight + 12)
             content:SetHeight(contentHeight)
-            scroll:SetVerticalScroll(isRetry and math.max(0, math.min(priorScroll, contentHeight - 290)) or 0)
+            scroll:SetVerticalScroll(isRetry and math.max(0, math.min(priorScroll, contentHeight - viewHeight)) or 0)
             hint:SetText(step.hint)
             title:SetText(ui.title)
             progress:SetText(string.format(ui.step, page, #pages))
-            languageButton:SetText(ui.language .. ": " .. language.name
-                .. (code == "enUS" and "" or " / Language"))
+            languageButton:SetText(code == "enUS" and ui.language .. ": " .. language.name
+                or language.name .. " / Language")
             copyHint:SetText(ui.copy)
-            downloadButton:SetText(ui.download)
+            downloadButton:SetText(page == 1 and ui.source or page == 3 and ui.wcl
+                or page >= 4 and ui.guide or ui.download)
+            paintButton(downloadButton, page == 2 or page == 3)
+            guideButton:SetShown(page < 4)
             guideButton:SetText(ui.guide)
+            detailsButton:SetText(expanded and ui.less or ui.details)
             laterButton:SetText(ui.later)
             doneButton:SetText(ui.done)
             back:SetText(ui.back)
@@ -10309,6 +10339,11 @@ do
             end
             back:SetEnabled(page > 1)
             nextButton:SetText(page == #pages and ui.finish or ui.next)
+            paintButton(nextButton, page ~= 2 and page ~= 3)
+            for index, widget in ipairs(stepButtons) do
+                widget:SetText(index .. ". " .. pages[index].chapter)
+                paintButton(widget, false, index == page)
+            end
             -- Cold font readback can be inconclusive. Retry briefly, never forever.
             if missingFont and fontRetryAttempts < 3 then
                 fontRetryAttempts = fontRetryAttempts + 1
@@ -10319,9 +10354,15 @@ do
             end
         end
 
+        local function navigate(target)
+            if target == page then return end
+            page, expanded = target, false
+            refresh()
+        end
+
         local function createPanel()
             panel = CreateFrame("Frame", "ApplicantScoutCompanionSetup", UIParent, "BackdropTemplate")
-            panel:SetSize(680, 620)
+            panel:SetSize(760, 740)
             panel:SetPoint("CENTER")
             panel:SetFrameStrata("DIALOG")
             panel:SetClampedToScreen(true)
@@ -10337,41 +10378,69 @@ do
             end
             panel:SetBackdrop({
                 bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-                edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-                tile = true, tileSize = 16, edgeSize = 16,
-                insets = { left = 4, right = 4, top = 4, bottom = 4 },
+                edgeFile = "Interface\\Buttons\\WHITE8X8",
+                tile = true, tileSize = 16, edgeSize = 1,
+                insets = { left = 1, right = 1, top = 1, bottom = 1 },
             })
-            panel:SetBackdropColor(0.06, 0.07, 0.09, 0.98)
-            panel:SetBackdropBorderColor(0.35, 0.45, 0.5, 1)
-            local function label(y, template, height)
+            panel:SetBackdropColor(0.035, 0.045, 0.065, 0.98)
+            panel:SetBackdropBorderColor(0.23, 0.32, 0.39, 1)
+            local accent = panel:CreateTexture(nil, "ARTWORK")
+            accent:SetPoint("TOPLEFT", 1, -1)
+            accent:SetSize(758, 3)
+            accent:SetColorTexture(0.22, 0.70, 0.63, 1)
+            local logo = panel:CreateTexture(nil, "ARTWORK")
+            logo:SetPoint("TOPLEFT", 24, -24)
+            logo:SetSize(48, 48)
+            logo:SetTexture("Interface\\AddOns\\ApplicantScout\\media\\logo.png")
+            local function label(y, template, height, x, width, size)
                 local line = panel:CreateFontString(nil, "OVERLAY", template)
-                line:SetPoint("TOPLEFT", 24, y)
-                line:SetSize(632, height)
+                line:SetPoint("TOPLEFT", x or 24, y)
+                line:SetSize(width or 712, height)
                 line:SetJustifyH("LEFT")
                 line:SetJustifyV("TOP")
-                if template == "GameFontNormalLarge" then line:SetTextColor(1, 0.82, 0) end
-                registerFont(line, template == "GameFontNormalLarge" and 16 or 12, template)
+                registerFont(line, size or (template == "GameFontNormalLarge" and 16 or 12), template)
                 return line
             end
-            title = label(-22, "GameFontNormalLarge", 26)
-            progress = label(-54, "GameFontHighlightSmall", 20)
-            heading = label(-82, "GameFontNormalLarge", 30)
+            title = label(-26, "GameFontNormalLarge", 28, 88, 622, 20)
+            progress = label(-62, "GameFontHighlightSmall", 20, 88, 320)
+            heading = label(-170, "GameFontNormalLarge", 48, nil, nil, 20)
+            local function card(y, height)
+                -- Background textures share the text's frame; child frames would cover parent labels.
+                local surface = panel:CreateTexture(nil, "BACKGROUND")
+                surface:SetPoint("TOPLEFT", 24, y)
+                surface:SetSize(712, height)
+                surface:SetColorTexture(0.065, 0.085, 0.115, 1)
+                return surface
+            end
+            card(-224, 220)
             scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
-            scroll:SetPoint("TOPLEFT", 24, -122)
-            scroll:SetSize(608, 290)
+            scroll:SetPoint("TOPLEFT", 40, -236)
+            scroll:SetSize(664, viewHeight)
             content = CreateFrame("Frame", nil, scroll)
-            content:SetSize(608, 600)
+            content:SetSize(664, 600)
             scroll:SetScrollChild(content)
             body = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
             body:SetPoint("TOPLEFT")
-            body:SetWidth(608)
+            body:SetWidth(664)
             body:SetJustifyH("LEFT")
             body:SetJustifyV("TOP")
             registerFont(body, 14, "GameFontHighlight")
-            hint = label(-418, "GameFontHighlightSmall", 40)
+            previewCaption = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            previewCaption:SetPoint("TOPRIGHT", 0, 0)
+            previewCaption:SetSize(236, 20)
+            previewCaption:SetJustifyH("CENTER")
+            registerFont(previewCaption, 12, "GameFontHighlightSmall")
+            preview = content:CreateTexture(nil, "ARTWORK")
+            preview:SetPoint("TOPRIGHT", 0, -24)
+            preview:SetSize(212, 170)
+            preview:SetTexture("Interface\\AddOns\\ApplicantScout\\media\\setup-preview.tga")
+            preview:SetTexCoord(0, 1, 0, 412 / 512)
+            card(-492, 60)
+            hint = label(-504, "GameFontHighlightSmall", 40, 40, 680)
+            card(-564, 110)
             urlBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
-            urlBox:SetSize(620, 28)
-            urlBox:SetPoint("TOPLEFT", 30, -462)
+            urlBox:SetSize(672, 28)
+            urlBox:SetPoint("TOPLEFT", 46, -608)
             urlBox:SetFontObject("GameFontHighlightSmall")
             urlBox:SetAutoFocus(false)
             urlBox:SetMaxLetters(256)
@@ -10385,31 +10454,51 @@ do
                     self:HighlightText()
                 end
             end)
-            copyHint = label(-496, "GameFontHighlightSmall", 20)
-            local function button(text, x, y, width, action)
-                local widget = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-                widget:SetSize(width, 26)
+            copyHint = label(-642, "GameFontHighlightSmall", 28, 40, 680)
+            local function button(text, x, y, width, action, name)
+                local widget = CreateFrame("Button", name, panel, "BackdropTemplate")
+                widget:SetSize(width, 32)
                 widget:SetPoint("BOTTOMLEFT", x, y)
+                widget:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1})
+                local textRegion = widget:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                textRegion:SetPoint("CENTER")
+                textRegion:SetSize(width - 16, 28)
+                textRegion:SetJustifyH("CENTER")
+                widget:SetFontString(textRegion)
                 widget:SetText(text)
                 registerFont(widget, 12, "GameFontNormal", true)
                 widget:SetScript("OnClick", action)
+                widget:SetScript("OnEnter", function(self)
+                    if self:IsEnabled() then self:SetBackdropBorderColor(0.42, 0.90, 0.81, 1) end
+                end)
+                widget:SetScript("OnLeave", function(self) paintButton(self, self.setupPrimary, self.setupSelected) end)
+                paintButton(widget)
                 return widget
             end
-            downloadButton = button("Select download link", 24, 74, 178, function() selectLink(downloadURL) end)
-            guideButton = button("Illustrated guide", 210, 74, 150, function() selectLink(guideURL) end)
-            laterButton = button("Later", 24, 22, 90, later)
-            doneButton = button("Already set up", 122, 22, 138, dismiss)
-            back = button("Back", 446, 22, 90, function()
-                if page > 1 then page = page - 1; refresh() end
+            detailsButton = button("More detail", 24, 256, 220, function()
+                expanded = not expanded
+                refresh(true)
+                scroll:SetVerticalScroll(0)
+                languageMenu:Hide()
+            end, "ApplicantScoutSetupDetails")
+            downloadButton = button("Select download link", 40, 136, 340, function() selectLink(links[page]) end,
+                "ApplicantScoutSetupLink")
+            guideButton = button("Illustrated guide", 392, 136, 328, function() selectLink(guideURL) end)
+            laterButton = button("Later", 24, 22, 96, later)
+            doneButton = button("Already set up", 128, 22, 176, dismiss)
+            back = button("Back", 430, 22, 106, function()
+                if page > 1 then navigate(page - 1) end
             end)
-            nextButton = button("Next", 544, 22, 112, function()
-                if page == #links then dismiss() else page = page + 1; refresh() end
+            nextButton = button("Next", 544, 22, 192, function()
+                if page == #links then dismiss() else navigate(page + 1) end
             end)
-            languageButton = CreateFrame("Button", "ApplicantScoutSetupLanguageButton", panel, "UIPanelButtonTemplate")
-            languageButton:SetSize(300, 26)
-            languageButton:SetPoint("TOPRIGHT", -24, -48)
-            languageButton:SetNormalFontObject("GameFontHighlightSmall")
-            registerFont(languageButton, 12, "GameFontHighlightSmall", true)
+            for index = 1, #links do
+                local target = index
+                stepButtons[index] = button("", 24 + (index - 1) * 144, 590, 136,
+                    function() navigate(target) end, "ApplicantScoutSetupStep" .. index)
+                stepButtons[index]:SetHeight(42)
+            end
+            languageButton = button("", 436, 654, 300, nil, "ApplicantScoutSetupLanguageButton")
             languageMenu = CreateFrame("Frame", nil, panel, "BackdropTemplate")
             languageMenu:SetSize(530, 156)
             languageMenu:SetPoint("TOPRIGHT", languageButton, "BOTTOMRIGHT", 0, -4)
@@ -10486,7 +10575,7 @@ do
         end
 
         entryCreationKeyState.ShowCompanionSetup = function()
-            requested, postponed, page = true, false, 1
+            requested, postponed, page, expanded = true, false, 1, false
             if panel then refresh() end
             queue()
             if not canShow() then
@@ -10501,6 +10590,7 @@ do
         watcher:SetScript("OnEvent", function(_, event)
             if event == "PLAYER_LOGIN" then
                 InitDB()
+                page = savedPage()
                 ready = true
                 queue()
             elseif panel then

@@ -9,7 +9,7 @@ if scenario == "locale-api-error" then GetLocale = function() error("unavailable
 if scenario == "locale-api-missing" then GetLocale = nil end
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 local frames, pending = {}, {}
-local fontstrings = {}
+local fontstrings, textures = {}, {}
 local now = 1000
 local fontColdUntil
 local measuredHeight = 450
@@ -35,6 +35,7 @@ local function widget()
         SetScript = function(self, name, fn) self.scripts[name] = fn end,
         HookScript = function(self, name, fn) self.scripts[name] = fn end,
         Show = function(self) self.shown = true end,
+        SetShown = function(self, value) if value then self:Show() else self:Hide() end end,
         Hide = function(self)
             local wasShown = self.shown
             self.shown = false
@@ -44,7 +45,16 @@ local function widget()
         GetWidth = function(self) return self.width or 1920 end,
         GetHeight = function(self) return self.height or 1080 end,
         SetSize = function(self, width, height) self.width, self.height = width, height end,
+        SetPoint = function(self, ...) self.point = {...} end,
+        SetBackdrop = function(self, value) self.backdrop = value end,
+        SetBackdropColor = function(self, ...) self.background = {...} end,
+        SetBackdropBorderColor = function(self, ...) self.border = {...} end,
+        SetColorTexture = function(self, ...) self.background = {...} end,
+        SetTexture = function(self, path) self.texture = path end,
         SetHeight = function(self, height) self.height = height end,
+        SetWidth = function(self, width) self.width = width end,
+        SetEnabled = function(self, enabled) self.enabled = enabled end,
+        IsEnabled = function(self) return self.enabled ~= false end,
         SetScale = function(self, scale) self.scale = scale end,
         GetStringHeight = function()
             if scenario == "measurement-invalid" then return math.huge end
@@ -58,7 +68,10 @@ local function widget()
         GetVerticalScroll = function(self) return rawget(self, "offset") or 0 end,
         GetEffectiveScale = function() return 1 end,
         GetFrameLevel = function() return 1 end,
-        SetText = function(self, text) self.text = text end,
+        SetText = function(self, text)
+            self.text = text
+            if rawget(self, "fontstring") then self.fontstring.text = text end
+        end,
         GetText = function(self) return self.text end,
         SetFont = function(self, path, size, flags)
             if scenario == "font-all-missing" then return false end
@@ -89,12 +102,19 @@ local function widget()
             if not rawget(self, "fontstring") then self.fontstring = widget() end
             return self.fontstring
         end,
+        SetFontString = function(self, fontstring) self.fontstring = fontstring end,
         SetFocus = function(self) self.focused = true end,
         ClearFocus = function(self) self.focused = false end,
         HighlightText = function(self) self.selected = true end,
-        CreateTexture = function() return widget() end,
-        CreateFontString = function()
+        CreateTexture = function(self, _, layer)
+            local texture = widget()
+            texture.parent, texture.layer = self, layer
+            textures[#textures + 1] = texture
+            return texture
+        end,
+        CreateFontString = function(self)
             local fontstring = widget()
+            fontstring.parent = self
             fontstrings[#fontstrings + 1] = fontstring
             return fontstring
         end,
@@ -119,6 +139,13 @@ if scenario == "language-saved" then ApplicantScoutDB.setupLocale = "ruRU" end
 if scenario == "language-invalid" then ApplicantScoutDB.setupLocale = {} end
 if scenario == "language-invalid-string" then ApplicantScoutDB.setupLocale = "xxXX" end
 if scenario == "font-compatible-fallback" then ApplicantScoutDB.setupLocale = fallbackLocale end
+if scenario == "saved-step" then ApplicantScoutDB.setupStep = 3 end
+if scenario == "saved-step-zero" then ApplicantScoutDB.setupStep = 0 end
+if scenario == "saved-step-high" then ApplicantScoutDB.setupStep = 6 end
+if scenario == "saved-step-fraction" then ApplicantScoutDB.setupStep = 2.5 end
+if scenario == "saved-step-nan" then ApplicantScoutDB.setupStep = 0 / 0 end
+if scenario == "saved-step-string" then ApplicantScoutDB.setupStep = "3" end
+if scenario == "saved-step-table" then ApplicantScoutDB.setupStep = {} end
 local harness = env.load_addon({})
 local watcher = frames[#frames]
 assert(watcher.events.PLAYER_LOGIN, "setup lifecycle watcher missing")
@@ -156,7 +183,15 @@ local function button(text)
     for _, f in ipairs(frames) do if f.text == text then return f end end
     error("missing button " .. text)
 end
+local function named(name)
+    for _, f in ipairs(frames) do if f.name == name then return f end end
+    error("missing control " .. name)
+end
 local function shown() return panel() and panel().shown end
+local function hasText(text)
+    for _, f in ipairs(fontstrings) do if f.text == text then return true end end
+    return false
+end
 local function login()
     event("PLAYER_LOGIN")
     event("PLAYER_ENTERING_WORLD")
@@ -169,12 +204,165 @@ local function login()
 end
 if scenario == "combat" then combat = true end
 login()
+if scenario:find("saved-step", 1, true) then
+    local expected = scenario == "saved-step" and 3 or 1
+    local ns = {}
+    assert(loadfile("SetupLocales.lua"))("ApplicantScout", ns)
+    local language = ns.CompanionSetupLocales[clientLocale]
+    assert(ApplicantScoutDB.setupStep == expected, "saved step was lost or unsafe input was accepted")
+    assert(named("ApplicantScoutSetupStep" .. expected).setupSelected, "saved progress differs from current page")
+    assert(hasText(language.pages[expected].title), "saved step did not translate")
+    print("ok " .. scenario)
+    return
+end
+if scenario == "resume-step" then
+    button("Next").scripts.OnClick()
+    button("Next").scripts.OnClick()
+    button("Later").scripts.OnClick()
+    assert(ApplicantScoutDB.setupStep == 3 and not ApplicantScoutDB.setupDismissed,
+        "postponing forgot current progress or completed setup")
+    frames, pending, fontstrings = {}, {}, {}
+    harness = env.load_addon({})
+    watcher = frames[#frames]
+    login()
+    assert(shown() and named("ApplicantScoutSetupStep3").setupSelected, "reload did not resume the postponed step")
+    SlashCmdList.APSCOUT("setup")
+    drain()
+    assert(ApplicantScoutDB.setupStep == 1, "manual help did not restart the guide")
+    button("Already set up").scripts.OnClick()
+    assert(ApplicantScoutDB.setupStep == nil, "dismissal retained unfinished progress")
+    print("ok " .. scenario)
+    return
+end
+if scenario == "design" or scenario == "design-export" then
+    local ns = {}
+    assert(loadfile("SetupLocales.lua"))("ApplicantScout", ns)
+    local language = ns.CompanionSetupLocales[clientLocale]
+    local link = named("ApplicantScoutSetupLink")
+    local details = named("ApplicantScoutSetupDetails")
+    local address
+    for _, f in ipairs(frames) do if f.kind == "EditBox" and f.parent == panel() then address = f end end
+    local desiredPage = tonumber(arg[3]) or 2
+    named("ApplicantScoutSetupStep" .. desiredPage).scripts.OnClick()
+    assert(ApplicantScoutDB.setupStep == desiredPage and not ApplicantScoutDB.setupDismissed, "step navigation completed setup")
+    local expectedLinks = {
+        "https://github.com/Antrakt92/ApplicantScout-Companion",
+        "https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest",
+        "https://www.warcraftlogs.com/api/clients/",
+        "https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/GETTING_STARTED.md",
+    }
+    local expectedURL = expectedLinks[math.min(desiredPage, 4)]
+    link.scripts.OnClick()
+    assert(address.text == expectedURL and address.focused and address.selected, "step action selected the wrong URL")
+    details.scripts.OnClick()
+    assert(hasText(language.pages[desiredPage].body), "details did not reveal the complete translated instructions")
+    assert(address.text == expectedURL and address.focused, "details interrupted copying")
+    details.scripts.OnClick()
+    assert(hasText(language.pages[desiredPage].summary), "short steps were not restored")
+    assert(address.text == expectedURL and address.focused, "collapsing details interrupted copying")
+    assert(named("ApplicantScoutSetupStep" .. desiredPage).setupSelected, "detail toggle moved the current step")
+    local backgrounds, example = 0, nil
+    for _, texture in ipairs(textures) do
+        if texture.parent == panel() and texture.width == 712 then
+            assert(texture.layer == "BACKGROUND", "card background can cover parent text")
+            backgrounds = backgrounds + 1
+        elseif texture.texture == "Interface\\AddOns\\ApplicantScout\\media\\setup-preview.tga" then
+            example = texture
+        end
+    end
+    assert(backgrounds == 3, "content, hint and link cards are missing")
+    assert(example and example.shown == (desiredPage == 1), "example image is missing or leaked into later steps")
+    if desiredPage == 1 then
+        details.scripts.OnClick()
+        assert(not example.shown, "example covered expanded instructions")
+        details.scripts.OnClick()
+        assert(example.shown, "example was not restored with short steps")
+    end
+    -- Main controls must fit their parent and leave separate header/content/action/footer bands.
+    local function rectangle(f)
+        local p = assert(rawget(f, "point"), "missing point")
+        local width, height = rawget(f, "width") or 0, rawget(f, "height") or 0
+        if f.parent and f.parent.parent and f.parent.parent.kind == "ScrollFrame" then
+            local x, y = 40, 236
+            if p[1] == "TOPRIGHT" then return x + 664 - width + (p[2] or 0), y - (p[3] or 0), width, height end
+            return x + (p[2] or 0), y - (p[3] or 0), width, height
+        end
+        if p[1] == "TOPLEFT" then return p[2], -p[3], width, height end
+        if p[1] == "BOTTOMLEFT" then return p[2], panel().height - p[3] - height, width, height end
+        error("unsupported main control anchor " .. p[1])
+    end
+    local bounds = {}
+    for _, f in ipairs(frames) do
+        if f.shown and f.parent == panel() and f.kind == "Button" and f.template ~= "UIPanelCloseButton" then
+            local x, y, width, height = rectangle(f)
+            assert(x >= 0 and y >= 0 and x + width <= panel().width and y + height <= panel().height,
+                "control exceeds setup bounds: " .. f.text)
+            assert(f.fontstring.width == width - 16 and f.fontstring.height <= height,
+                "button has no bounded wrapping area")
+            for _, prior in ipairs(bounds) do
+                assert(x + width <= prior[1] or prior[1] + prior[3] <= x
+                    or y + height <= prior[2] or prior[2] + prior[4] <= y,
+                    "interactive controls overlap")
+            end
+            bounds[#bounds + 1] = {x, y, width, height}
+        end
+    end
+    if scenario == "design-export" then
+        local function json(value)
+            if type(value) == "string" then
+                return '"' .. value:gsub('\\', '\\\\'):gsub('"', '\\"'):gsub('\n', '\\n'):gsub('\r', '\\r') .. '"'
+            elseif type(value) == "number" then return tostring(value)
+            elseif type(value) == "boolean" then return value and "true" or "false"
+            elseif type(value) == "table" then
+                local entries = {}
+                for _, item in ipairs(value) do entries[#entries + 1] = json(item) end
+                return "[" .. table.concat(entries, ",") .. "]"
+            end
+            return "null"
+        end
+        local items = {}
+        local function export(f, kind)
+            local x, y, width, height = rectangle(f)
+            local font = rawget(f, "fontObject") or rawget(f, "normalFont")
+            local size = type(font) == "table" and font.fontSize or 12
+            items[#items + 1] = {kind, x, y, width, height, rawget(f, "text") or "", size,
+                rawget(f, "background") or {}, rawget(f, "border") or {}, rawget(f, "texture") or "",
+                rawget(f, "enabled") ~= false, rawget(f, "name") or ""}
+        end
+        for _, f in ipairs(textures) do
+            if f.parent == panel() and f.layer == "BACKGROUND" then export(f, "texture") end
+        end
+        for _, f in ipairs(frames) do
+            if f.parent == panel() and f.shown and f.template ~= "UIPanelCloseButton" then export(f, f.kind) end
+        end
+        for _, f in ipairs(fontstrings) do if f.parent == panel() then export(f, "text") end end
+        for _, f in ipairs(textures) do
+            if f.parent == panel() and f.layer ~= "BACKGROUND" then export(f, "texture") end
+        end
+        for _, f in ipairs(fontstrings) do
+            if f.shown and f.parent ~= panel() and rawget(f, "fontObject") then
+                local parent = rawget(f, "parent")
+                if parent and parent.parent and parent.parent.kind == "ScrollFrame" then
+                    if f.text == language.pages[desiredPage].summary then
+                        local x, y, _, height = rectangle(parent.parent)
+                        items[#items + 1] = {"body", x, y, f.width, height, f.text, f.fontObject.fontSize, {}, {}, "", true, ""}
+                    else export(f, "text") end
+                end
+            end
+        end
+        for _, f in ipairs(textures) do
+            if f.shown and f.parent and f.parent.parent and f.parent.parent.kind == "ScrollFrame" then export(f, "texture") end
+        end
+        print(json(items))
+    else print("ok " .. scenario) end
+    return
+end
 if scenario == "font-compatible-fallback" then
     local ns = {}
     assert(loadfile("SetupLocales.lua"))("ApplicantScout", ns)
     local found = false
     for _, f in ipairs(fontstrings) do
-        if f.text == ns.CompanionSetupLocales[fallbackLocale].pages[1].body then
+        if f.text == ns.CompanionSetupLocales[fallbackLocale].pages[1].summary then
             assert(f.fontObject.font == expectedFallback[fallbackLocale], "fallback used an incompatible font")
             found = true
         end
@@ -245,7 +433,7 @@ if scenario == "retry-interaction" then
     scrollFrame:SetVerticalScroll(150)
     measuredHeight = 300
     drain()
-    assert(scrollFrame.offset == 22, "font retries did not clamp scroll after content became shorter")
+    assert(scrollFrame.offset == 312 - scrollFrame.height, "font retries did not clamp scroll after content became shorter")
     print("ok " .. scenario)
     return
 end
@@ -297,7 +485,7 @@ if scenario == "resize" then
     local before = panel()
     UIParent.width, UIParent.height = 500, 480
     event("DISPLAY_SIZE_CHANGED")
-    assert(panel().scale == 500 / 720, "display resize retained stale scale")
+    assert(panel().scale == math.min(500 / 800, 480 / 780), "display resize retained stale scale")
     UIParent.width, UIParent.height = 1920, 1080
     event("UI_SCALE_CHANGED")
     assert(panel().scale == 1 and panel() == before, "UI scale change replaced or failed to resize the panel")
@@ -350,7 +538,7 @@ if scenario:find("font-", 1, true) then
             assert(f.normalFont.font == f.highlightFont.font and f.normalFont.font == f.disabledFont.font,
                 "button interaction states revert to the client font")
             assert(f.normalFont.font == "Fonts\\ARIALN.TTF", "button did not switch font")
-            assert(f.normalFont.color[2] == 0.82 and f.disabledFont.color[1] == 0.5,
+            assert(f.normalFont.color[2] == 0.94 and f.disabledFont.color[1] == 0.5,
                 "font switch erased enabled/disabled button contrast")
         end
     end
@@ -391,7 +579,10 @@ if scenario:find("language", 1, true) or scenario:find("locale-api", 1, true) th
     assert(hasText(locales[target].pages[2].title), "language switch reset or failed to translate the current step")
     assert(panel() == initialPanel, "language switch allocated another panel")
     for step = 2, 5 do
-        assert(hasText(locales[target].pages[step].body), "step body did not switch language")
+        assert(hasText(locales[target].pages[step].summary), "short steps did not switch language")
+        button(locales[target].ui.details).scripts.OnClick()
+        assert(hasText(locales[target].pages[step].body), "full instructions did not switch language")
+        button(locales[target].ui.less).scripts.OnClick()
         if step < 5 then button(locales[target].ui.next).scripts.OnClick() end
     end
     -- Reload must keep the explicit language even when the client differs.
@@ -399,10 +590,10 @@ if scenario:find("language", 1, true) or scenario:find("locale-api", 1, true) th
     harness = env.load_addon({})
     watcher = frames[#frames]
     login()
-    assert(hasText(locales[target].pages[1].title), "reload lost the selected language")
+    assert(hasText(locales[target].pages[5].title), "reload lost the selected language or saved step")
     named("ApplicantScoutSetupLanguage_auto").scripts.OnClick()
     assert(ApplicantScoutDB.setupLocale == nil, "automatic language preference was not restored")
-    assert(hasText(locales[automatic].pages[1].title), "automatic language did not follow the client or fallback")
+    assert(hasText(locales[automatic].pages[5].title), "automatic language did not follow the client or fallback")
     print("ok " .. scenario .. " " .. clientLocale)
     return
 end
@@ -452,11 +643,16 @@ for _, f in ipairs(frames) do if f.kind == "EditBox" and f.parent == initialPane
 assert(url and not url.focused, "automatic panel stole keyboard focus")
 local downloadURL = "https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest"
 assert(url.text == "https://github.com/Antrakt92/ApplicantScout-Companion", "source address is incorrect")
-button("Select download link").scripts.OnClick()
-assert(url.text == downloadURL and url.focused and url.selected, "copy action did not select the address")
+local sourceURL = "https://github.com/Antrakt92/ApplicantScout-Companion"
+button("Select source link").scripts.OnClick()
+assert(url.text == sourceURL and url.focused and url.selected, "source action did not select the address")
 url:SetText("bad pasted address")
 url.scripts.OnTextChanged(url, true)
-assert(url.text == downloadURL, "download address remained editable")
+assert(url.text == sourceURL, "source address remained editable")
+button("Next").scripts.OnClick()
+button("Select download link").scripts.OnClick()
+assert(url.text == downloadURL and url.focused and url.selected, "installer action did not select the address")
+button("Back").scripts.OnClick()
 local curseforgeURL = "https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay"
 for _ = 1, 4 do button("Next").scripts.OnClick() end
 local hasCurseForgeLabel = false

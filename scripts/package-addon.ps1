@@ -21,6 +21,7 @@ $RequiredFiles = @(
     "THIRD-PARTY-NOTICES.md",
     "CHANGELOG.md",
     "media\logo.png",
+    "media\setup-preview.tga",
     "libs\qrencode.lua"
 )
 $ReleaseInputFiles = $RequiredFiles + @(

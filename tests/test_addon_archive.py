@@ -132,3 +132,20 @@ def test_marketplace_archive_rejects_missing_setup_translations(tmp_path: Path):
     _write_archive(archive_path, omit="ApplicantScout/SetupLocales.lua")
     with pytest.raises(ArchiveContractError, match="SetupLocales.lua"):
         validate_marketplace_archive(archive_path)
+
+
+def test_marketplace_archive_rejects_missing_setup_example(tmp_path: Path):
+    archive_path = tmp_path / "ApplicantScout-0.5.3.zip"
+    _write_archive(archive_path, omit="ApplicantScout/media/setup-preview.tga")
+    with pytest.raises(ArchiveContractError, match="setup-preview.tga"):
+        validate_marketplace_archive(archive_path)
+
+
+def test_setup_example_is_an_uncompressed_power_of_two_rgba_texture():
+    import struct
+
+    texture = (Path(__file__).parents[1] / "media/setup-preview.tga").read_bytes()
+    assert texture[1] == 0 and texture[2] == 2, "texture must be uncompressed true-color TGA"
+    assert struct.unpack_from("<HH", texture, 12) == (512, 512)
+    assert texture[16] == 32 and texture[17] & 0x0F == 8, "RGBA texture must retain its alpha channel"
+    assert len(texture) >= 18 + 512 * 512 * 4
