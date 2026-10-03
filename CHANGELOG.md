@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Hide the setup scrollbar when the instructions fit, while keeping scrolling
+  available for longer details.
+
 - Add an explicit automatic-reminder checkbox and an `/apscout` menu with addon
   settings, setup help and troubleshooting controls in every supported language.
   Older guide-completion flags no longer hide the first reminder.

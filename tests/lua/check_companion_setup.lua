@@ -13,6 +13,7 @@ local fontstrings, textures = {}, {}
 local now = 1000
 local fontColdUntil
 local measuredHeight = 450
+if scenario == "scrollbar" then measuredHeight = 180 end
 local combat = false
 local challenge, encounter = false, false
 InCombatLockdown = function() return combat end
@@ -128,6 +129,7 @@ end
 CreateFrame = function(kind, name, parent, template)
     local frame = widget()
     frame.kind, frame.name, frame.parent, frame.template = kind, name, parent, template
+    if template == "UIPanelScrollFrameTemplate" then frame.ScrollBar = widget() end
     frames[#frames + 1] = frame
     return frame
 end
@@ -208,6 +210,30 @@ local function login()
 end
 if scenario == "combat" then combat = true end
 login()
+if scenario == "scrollbar" then
+    local viewport
+    for _, f in ipairs(frames) do
+        if f.template == "UIPanelScrollFrameTemplate" then viewport = f end
+    end
+    assert(viewport and not viewport.ScrollBar.shown, "fitting instructions display an empty scrollbar")
+    assert(viewport.child.height == viewport.height, "bottom padding creates unnecessary scrolling")
+    measuredHeight = 450
+    named("ApplicantScoutSetupDetails").scripts.OnClick()
+    assert(viewport.ScrollBar.shown, "long details have no scrollbar")
+    viewport:SetVerticalScroll(120)
+    measuredHeight = 196
+    named("ApplicantScoutSetupDetails").scripts.OnClick()
+    assert(not viewport.ScrollBar.shown and viewport.offset == 0, "collapsing to an exact fit keeps scrolling")
+    measuredHeight = 197
+    button("Next").scripts.OnClick()
+    assert(viewport.ScrollBar.shown, "one-pixel overflow is inaccessible")
+    viewport.scripts.OnScrollRangeChanged(viewport, 0, 0)
+    assert(not viewport.ScrollBar.shown, "range update restores an empty scrollbar")
+    viewport.scripts.OnScrollRangeChanged(viewport, 0, 13)
+    assert(viewport.ScrollBar.shown, "range update hides overflowing content")
+    print("ok " .. scenario)
+    return
+end
 if scenario == "legacy-dismissed" or scenario == "explicit-reminder" then
     assert(shown(), "old completion flag blocked first explicit-preference onboarding")
     assert(not ApplicantScoutDB.setupAutoHidden, "old dismissal was treated as explicit consent")

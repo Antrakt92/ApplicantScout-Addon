@@ -10314,9 +10314,11 @@ do
             local measured, textHeight = pcall(body.GetStringHeight, body)
             textHeight = measured and SafeNumber(textHeight, 0) or 0
             if textHeight <= 0 then textHeight = 588 end
-            local contentHeight = math.max(viewHeight, textHeight + 12)
+            local needsScroll = textHeight > viewHeight
+            local contentHeight = needsScroll and textHeight + 12 or viewHeight
             content:SetHeight(contentHeight)
             scroll:SetVerticalScroll(isRetry and math.max(0, math.min(priorScroll, contentHeight - viewHeight)) or 0)
+            scroll.ScrollBar:SetShown(needsScroll)
             hint:SetText(step.hint)
             title:SetText(ui.title)
             progress:SetText(string.format(ui.step, page, #pages))
@@ -10428,6 +10430,9 @@ do
             scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
             scroll:SetPoint("TOPLEFT", 40, -236)
             scroll:SetSize(664, viewHeight)
+            scroll:HookScript("OnScrollRangeChanged", function(self, _, verticalRange)
+                self.ScrollBar:SetShown(SafeNumber(verticalRange, 0) > 0)
+            end)
             content = CreateFrame("Frame", nil, scroll)
             content:SetSize(664, 600)
             scroll:SetScrollChild(content)
