@@ -17,8 +17,8 @@ applied together, or switch to Party view to review your current group.
 Windows.** The addon collects group information. The Windows app displays the
 overlay shown below.
 
-**[Get the Windows companion](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest)**
-· **[Follow the setup guide](https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/GETTING_STARTED.md)**
+**[Download Windows Companion](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest)**
+· **[Illustrated setup guide](https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/GETTING_STARTED.md)**
 
 On the download page, choose `ApplicantScoutCompanionSetup-*.exe` under
 **Assets**. Setup also requires a free Warcraft Logs account and API client;
@@ -46,47 +46,21 @@ or turn it off in settings. Auto Hi greetings are optional.
 
 ## Quick Setup
 
-On your first login, the addon opens a five-step guide covering the companion,
-Windows installer, Warcraft Logs API client, Screenshots folder and first results.
-The right sidebar lists the five installation steps and **Addon settings**.
-`/apscout` opens this window at the first installation step; `/apscout config`
-opens or closes its settings section. The last installation step leads directly
-to Settings. The sidebar lets you jump to any topic. Short instructions appear first;
-**More detail** expands the complete guide. The first step includes an example
-Companion overlay; later steps include download, Warcraft Logs and Companion
-settings screenshots inside the addon. Use **Next** and **Back** to move through it.
-**Close** postpones the guide and resumes the same step on your next login or reload;
-The Settings tab contains **Do not open this window on login**, the only persistent
-opt-out. Closing the window leaves reminders enabled unless you check that box. Older
-guide-completion preferences are reset once so you can make this choice explicitly.
-Open `/apscout` (or `/apscout menu`) for the combined installation and settings window,
-or `/apscout setup` for the guide. The addon cannot detect whether the
-companion is installed, so finishing the guide does not verify the connection.
+The installation guide opens on login until you choose **Don't show on login**
+beside the close button. Closing with the cross, **Close** or Escape postpones
+it until the next login or reload. Use **Show on login** to enable it again.
 
-The guide's links are selectable for **Ctrl+C**; WoW does not open your browser
-for you. **Illustrated guide** selects the browser guide with setup screenshots.
-The main link follows the step: GitHub project, latest release, Warcraft Logs API Clients,
-then the browser guide. Switching between short and detailed instructions keeps
-your selected link intact.
-The introduction offers separate **Project on GitHub**, download and illustrated
-guide buttons. The download link always opens the latest Companion release;
-choose the Windows `.exe` installer under **Assets** there.
-Press **Escape** or choose **Later** to postpone it until the next login or reload.
-The window adapts when you change display size or UI scale. It hides during
-combat, loading, boss encounters and active Mythic+ runs, then resumes the same step.
+Type `/apscout` to open the combined installation and settings window, or
+`/apscout config` to go straight to addon settings. The sidebar lets you switch
+between the five setup steps and settings. **More detail** expands the instructions.
 
-The guide follows your WoW client language automatically. Its language selector
-is available on every step and remembers an explicit choice across characters
-and reloads. Choose **Auto (WoW)** to return to the client language. Supported
-locales are English, German, Spanish (Spain and Latin America), French, Italian,
-Brazilian Portuguese, Russian, Korean, Simplified Chinese and Traditional Chinese.
-The guide switches its own fonts with the language and tries compatible bundled
-WoW fonts when the preferred face is unavailable. If none can load, it shows a
-readable English explanation and keeps your saved
-choice. Non-Latin language choices also have English names in the selector.
-An unknown client locale uses English. Companion's own interface and the linked
-illustrated guide remain in English; translated steps keep its exact field names
-such as **Test WCL** so you can find them.
+The guide follows your client language. Choose another language in its selector,
+or **Auto (WoW)** to follow the client again. Your choice is saved across characters
+and reloads. All current Retail client languages are supported; Companion and the
+browser guide use English field names such as **Test WCL**.
+
+WoW cannot open a browser or copy a link automatically. Select a download or guide
+link, press **Ctrl+C**, then paste it into your browser outside the game.
 
 1. Install the addon through [CurseForge](https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay)
    or [Wago](https://addons.wago.io/addons/ANzke264),
