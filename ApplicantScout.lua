@@ -10340,9 +10340,10 @@ do
                     control:SetSize(28, 28)
                     control:SetHitRectInsets(0, -532, 0, 0)
                     local text = control:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                    text:SetPoint("TOPLEFT", 36, -4)
+                    text:SetPoint("LEFT", control, "RIGHT", 8, 0)
                     text:SetSize(532, 28)
                     text:SetJustifyH("LEFT")
+                    text:SetJustifyV("MIDDLE")
                     registerFont(text, 12, "GameFontHighlight")
                     control.key, control.label = key, text
                     control:SetScript("OnClick", function(self)

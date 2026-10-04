@@ -52,6 +52,7 @@ local function widget()
         SetBackdropBorderColor = function(self, ...) self.border = {...} end,
         SetColorTexture = function(self, ...) self.background = {...} end,
         SetTexture = function(self, path) self.texture = path end,
+        SetJustifyV = function(self, value) self.justifyV = value end,
         SetHeight = function(self, height) self.height = height end,
         SetWidth = function(self, width) self.width = width end,
         SetChecked = function(self, value) self.checked = value end,
@@ -300,6 +301,13 @@ if scenario == "menu" or scenario == "menu-export" then
     local language = ns.CompanionSetupLocales[clientLocale]
     assert(hasText(language.menu[14]), "menu explanation was not localized")
     assert(named("ApplicantScoutMenuCheck6").checked, "settings did not initialize the saved greeting preference")
+    for _, index in ipairs({3, 6, 7, 8}) do
+        local control = named("ApplicantScoutMenuCheck" .. index)
+        local text = control.label
+        assert(text.point[1] == "LEFT" and text.point[2] == control and text.point[3] == "RIGHT"
+            and text.point[4] == 8 and text.point[5] == 0 and text.justifyV == "MIDDLE",
+            "checkbox caption is not vertically centered on its square")
+    end
     for _, f in ipairs(frames) do
         if f.parent == hub then
             assert(f.point[2] >= 24 and -f.point[3] >= 0
@@ -323,6 +331,10 @@ if scenario == "menu" or scenario == "menu-export" then
             local parent = f.parent
             local x, y, width, height = rectangle(parent)
             local p = f.point
+            if p[1] == "LEFT" and p[3] == "RIGHT" then
+                local ax, ay, aw, ah = rectangle(p[2])
+                return ax + aw + p[4], ay + (ah - f.height) / 2 - p[5], f.width, f.height
+            end
             if p[1] == "TOPLEFT" then return x + (p[2] or 0), y - (p[3] or 0), f.width, f.height end
             if p[1] == "BOTTOMLEFT" then return x + p[2], y + height - p[3] - f.height, f.width, f.height end
             if p[1] == "CENTER" then return x + (width - f.width) / 2, y + (height - f.height) / 2, f.width, f.height end
