@@ -9792,8 +9792,8 @@ do
                 end
             end
         end
-        local function registerFont(region, size, template, isButton)
-            fontEntries[#fontEntries + 1] = {region = region, size = size, template = template, isButton = isButton}
+        local function registerFont(region, size, template, isButton, justifyV)
+            fontEntries[#fontEntries + 1] = {region = region, size = size, template = template, isButton = isButton, justifyV = justifyV}
         end
         local function attachFont(entry, font)
             if entry.isButton then
@@ -9803,6 +9803,7 @@ do
                 entry.region:SetDisabledFontObject(states and states.disabled or font)
             else
                 entry.region:SetFontObject(font)
+                if entry.justifyV then entry.region:SetJustifyV(entry.justifyV) end
             end
         end
         local function resolveFont(entry, code)
@@ -10335,11 +10336,11 @@ do
                     control:SetSize(28, 28)
                     control:SetHitRectInsets(0, -532, 0, 0)
                     local text = control:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                    text:SetPoint("LEFT", control, "RIGHT", 8, 4)
+                    text:SetPoint("LEFT", control, "RIGHT", 8, 0)
                     text:SetSize(532, 28)
                     text:SetJustifyH("LEFT")
                     text:SetJustifyV("MIDDLE")
-                    registerFont(text, 12, "GameFontHighlight")
+                    registerFont(text, 12, "GameFontHighlight", false, "MIDDLE")
                     control.key, control.label = key, text
                     control:SetScript("OnClick", function(self)
                         callback(self:GetChecked() and true or false)
