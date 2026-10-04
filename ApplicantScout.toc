@@ -21,7 +21,7 @@
 ## X-Category: Data Export
 ## X-Curse-Project-ID: 1541576
 ## X-Wago-ID: ANzke264
-## X-License: MIT
+## X-License: Custom (see LICENSE)
 ## X-Website: https://github.com/Antrakt92/ApplicantScout-Addon
 
 libs\qrencode.lua

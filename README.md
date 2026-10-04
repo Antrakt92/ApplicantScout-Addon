@@ -229,6 +229,12 @@ details, and the development-only addon ZIP. Report security issues through
 
 ## License
 
-ApplicantScout uses the [MIT license](LICENSE). The bundled QR encoder retains
-its upstream BSD-3-Clause license; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
-and the header in [libs/qrencode.lua](libs/qrencode.lua).
+ApplicantScout is free to use. The project's original code uses the [Antrakt Attribution and CurseForge Rewards License 1.0](https://github.com/Antrakt92/ApplicantScout-Addon/blob/main/LICENSE), a custom license based on MIT.
+
+Public forks, ports and projects reusing an original implementation of a significant user-facing feature must credit Antrakt92, name [ApplicantScout](https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay) and link to the original.
+
+If such a project earns CurseForge Reward Points, allocate at least 10% of that project's points in total to the CurseForge account `antrakt92` through Members.
+
+Reusing several Antrakt92 projects does not add percentages. Isolated lines, small helper snippets, standard API calls, independently implemented ideas and compatibility or dependency-only use are exempt from reward sharing and additional public attribution. No separate permission request is needed; CurseForge requires the author to accept the member invitation.
+
+Previously granted MIT permissions remain valid. Third-party code keeps its original license. See [third-party notices](https://github.com/Antrakt92/ApplicantScout-Addon/blob/main/THIRD-PARTY-NOTICES.md).

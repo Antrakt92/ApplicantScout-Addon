@@ -1,6 +1,8 @@
 # Third-Party Notices
 
-ApplicantScout includes a small bundled QR encoder library.
+ApplicantScout's original code uses the custom license in LICENSE. Previously
+granted MIT permissions remain valid. ApplicantScout includes a small bundled
+QR encoder library, which retains its upstream license.
 
 ## luaqrcode / qrencode.lua
 
