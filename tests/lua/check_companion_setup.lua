@@ -303,7 +303,7 @@ if scenario == "menu" or scenario == "menu-export" then
     for _, f in ipairs(frames) do
         if f.parent == hub then
             assert(f.point[2] >= 24 and -f.point[3] >= 0
-                and f.point[2] + f.width <= 736 and -f.point[3] + f.height <= hub.height,
+                and f.point[2] + f.width <= 612 and -f.point[3] + f.height <= hub.height,
                 "settings control exceeds its shared content area")
         end
     end
@@ -488,15 +488,15 @@ if scenario == "design" or scenario == "design-export" then
     assert(hasText(language.pages[desiredPage].summary), "short steps were not restored")
     assert(address.text == expectedURL and address.focused, "collapsing details interrupted copying")
     assert(named("ApplicantScoutSetupStep" .. desiredPage).setupSelected, "detail toggle moved the current step")
-    assert(panel().width == 1000, "sidebar has no dedicated space")
+    assert(panel().width == 840 and panel().height == 620, "sidebar has no dedicated space")
     for index = 1, 5 do
         local item = named("ApplicantScoutSetupStep" .. index)
-        assert(item.point[2] >= 752 and item.width == 192 and item.height == 56, "installation navigation is not in the right sidebar")
+        assert(item.point[2] >= 628 and item.width == 160 and item.height == 46, "installation navigation is not in the right sidebar")
     end
-    assert(named("ApplicantScoutSetupSettingsTab").point[2] >= 752, "settings are outside the shared sidebar")
+    assert(named("ApplicantScoutSetupSettingsTab").point[2] >= 628, "settings are outside the shared sidebar")
     local backgrounds, example = 0, nil
     for _, texture in ipairs(textures) do
-        if texture.parent == panel() and texture.width == 712 and texture.shown then
+        if texture.parent == panel() and texture.width == 592 and texture.shown then
             assert(texture.layer == "BACKGROUND", "card background can cover parent text")
             backgrounds = backgrounds + 1
         elseif texture.parent and texture.parent.parent and texture.parent.parent.kind == "ScrollFrame" then
@@ -509,7 +509,7 @@ if scenario == "design" or scenario == "design-export" then
     if desiredPage > 1 then
         assert(example.point[1] == "TOPLEFT" and -example.point[3] == measuredHeight + 16,
             "illustration overlaps instruction text")
-        assert(example.width == 624 and example.parent.height >= -example.point[3] + example.height,
+        assert(example.width == 520 and example.parent.height >= -example.point[3] + example.height,
             "illustration is outside scrollable content")
     end
     do
@@ -523,8 +523,9 @@ if scenario == "design" or scenario == "design-export" then
         local p = assert(rawget(f, "point"), "missing point")
         local width, height = rawget(f, "width") or 0, rawget(f, "height") or 0
         if f.parent and f.parent.parent and f.parent.parent.kind == "ScrollFrame" then
-            local x, y = 40, 236
-            if p[1] == "TOPRIGHT" then return x + 664 - width + (p[2] or 0), y - (p[3] or 0), width, height end
+            local viewport = f.parent.parent
+            local x, y = viewport.point[2], -viewport.point[3]
+            if p[1] == "TOPRIGHT" then return x + 548 - width + (p[2] or 0), y - (p[3] or 0), width, height end
             return x + (p[2] or 0), y - (p[3] or 0), width, height
         end
         if p[1] == "TOPLEFT" then return p[2], -p[3], width, height end
@@ -567,7 +568,7 @@ if scenario == "design" or scenario == "design-export" then
             local size = type(font) == "table" and font.fontSize or 12
             items[#items + 1] = {kind, x, y, width, height, rawget(f, "text") or "", size,
                 rawget(f, "background") or {}, rawget(f, "border") or {}, rawget(f, "texture") or "",
-                rawget(f, "enabled") ~= false, rawget(f, "name") or ""}
+                (kind ~= "ScrollFrame" and rawget(f, "enabled") ~= false) or (kind == "ScrollFrame" and f.ScrollBar.shown), rawget(f, "name") or ""}
         end
         for _, f in ipairs(textures) do
             if f.parent == panel() and f.shown and f.layer == "BACKGROUND" then export(f, "texture") end

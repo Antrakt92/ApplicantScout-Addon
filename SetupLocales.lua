@@ -842,7 +842,6 @@ zhTW = "自動開啟可在插件設定中調整。重新開啟：/apscout。",
 for code, explanation in pairs(reminderExplanations) do
     local page = locales[code].pages[5]
     page.body = page.body:gsub("[^\n]+$", function() return explanation .. " /apscout setup" end)
-    page.summary = page.summary:gsub("[^\n]+$", function() return explanation .. " /apscout setup" end)
 end
 
 local downloadCaptions = {

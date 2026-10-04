@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Make setup and settings more compact, with shorter navigation labels, tighter
+  spacing and a solid background for readable text.
+
 - Shorten guide steps in every language. Keep optional settings and extra
   explanations in More detail.
 

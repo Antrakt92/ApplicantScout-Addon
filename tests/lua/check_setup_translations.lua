@@ -17,6 +17,7 @@ for _, code in ipairs(supported) do
     for _, caption in ipairs(language.menu) do
         assert(type(caption) == "string" and #caption > 0, "empty menu caption in " .. code)
     end
+    assert(not language.pages[5].summary:find("/apscout setup", 1, true), "automatic-opening help replaced the visible connection check")
     assert(type(string.format(language.ui.step, 2, 5)) == "string", "invalid step format")
     for step, page in ipairs(language.pages) do
         for _, key in ipairs({"title", "body", "hint", "summary", "chapter"}) do
