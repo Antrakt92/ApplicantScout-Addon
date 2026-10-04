@@ -9840,7 +9840,7 @@ do
         local ensureSettings, refreshSettings
         local settingsView = false
         local cards = {}
-        local preview, reminder, reminderLabel, quickDownloadButton
+        local preview, reminder, quickDownloadButton
         local languageItems, stepButtons = {}, {}
         local requested, ready, queued, postponed = false, false, false, false
         local internalHide = false
@@ -9984,8 +9984,8 @@ do
             guideButton:SetShown(not settingsView and page < 4)
             guideButton:SetText(ui.guide)
             detailsButton:SetText(expanded and ui.less or ui.details)
-            reminder:SetChecked(ApplicantScoutDB.setupAutoHidden)
-            reminderLabel:SetText(ui.noAuto)
+            reminder:SetText(ApplicantScoutDB.setupAutoHidden and ui.enableAuto or ui.noAuto)
+            paintButton(reminder, not ApplicantScoutDB.setupAutoHidden, ApplicantScoutDB.setupAutoHidden)
             laterButton:SetText(language.menu[13])
             back:SetText(ui.back)
             languageItems.auto:SetText(ui.automatic)
@@ -10014,8 +10014,7 @@ do
             for _, surface in ipairs(cards) do surface:SetShown(not settingsView) end
             for _, widget in ipairs({scroll, urlBox, copyHint, downloadButton, detailsButton,
                 nextButton}) do widget:SetShown(not settingsView) end
-            reminder:SetShown(settingsView)
-            reminderLabel:SetShown(settingsView)
+            reminder:Show()
             if menu then menu:SetShown(settingsView) end
             settingsBackdrop:SetShown(settingsView)
             settingsDescription:SetShown(settingsView)
@@ -10159,16 +10158,12 @@ do
                 scroll:SetVerticalScroll(0)
                 languageMenu:Hide()
             end, "ApplicantScoutSetupDetails")
-            reminder = CreateFrame("CheckButton", "ApplicantScoutSetupNoAuto", panel, "UICheckButtonTemplate")
-            reminder:SetSize(28, 28)
-            reminder:SetHitRectInsets(0, -198, -6, -6)
-            reminder:SetPoint("BOTTOMLEFT", 128, 20)
-            reminder:SetScript("OnClick", function(self)
-                ApplicantScoutDB.setupAutoHidden = self:GetChecked() and true or false
+            reminder = button("", 628, 566, 172, function()
+                ApplicantScoutDB.setupAutoHidden = not ApplicantScoutDB.setupAutoHidden
                 ApplicantScoutDB.setupDismissed = ApplicantScoutDB.setupAutoHidden
-                requested = true
-            end)
-            reminderLabel = label(-564, "GameFontHighlightSmall", 40, 164, 186)
+                if ApplicantScoutDB.setupAutoHidden then later() else refresh(true) end
+            end, "ApplicantScoutSetupNoAuto")
+            reminder:SetHeight(36)
             downloadButton = button("Select download link", 32, 114, 270, function() selectLink(links[page]) end,
                 "ApplicantScoutSetupLink")
             guideButton = button("Illustrated guide", 314, 114, 282, function() selectLink(guideURL) end)

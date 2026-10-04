@@ -795,8 +795,8 @@ local previewCaptions = {
 for code, caption in pairs(previewCaptions) do locales[code].ui.preview = caption end
 
 local reminderCaptions = {
-enUS = {"Do not open this window on login", "Close for this session. Automatic opening: Settings tab. Reopen: /apscout"},
-ruRU = {"Не открывать это окно при входе", "Закрыть до следующего входа. Автопоказ — во вкладке «Настройки». Открыть: /apscout"},
+enUS = {"Don’t show on login", "Close for this session. Automatic opening: Settings tab. Reopen: /apscout"},
+ruRU = {"Не показывать при входе", "Закрыть до следующего входа. Автопоказ — во вкладке «Настройки». Открыть: /apscout"},
 deDE = {"Dieses Fenster beim Login nicht öffnen", "Für diese Sitzung schließen. Automatisches Öffnen: Einstellungen. Öffnen: /apscout"},
 frFR = {"Ne pas ouvrir cette fenêtre à la connexion", "Fermer pour cette session. Ouverture automatique : Réglages. Ouvrir : /apscout"},
 esES = {"No abrir esta ventana al entrar", "Cerrar esta sesión. Apertura automática: Ajustes. Abrir: /apscout"},
@@ -810,6 +810,15 @@ zhTW = {"登入時不開啟此視窗", "本次登入期間關閉。自動開啟�
 for code, captions in pairs(reminderCaptions) do
     locales[code].ui.noAuto, locales[code].ui.reminder = unpack(captions)
 end
+
+local enableAutoCaptions = {
+    enUS = "Show on login", ruRU = "Показывать при входе",
+    deDE = "Beim Login anzeigen", frFR = "Afficher à la connexion",
+    esES = "Mostrar al entrar", esMX = "Mostrar al entrar",
+    itIT = "Mostra all’accesso", ptBR = "Mostrar ao entrar",
+    koKR = "접속 시 표시", zhCN = "登录时显示", zhTW = "登入時顯示",
+}
+for code, caption in pairs(enableAutoCaptions) do locales[code].ui.enableAuto = caption end
 
 local menuCaptions = {
 enUS = {"Addon settings", "Setup guide", "Enabled", "Mythic+ listing style", "Greeting on invite (Enter to save; empty = off)", "Greet new party members", "Always show QR (support)", "Debug messages (support)", "Take QR screenshot", "Move QR: Alt+drag", "Reset QR position", "Status in chat", "Close", "The addon sends applicants and roster by QR screenshot. Companion shows the results. Use Setup guide for installation; click the small Companion launcher to expand the overlay. /apscout opens this menu; /apscout help lists commands.", "Off", "Learning", "Relaxed", "Competitive", "Carry offered"},
@@ -827,18 +836,19 @@ esMX = {"Ajustes del addon", "Guía de instalación", "Activado", "Estilo del gr
 for code, captions in pairs(menuCaptions) do locales[code].menu = captions end
 
 local reminderExplanations = {
-enUS = "Automatic opening is controlled in Addon settings. Reopen this window: /apscout.",
-ruRU = "Автопоказ отключается в настройках аддона. Открыть это окно снова: /apscout.",
-deDE = "Automatisches Öffnen wird in den Addon-Einstellungen gesteuert. Fenster öffnen: /apscout.",
-frFR = "L’ouverture automatique se règle dans les réglages de l’addon. Rouvrir : /apscout.",
-esES = "La apertura automática se controla en los ajustes del addon. Abrir de nuevo: /apscout.",
-esMX = "La apertura automática se controla en los ajustes del addon. Abrir de nuevo: /apscout.",
-itIT = "L’apertura automatica si controlla nelle impostazioni dell’addon. Riapri: /apscout.",
-ptBR = "A abertura automática é controlada nas configurações do addon. Reabrir: /apscout.",
-koKR = "자동 열기는 애드온 설정에서 변경합니다. 다시 열기: /apscout.",
-zhCN = "自动打开可在插件设置中调整。重新打开：/apscout。",
-zhTW = "自動開啟可在插件設定中調整。重新開啟：/apscout。",
+enUS = "Use the button beside × to change automatic opening. Reopen: /apscout.",
+ruRU = "Автопоказ меняется кнопкой рядом с ×. Открыть снова: /apscout.",
+deDE = "Automatisches Öffnen: Taste neben ×. Erneut öffnen: /apscout.",
+frFR = "Ouverture automatique : bouton près de ×. Rouvrir : /apscout.",
+esES = "Apertura automática: botón junto a ×. Abrir de nuevo: /apscout.",
+esMX = "Apertura automática: botón junto a ×. Abrir de nuevo: /apscout.",
+itIT = "Apertura automatica: pulsante accanto a ×. Riapri: /apscout.",
+ptBR = "Abertura automática: botão ao lado de ×. Reabrir: /apscout.",
+koKR = "자동 열기: × 옆 버튼. 다시 열기: /apscout.",
+zhCN = "自动打开：使用 × 旁的按钮。重新打开：/apscout。",
+zhTW = "自動開啟：使用 × 旁的按鈕。重新開啟：/apscout。",
 }
+
 for code, explanation in pairs(reminderExplanations) do
     local page = locales[code].pages[5]
     page.body = page.body:gsub("[^\n]+$", function() return explanation .. " /apscout setup" end)

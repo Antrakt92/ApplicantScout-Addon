@@ -2,7 +2,7 @@ local ns = {}
 assert(loadfile("SetupLocales.lua"))("ApplicantScout", ns)
 local locales = ns.CompanionSetupLocales
 local supported = {"enUS", "deDE", "esES", "esMX", "frFR", "itIT", "ptBR", "ruRU", "koKR", "zhCN", "zhTW"}
-local keys = {"title", "step", "language", "download", "guide", "later", "done", "back", "next", "finish", "copy", "deferred", "automatic", "details", "less", "source", "wcl", "preview", "noAuto", "reminder", "companionDownload", "settings"}
+local keys = {"title", "step", "language", "download", "guide", "later", "done", "back", "next", "finish", "copy", "deferred", "automatic", "details", "less", "source", "wcl", "preview", "noAuto", "enableAuto", "reminder", "companionDownload", "settings"}
 local count = 0
 for _ in pairs(locales) do count = count + 1 end
 assert(count == #supported, "unexpected translation inventory")

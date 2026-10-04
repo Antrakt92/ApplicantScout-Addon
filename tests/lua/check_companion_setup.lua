@@ -239,17 +239,15 @@ if scenario == "legacy-dismissed" or scenario == "explicit-reminder" then
     assert(shown(), "old completion flag blocked first explicit-preference onboarding")
     assert(not ApplicantScoutDB.setupAutoHidden, "old dismissal was treated as explicit consent")
     local choice = named("ApplicantScoutSetupNoAuto")
-    assert(not choice.shown, "automatic-opening control leaked into installation")
+    assert(choice.shown and choice.kind == "Button" and choice.point[2] == 628 and choice.point[3] == 566,
+        "persistent close action is not beside the header cross")
     named("ApplicantScoutSetupSettingsTab").scripts.OnClick()
     assert(choice.shown, "automatic-opening control missing from settings")
-    choice:SetChecked(true)
     choice.scripts.OnClick(choice)
-    assert(ApplicantScoutDB.setupAutoHidden and shown(), "checkbox failed to save without closing")
+    assert(ApplicantScoutDB.setupAutoHidden and not shown(), "persistent close did not save and close")
     event("PLAYER_REGEN_ENABLED")
     drain()
-    assert(shown(), "saving preference unexpectedly closed the active guide")
-    named("ApplicantScoutSetupStep1").scripts.OnClick()
-    button("Close").scripts.OnClick()
+    assert(not shown(), "persistent close reopened in the same session")
     frames, pending, fontstrings = {}, {}, {}
     harness = env.load_addon({})
     watcher = frames[#frames]
@@ -257,11 +255,10 @@ if scenario == "legacy-dismissed" or scenario == "explicit-reminder" then
     assert(not shown(), "explicit opt-out was ignored on reload")
     SlashCmdList.APSCOUT("setup")
     drain()
-    assert(shown() and named("ApplicantScoutSetupNoAuto").checked, "manual reopening lost preference")
+    assert(shown() and ApplicantScoutDB.setupAutoHidden and named("ApplicantScoutSetupNoAuto").text == "Show on login", "manual reopening lost preference or restore action")
     choice = named("ApplicantScoutSetupNoAuto")
     named("ApplicantScoutSetupSettingsTab").scripts.OnClick()
     assert(choice.shown, "manual opening did not expose the preference in settings")
-    choice:SetChecked(false)
     choice.scripts.OnClick(choice)
     button("Close").scripts.OnClick()
     frames, pending, fontstrings = {}, {}, {}
@@ -385,12 +382,6 @@ if scenario == "menu" or scenario == "menu-export" then
     button(language.menu[4] .. ": " .. language.menu[18]).scripts.OnClick()
     assert(ApplicantScoutDB.autoMPlusPlaystyle == "Expert", "menu style skipped canonical setting helper")
     local edit = named("ApplicantScoutMenuGreeting")
-    edit:SetFocus()
-    edit:SetText("pending greeting")
-    local choice = named("ApplicantScoutSetupNoAuto")
-    choice:SetChecked(false)
-    choice.scripts.OnClick(choice)
-    assert(edit.text == "pending greeting", "changing settings discarded the focused greeting")
     edit:SetText("hello menu")
     edit.scripts.OnEnterPressed(edit)
     assert(ApplicantScoutDB.autoHiMessage == "hello menu", "menu greeting was not saved")
@@ -463,7 +454,8 @@ if scenario == "resume-step" then
     return
 end
 if scenario == "design" or scenario == "design-export" then
-    assert(not named("ApplicantScoutSetupNoAuto").shown, "guide exposes unrelated automatic-opening preference")
+    assert(named("ApplicantScoutSetupNoAuto").shown and named("ApplicantScoutSetupNoAuto").kind == "Button",
+        "guide has no persistent header close action")
     for _, f in ipairs(frames) do
         assert(f.text ~= "Already set up" and f.text ~= "Menu", "redundant guide action was created")
     end

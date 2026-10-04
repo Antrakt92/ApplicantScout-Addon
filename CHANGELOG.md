@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Put the login reminder action beside the close button. Hide it on future
+  logins or restore automatic opening from the same button.
+
 - Make setup and settings more compact, with shorter navigation labels, tighter
   spacing and a solid background for readable text.
 
