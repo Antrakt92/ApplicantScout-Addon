@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Combine installation and addon settings in one window with shared language
+  selection. `/apscout` starts the guide; the sixth tab contains settings.
+  Remove the separate settings windows.
+
 - Separate the GitHub project, Companion download and illustrated guide links
   on the introduction step.
 

@@ -80,7 +80,7 @@ local function widget()
         SetFont = function(self, path, size, flags)
             if scenario == "font-all-missing" then return false end
             if scenario == "font-compatible-fallback" and path:find(blockedFont[fallbackLocale], 1, true) then return false end
-            if (scenario == "font-missing" or scenario == "retry-interaction") and koreanFont(path) then return false end
+            if (scenario == "font-missing" or scenario == "retry-interaction" or scenario == "settings-font") and koreanFont(path) then return false end
             if scenario == "font-error" and koreanFont(path) then error("missing font") end
             if scenario == "font-partial" and koreanFont(path) and size == 14 then return false end
             self.font, self.fontSize, self.fontFlags = path, size, flags
@@ -265,30 +265,80 @@ if scenario == "legacy-dismissed" or scenario == "explicit-reminder" then
     print("ok " .. scenario)
     return
 end
+if scenario == "settings-font" then
+    ApplicantScoutDB.setupLocale = "koKR"
+    local root = panel()
+    named("ApplicantScoutSetupSettingsTab").scripts.OnClick()
+    drain()
+    assert(panel() == root and shown() and named("ApplicantScoutSetupSettings").shown, "font fallback changed the settings window")
+    assert(ApplicantScoutDB.setupLocale == "koKR", "font fallback discarded selected settings language")
+    assert(hasText("Font unavailable; showing English"), "hidden guide body concealed the settings font fallback")
+    print("ok " .. scenario)
+    return
+end
 if scenario == "menu" or scenario == "menu-export" then
     SlashCmdList.APSCOUT("")
-    local hub = named("ApplicantScoutMenu")
-    assert(hub.shown and not shown(), "bare command did not replace guide with menu")
+    drain()
+    local root = panel()
+    assert(shown(), "bare command did not open the shared guide")
+    ApplicantScoutDB.autoHiGreetNewPartyMembers = true
+    named("ApplicantScoutSetupSettingsTab").scripts.OnClick()
+    drain()
+    local hub = named("ApplicantScoutSetupSettings")
+    assert(hub.parent == root and hub.shown and shown(), "settings are not inside the shared guide")
+    for _, frame in ipairs(frames) do
+        assert(frame.name ~= "ApplicantScoutMenu" and frame.name ~= "ApplicantScoutSettingsFrame", "an old settings window was created")
+    end
     local ns = {}
     assert(loadfile("SetupLocales.lua"))("ApplicantScout", ns)
     local language = ns.CompanionSetupLocales[clientLocale]
     assert(hasText(language.menu[14]), "menu explanation was not localized")
+    assert(named("ApplicantScoutMenuCheck6").checked, "settings did not initialize the saved greeting preference")
+    for _, f in ipairs(frames) do
+        if f.parent == hub then
+            assert(f.point[2] >= 24 and -f.point[3] >= 0
+                and f.point[2] + f.width <= 736 and -f.point[3] + f.height <= hub.height,
+                "settings control exceeds its shared content area")
+        end
+    end
     if scenario == "menu-export" then
         local items = {}
-        local function export(f, kind)
-            local point = f.point
+        local function visible(f)
+            local current = f
+            while current and current ~= UIParent do
+                if not current.shown then return false end
+                if current == root then return true end
+                current = rawget(current, "parent")
+            end
+            return false
+        end
+        local function rectangle(f)
+            if f == root then return 0, 0, f.width, f.height end
             local parent = f.parent
-            local x, y = point[2], -point[3]
-            if parent ~= hub then x, y = x + parent.point[2], y - parent.point[3] end
+            local x, y, width, height = rectangle(parent)
+            local p = f.point
+            if p[1] == "TOPLEFT" then return x + (p[2] or 0), y - (p[3] or 0), f.width, f.height end
+            if p[1] == "BOTTOMLEFT" then return x + p[2], y + height - p[3] - f.height, f.width, f.height end
+            if p[1] == "CENTER" then return x + (width - f.width) / 2, y + (height - f.height) / 2, f.width, f.height end
+            error("unsupported settings anchor " .. p[1])
+        end
+        local function export(f, kind)
+            local x, y, width, height = rectangle(f)
             local font = rawget(f, "fontObject") or rawget(f, "normalFont")
-            items[#items + 1] = {kind, x, y, f.width, f.height, f.text or "",
-                type(font) == "table" and font.fontSize or 12, {}, {}, "", true, f.name or ""}
+            local text = rawget(f, "text") or ""
+            if kind == "CheckButton" and f.checked then text = "✓" end
+            items[#items + 1] = {kind, x, y, width, height, text,
+                type(font) == "table" and font.fontSize or 12,
+                rawget(f, "background") or {}, rawget(f, "border") or {}, "", true, rawget(f, "name") or ""}
+        end
+        for _, f in ipairs(textures) do
+            if visible(f) and f.layer == "BACKGROUND" then export(f, "texture") end
         end
         for _, f in ipairs(frames) do
-            if f.parent == hub then export(f, f.kind) end
+            if f ~= root and visible(f) and f.template ~= "UIPanelCloseButton" then export(f, f.kind) end
         end
         for _, f in ipairs(fontstrings) do
-            if f.parent == hub or (f.parent.parent == hub and f.parent.kind == "CheckButton") then export(f, "text") end
+            if visible(f) and f.parent.kind ~= "Button" then export(f, "text") end
         end
         local function json(value)
             if type(value) == "string" then
@@ -306,7 +356,7 @@ if scenario == "menu" or scenario == "menu-export" then
         return
     end
     for index, key in pairs({[3] = "enabled", [6] = "autoHiGreetNewPartyMembers",
-        [7] = "qrAlwaysVisible", [8] = "debug", [20] = "setupAutoHidden"}) do
+        [7] = "qrAlwaysVisible", [8] = "debug"}) do
         local control = named("ApplicantScoutMenuCheck" .. index)
         for _, value in ipairs({true, false}) do
             control:SetChecked(value)
@@ -319,7 +369,7 @@ if scenario == "menu" or scenario == "menu-export" then
     local edit = named("ApplicantScoutMenuGreeting")
     edit:SetFocus()
     edit:SetText("pending greeting")
-    local choice = named("ApplicantScoutMenuCheck20")
+    local choice = named("ApplicantScoutSetupNoAuto")
     choice:SetChecked(false)
     choice.scripts.OnClick(choice)
     assert(edit.text == "pending greeting", "changing settings discarded the focused greeting")
@@ -329,16 +379,38 @@ if scenario == "menu" or scenario == "menu-export" then
     edit:SetText("discard me")
     edit.scripts.OnEscapePressed(edit)
     assert(edit.text == "hello menu" and ApplicantScoutDB.autoHiMessage == "hello menu", "escape saved canceled greeting")
-    button(language.menu[2]).scripts.OnClick()
+    button(language.ui.back).scripts.OnClick()
+    assert(shown() and not hub.shown and panel() == root, "back changed the window instead of the section")
+    named("ApplicantScoutSetupStep5").scripts.OnClick()
+    named("ApplicantScoutSetupNext").scripts.OnClick()
     drain()
-    assert(shown() and not hub.shown, "menu guide action left overlapping windows")
+    assert(hub.shown and panel() == root, "last install step did not lead to settings in the same window")
+    SlashCmdList.APSCOUT("config")
+    drain()
+    assert(not shown(), "legacy config did not close the active settings section")
+    SlashCmdList.APSCOUT("config")
+    drain()
+    assert(hub.shown and panel() == root, "legacy config created a separate window")
     SlashCmdList.APSCOUT("menu")
-    assert(hub.shown and not shown(), "menu alias did not reopen same hub")
+    drain()
+    assert(not hub.shown and shown() and panel() == root, "menu alias did not reopen the shared guide")
+    named("ApplicantScoutSetupSettingsTab").scripts.OnClick()
+    drain()
     combat = true
     event("PLAYER_REGEN_DISABLED")
-    assert(not hub.shown, "combat left menu visible")
+    assert(not shown(), "combat left shared settings visible")
     SlashCmdList.APSCOUT("")
-    assert(not hub.shown, "manual menu bypassed combat restriction")
+    assert(not shown(), "manual menu bypassed combat restriction")
+    SlashCmdList.APSCOUT("config")
+    drain()
+    assert(not shown(), "deferred settings opened in combat")
+    combat = false
+    event("PLAYER_REGEN_ENABLED")
+    drain()
+    assert(shown() and hub.shown and panel() == root, "deferred settings lost their section or window")
+    edit:SetText("focus lost greeting")
+    edit.scripts.OnEditFocusLost(edit)
+    assert(ApplicantScoutDB.autoHiMessage == "focus lost greeting", "losing focus did not save greeting")
     print("ok " .. scenario)
     return
 end
@@ -408,7 +480,7 @@ if scenario == "design" or scenario == "design-export" then
     assert(named("ApplicantScoutSetupStep" .. desiredPage).setupSelected, "detail toggle moved the current step")
     local backgrounds, example = 0, nil
     for _, texture in ipairs(textures) do
-        if texture.parent == panel() and texture.width == 712 then
+        if texture.parent == panel() and texture.width == 712 and texture.shown then
             assert(texture.layer == "BACKGROUND", "card background can cover parent text")
             backgrounds = backgrounds + 1
         elseif texture.texture == "Interface\\AddOns\\ApplicantScout\\media\\setup-preview.tga" then
@@ -832,8 +904,11 @@ SlashCmdList.APSCOUT("setup")
 drain()
 assert(shown(), "postponed guide could not be reopened manually")
 for _ = 1, 4 do button("Next").scripts.OnClick() end
-button("Finish guide").scripts.OnClick()
-assert(ApplicantScoutDB.setupDismissed == priorDismissal and not shown(), "Finish changed explicit reminder preference")
+named("ApplicantScoutSetupNext").scripts.OnClick()
+drain()
+assert(shown() and named("ApplicantScoutSetupSettings").shown, "last guide step did not open integrated settings")
+assert(ApplicantScoutDB.setupDismissed == priorDismissal, "settings changed explicit reminder preference")
+button("Close").scripts.OnClick()
 SlashCmdList.APSCOUT("setup")
 drain()
 button("Next").scripts.OnClick()

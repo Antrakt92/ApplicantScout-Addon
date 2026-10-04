@@ -979,3 +979,35 @@ zhCN = "下载 Companion",
 zhTW = "下載 Companion",
 }
 for code, caption in pairs(downloadCaptions) do locales[code].ui.companionDownload = caption end
+
+local unifiedCaptions = {
+enUS = {"ApplicantScout: setup and settings", "Settings"},
+ruRU = {"ApplicantScout: установка и настройки", "Настройки"},
+deDE = {"ApplicantScout: Einrichtung und Einstellungen", "Einstellungen"},
+esES = {"ApplicantScout: instalación y ajustes", "Ajustes"},
+esMX = {"ApplicantScout: instalación y ajustes", "Ajustes"},
+frFR = {"ApplicantScout : installation et réglages", "Réglages"},
+itIT = {"ApplicantScout: installazione e impostazioni", "Impostazioni"},
+ptBR = {"ApplicantScout: instalação e configurações", "Configurações"},
+koKR = {"ApplicantScout: 설치 및 설정", "설정"},
+zhCN = {"ApplicantScout：安装与设置", "设置"},
+zhTW = {"ApplicantScout：安裝與設定", "設定"},
+}
+for code, captions in pairs(unifiedCaptions) do
+    locales[code].ui.title, locales[code].ui.settings = unpack(captions)
+end
+
+local unifiedDescriptions = {
+enUS = "Tabs 1–5 explain Companion installation. Tab 6 controls this addon. Warcraft Logs credentials and the Screenshots folder are configured in the Windows Companion. Reopen this window with /apscout; /apscout help lists commands.",
+ruRU = "Вкладки 1–5 объясняют установку Companion. Вкладка 6 — настройки аддона. API-ключи Warcraft Logs и папка Screenshots настраиваются в программе Companion для Windows. Открыть это окно: /apscout. Список команд: /apscout help.",
+deDE = "Tabs 1–5 erklären die Installation von Companion. Tab 6 steuert dieses Addon. Warcraft-Logs-Zugangsdaten und Screenshots-Ordner werden in Windows Companion eingestellt. Fenster: /apscout; Befehle: /apscout help.",
+esES = "Las pestañas 1–5 explican la instalación de Companion; la 6 configura el addon. Las claves de Warcraft Logs y la carpeta Screenshots se configuran en Companion para Windows. Ventana: /apscout; comandos: /apscout help.",
+frFR = "Les onglets 1–5 expliquent l’installation de Companion ; le 6 règle l’addon. Les clés Warcraft Logs et le dossier Screenshots se configurent dans Companion pour Windows. Fenêtre : /apscout ; commandes : /apscout help.",
+itIT = "Le schede 1–5 spiegano l’installazione di Companion; la 6 configura l’addon. Le chiavi Warcraft Logs e la cartella Screenshots si impostano in Companion per Windows. Finestra: /apscout; comandi: /apscout help.",
+ptBR = "As abas 1–5 explicam a instalação do Companion; a 6 configura o addon. As chaves Warcraft Logs e a pasta Screenshots são configuradas no Companion para Windows. Janela: /apscout; comandos: /apscout help.",
+koKR = "1–5 탭은 Companion 설치 안내이며 6번 탭은 애드온 설정입니다. Warcraft Logs 키와 Screenshots 폴더는 Windows Companion에서 설정합니다. 창 열기: /apscout, 명령어: /apscout help.",
+zhCN = "1–5 标签介绍 Companion 安装，6 标签配置插件。Warcraft Logs API 密钥和 Screenshots 文件夹在 Windows Companion 中配置。打开窗口：/apscout；命令列表：/apscout help。",
+zhTW = "1–5 分頁介紹 Companion 安裝，6 分頁設定插件。Warcraft Logs API 金鑰與 Screenshots 資料夾在 Windows Companion 中設定。開啟視窗：/apscout；指令列表：/apscout help。",
+esMX = "Las pestañas 1–5 explican la instalación de Companion; la 6 configura el addon. Las claves de Warcraft Logs y la carpeta Screenshots se configuran en Companion para Windows. Ventana: /apscout; comandos: /apscout help.",
+}
+for code, description in pairs(unifiedDescriptions) do locales[code].menu[14] = description end

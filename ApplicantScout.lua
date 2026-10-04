@@ -143,9 +143,8 @@ local qrCurrentSize = 0                -- current frame side length in UI units 
 -- _G.MaybeTriggerScreenshot (= nil) and call fails with "attempt to call a nil value".
 local SafeStr, APSPrint, InitDB, StartSession, EndSession, CheckSessionTransition,
       MarkDirty, MaybeTriggerScreenshot, IsChatMessagingLockdown,
-      -- Settings panel (pinned above PVEFrame). Forward-decl'd so slash handler
-      -- + PLAYER_LOGIN handler can reference before bodies are defined.
-      _SetEnabled, _SetDebug, _SetAutoMPlusPlaystyle, _AttachSettingsPanel,
+      -- Shared settings setters used by slash commands and the setup window.
+      _SetEnabled, _SetDebug, _SetAutoMPlusPlaystyle,
       _SetWidgetTooltip, _SyncAutoMPlusPlaystyleDropdown,
       -- Visibility coordinator + interaction-frame tracking. Replaces direct
       -- qrFrame:Show/Hide calls so a single function decides visibility from
@@ -154,7 +153,7 @@ local SafeStr, APSPrint, InitDB, StartSession, EndSession, CheckSessionTransitio
       _RefreshQRVisibility, _RefreshQRMouse, _RecomputeInteractionSuppression,
       _TryHookInfoPanels, _OnInteractionEvent,
       -- PVEFrame movement (Phase 2). Forward-decl'd so PLAYER_LOGIN handler
-      -- and _AttachSettingsPanel's ADDON_LOADED watcher can both reference it
+      -- and the movement initialization path can both reference it
       -- before the body is defined further down.
       _SetupPVEFrameMovement,
       -- Group Finder creation hooks. Kept separate from QR/session state.
@@ -182,8 +181,7 @@ local lastSnapshotHash, lastShotTime, pendingShotDirty,
       qrForceVisibleShotGen, lastQREncodeMode, lastQREncodeBytes,
       lastQREncodeError
 
--- Settings panel state. settingsFrame = parent of all widgets; created lazily
--- in _AttachSettingsPanel. settingsFrameAttached = one-shot init guard.
+-- The settings section is created lazily inside the shared setup window.
 local settingsFrame, enabledCheckbox,
       autoMPlusPlaystyleDropdown,
       autoMPlusPlaystyleFallbackText
@@ -2195,7 +2193,6 @@ entryCreationKeyState.ExitChallengeDormancy = function()
     end
     entryCreationKeyState.challengeDormantRosterDirty = false
     entryCreationKeyState.RequestLeaderKeystone(true)
-    _AttachSettingsPanel()
     _SetupPVEFrameMovement()
     _SetupLFGEntryCreationHooks()
     _TryHookInfoPanels()
@@ -8115,7 +8112,6 @@ local EVENT_HANDLERS = {
         entryCreationKeyState.RefreshInteractionTypeMappings()
         entryCreationKeyState.SyncAutoHiInitialGroupState()
         MarkDirty("login")
-        _AttachSettingsPanel()
         _SetupPVEFrameMovement()  -- no-ops if BlizzMove loaded OR PVEFrame missing
         _SetupLFGEntryCreationHooks() -- no-ops until Blizzard LFG globals exist
         _TryHookInfoPanels()      -- initial track; ADDON_LOADED/ticker catches LoD frames later
@@ -8441,25 +8437,8 @@ entryCreationKeyState.StartScanTicker()
 
 
 -- ───────────────────────────────────────────────────────────
--- Settings panel: pinned above PVEFrame (LFG window) with Blizzard tooltip-style
--- chrome. Same backdrop/border textures as GameTooltip (and RaiderIO, Details,
--- BigWigs popups) so the panel reads as a native WoW UI element next to PVEFrame
--- instead of a foreign-styled box. Brand-green title only ("Applicant" in
--- #00ff7f, "Scout" in white).
---
--- Parent=PVEFrame so visibility cascades automatically: open LFG → panel
--- appears, close LFG → panel hides. Anchor BOTTOMLEFT-of-self to TOPLEFT-of-
--- PVEFrame with a small visible gap — right-side anchoring (BOTTOMRIGHT to
--- TOPRIGHT) lands inside PVEFrame's nine-slice chrome and renders nothing
--- visible, so the panel hangs above PVEFrame's left edge instead.
---
--- DIALOG strata (explicit) keeps the panel above HUD elements; Blizzard popups
--- (StaticPopup, ColorPicker — both toplevel=true) auto-lift above it. We do
--- NOT call SetToplevel(true) — it re-raises on every click and would hide
--- UIDropDownMenu / ColorPickerFrame children of any future widgets.
---
--- Tooltip hooks preserve native hover state on Blizzard templates such as the
--- playstyle dropdown while remaining harmless for simple checkboxes/edit boxes.
+-- Shared setting mutations used by slash commands and the setup window.
+-- Tooltip hooks preserve native hover handlers on shared controls.
 _SetWidgetTooltip = function(widget, title, body)
     widget:HookScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -8668,363 +8647,8 @@ entryCreationKeyState.RequestForcedSnapshot = function()
     return true, "requested"
 end
 
--- Lazily creates the settings panel as a child of PVEFrame, anchored above
--- the LFG title bar. Idempotent (one-shot via settingsFrameAttached flag).
--- Defensive ADDON_LOADED watcher fallback for the unlikely case PVEFrame is
--- loaded on demand (12.x retail compiles it in, but custom clients may differ).
-_AttachSettingsPanel = function()
-    if entryCreationKeyState.challengeDormant then return end
-    -- Function-scoped because no callback or other subsystem consumes these
-    -- values. Keeping layout-only names out of the chunk restores Lua 5.1
-    -- top-level local headroom without changing the settings widget contract.
-    local _SETTINGS_FRAME_WIDTH = 420
-    local _SETTINGS_FRAME_HEIGHT = 104
-    local _SETTINGS_ANCHOR_X = 0
-    local _SETTINGS_ANCHOR_Y = 6
-    local _SETTINGS_TOP_PAD = 10        -- clearance under the rope-border top edge
-    local _SETTINGS_LEFT_PAD = 14
-    local _SETTINGS_RIGHT_COL_X = 238
-    local _SETTINGS_DROPDOWN_WIDTH = 170
-
-    local watcher = entryCreationKeyState.settingsFrameAttachWatcher
-    if settingsFrameAttached then
-        if watcher then
-            watcher:UnregisterAllEvents()
-            watcher:SetScript("OnEvent", nil)
-            entryCreationKeyState.settingsFrameAttachWatcher = nil
-        end
-        return
-    end
-    if not _G.PVEFrame then
-        if watcher then return end
-        watcher = CreateFrame("Frame")
-        entryCreationKeyState.settingsFrameAttachWatcher = watcher
-        watcher:RegisterEvent("ADDON_LOADED")
-        watcher:SetScript("OnEvent", function(self)
-            if _G.PVEFrame then
-                self:UnregisterAllEvents()
-                self:SetScript("OnEvent", nil)
-                if entryCreationKeyState.settingsFrameAttachWatcher == self then
-                    entryCreationKeyState.settingsFrameAttachWatcher = nil
-                end
-                _AttachSettingsPanel()
-                -- Same lazy-init opportunity for movement setup. DRY: don't
-                -- spawn a separate watcher.
-                _SetupPVEFrameMovement()
-            end
-        end)
-        return
-    end
-
-    if watcher then
-        watcher:UnregisterAllEvents()
-        watcher:SetScript("OnEvent", nil)
-        entryCreationKeyState.settingsFrameAttachWatcher = nil
-    end
-
-    settingsFrame = CreateFrame(
-        "Frame",
-        "ApplicantScoutSettingsFrame",
-        PVEFrame,
-        "BackdropTemplate"
-    )
-    settingsFrame:SetSize(_SETTINGS_FRAME_WIDTH, _SETTINGS_FRAME_HEIGHT)
-    -- Keep the panel visually attached to PVEFrame's left edge; the two-column
-    -- layout happens inside the panel rather than floating the whole frame away.
-    settingsFrame:SetPoint(
-        "BOTTOMLEFT",
-        PVEFrame,
-        "TOPLEFT",
-        _SETTINGS_ANCHOR_X,
-        _SETTINGS_ANCHOR_Y
-    )
-    settingsFrame:SetClampedToScreen(true)
-    settingsFrame:SetFrameStrata("DIALOG")
-
-    -- Blizzard tooltip-style chrome: same backdrop+border textures as
-    -- GameTooltip and most established WoW addon panels (RaiderIO, Details,
-    -- BigWigs popups). Reads as a native WoW UI element next to PVEFrame
-    -- instead of a foreign brand-coloured box.
-    settingsFrame:SetBackdrop({
-        bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        edgeSize = 16,
-        insets   = { left = 5, right = 5, top = 5, bottom = 5 },
-        tile = true,
-        tileSize = 16,
-    })
-    settingsFrame:SetBackdropColor(0.05, 0.07, 0.10, 0.95)        -- near-black, slightly translucent
-    settingsFrame:SetBackdropBorderColor(1, 1, 1, 1)              -- tooltip-border texture supplies its own gold rope
-
-    -- Compact brand label: present, but subordinate to the actual controls.
-    local title = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    title:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -_SETTINGS_TOP_PAD)
-    title:SetText("|cff00ff7fApplicant|rScout")
-
-    -- Modern checkbox styling: brighter label font + 6 px breathing gap.
-    -- Defaults from UICheckButtonTemplate land the label at +1 px with
-    -- GameFontNormal — close-set and slightly dim against the dark panel.
-    local function _StyleCheckboxLabel(cb, text)
-        local label = _G[cb:GetName() .. "Text"]
-        label:SetText(text)
-        label:SetFontObject("GameFontHighlight")
-        label:ClearAllPoints()
-        label:SetPoint("LEFT", cb, "RIGHT", 6, 1)
-    end
-
-    enabledCheckbox = CreateFrame(
-        "CheckButton",
-        "ApplicantScoutSettingsEnabledCheckbox",
-        settingsFrame,
-        "UICheckButtonTemplate"
-    )
-    enabledCheckbox:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -24)
-    _StyleCheckboxLabel(enabledCheckbox, "Enable applicant scouting")
-    enabledCheckbox:SetScript("OnClick", function(self)
-        _SetEnabled(not not self:GetChecked())
-    end)
-    enabledCheckbox:SetHitRectInsets(0, -180, 0, 0)
-    _SetWidgetTooltip(
-        enabledCheckbox,
-        "Enable applicant scouting",
-        "When on, ApplicantScout captures listing applicants and emits QR codes for the companion to decode. When off, no scans / no QR / no Screenshot() calls — addon stays loaded but idle."
-    )
-
-    local autoMPlusPlaystyleLabel =
-        settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    autoMPlusPlaystyleLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_RIGHT_COL_X, -14)
-    autoMPlusPlaystyleLabel:SetText("M+ default playstyle")
-
-    local dropdownOK, dropdown = pcall(
-        CreateFrame,
-        "DropdownButton",
-        "ApplicantScoutSettingsMPlusPlaystyleDropdown",
-        settingsFrame,
-        "WowStyle1DropdownTemplate"
-    )
-    if dropdownOK and dropdown and type(dropdown.SetupMenu) == "function" then
-        autoMPlusPlaystyleDropdown = dropdown
-        autoMPlusPlaystyleDropdown:SetPoint(
-            "TOPLEFT",
-            settingsFrame,
-            "TOPLEFT",
-            _SETTINGS_RIGHT_COL_X,
-            -32
-        )
-        autoMPlusPlaystyleDropdown:SetWidth(_SETTINGS_DROPDOWN_WIDTH)
-        if type(autoMPlusPlaystyleDropdown.SetDefaultText) == "function" then
-            autoMPlusPlaystyleDropdown:SetDefaultText(
-                _GetAutoMPlusPlaystyleLabel(ApplicantScoutDB.autoMPlusPlaystyle)
-            )
-        end
-        autoMPlusPlaystyleDropdown:SetupMenu(function(_, rootDescription)
-            if not rootDescription or type(rootDescription.CreateRadio) ~= "function" then return end
-            if type(rootDescription.SetTag) == "function" then
-                rootDescription:SetTag("MENU_APPLICANTSCOUT_MPLUS_PLAYSTYLE")
-            end
-
-            local function IsSelected(token)
-                return ApplicantScoutDB
-                       and ApplicantScoutDB.autoMPlusPlaystyle == token
-            end
-
-            local function SetSelected(token)
-                _SetAutoMPlusPlaystyle(token)
-            end
-
-            for _, option in ipairs(AUTO_MPLUS_PLAYSTYLE_OPTIONS) do
-                rootDescription:CreateRadio(
-                    _GetAutoMPlusPlaystyleLabel(option.token),
-                    IsSelected,
-                    SetSelected,
-                    option.token
-                )
-            end
-        end)
-        _SetWidgetTooltip(
-            autoMPlusPlaystyleDropdown,
-            "M+ default playstyle",
-            "Defaults new Mythic+ group listings to the selected playstyle. Off leaves Blizzard's field alone. Manual changes in the same form are left alone."
-        )
-    else
-        autoMPlusPlaystyleFallbackText = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-        autoMPlusPlaystyleFallbackText:SetPoint(
-            "TOPLEFT",
-            settingsFrame,
-            "TOPLEFT",
-            _SETTINGS_RIGHT_COL_X,
-            -37
-        )
-        autoMPlusPlaystyleFallbackText:SetWidth(_SETTINGS_DROPDOWN_WIDTH)
-        autoMPlusPlaystyleFallbackText:SetJustifyH("LEFT")
-    end
-
-    local autoHiDivider = settingsFrame:CreateTexture(nil, "ARTWORK")
-    autoHiDivider:SetColorTexture(1, 1, 1, 0.14)
-    autoHiDivider:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -52)
-    autoHiDivider:SetPoint("TOPRIGHT", settingsFrame, "TOPRIGHT", -_SETTINGS_LEFT_PAD, -52)
-    autoHiDivider:SetHeight(1)
-
-    local autoHiLabel = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    autoHiLabel:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -64)
-    autoHiLabel:SetText("Auto Hi")
-
-    local autoHiEditBox = CreateFrame(
-        "EditBox",
-        "ApplicantScoutSettingsAutoHiEditBox",
-        settingsFrame,
-        "InputBoxTemplate"
-    )
-    settingsFrame.autoHiEditBox = autoHiEditBox
-    autoHiEditBox:SetPoint("LEFT", autoHiLabel, "RIGHT", 8, 0)
-    autoHiEditBox:SetSize(190, 22)
-    autoHiEditBox:SetAutoFocus(false)
-    autoHiEditBox:SetMaxBytes(entryCreationKeyState.AUTO_HI_MAX_BYTES)
-    -- Live preview of what the greeting will do. Function-scoped: only the
-    -- panel consumes it, and the text updates on every edit/show/sync.
-    local function _SyncAutoHiPreview()
-        local preview = settingsFrame.autoHiPreview
-        if not preview then return end
-        local message = ApplicantScoutDB and ApplicantScoutDB.autoHiMessage or ""
-        if message == "" then
-            preview:SetText("Auto Hi: off — type a greeting to enable it")
-            return
-        end
-        local channel = "PARTY"
-        if type(entryCreationKeyState.AutoHiChatChannel) == "function" then
-            local ok, resolved = pcall(entryCreationKeyState.AutoHiChatChannel)
-            if ok and type(resolved) == "string" and resolved ~= "" then
-                channel = resolved
-            end
-        end
-        if #message > 48 then message = message:sub(1, 45) .. "..." end
-        preview:SetText("Will send to " .. channel .. " on join: " .. message)
-    end
-    autoHiEditBox:SetScript("OnTextChanged", function(self, userInput)
-        if entryCreationKeyState.autoHiEditBoxSyncing or not userInput then return end
-        ApplicantScoutDB.autoHiMessage =
-            entryCreationKeyState.NormalizeAutoHiMessage(self:GetText())
-        _SyncAutoHiPreview()
-    end)
-    autoHiEditBox:SetScript("OnEnterPressed", function(self)
-        entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)
-        _SyncAutoHiPreview()
-        self:ClearFocus()
-    end)
-    autoHiEditBox:SetScript("OnEscapePressed", function(self)
-        entryCreationKeyState.SyncAutoHiEditBox()
-        _SyncAutoHiPreview()
-        self:ClearFocus()
-    end)
-    autoHiEditBox:SetScript("OnEditFocusLost", function(self)
-        entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)
-        _SyncAutoHiPreview()
-    end)
-    _SetWidgetTooltip(
-        autoHiEditBox,
-        "Auto Hi on invite",
-        "Optional greeting sent once, 5 seconds after you join a group. Leave blank to disable."
-    )
-
-    local autoHiNewPartyMembersCheckbox = CreateFrame(
-        "CheckButton",
-        "ApplicantScoutSettingsAutoHiNewPartyMembersCheckbox",
-        settingsFrame,
-        "UICheckButtonTemplate"
-    )
-    settingsFrame.autoHiNewPartyMembersCheckbox = autoHiNewPartyMembersCheckbox
-    autoHiNewPartyMembersCheckbox:SetScale(0.82)
-    autoHiNewPartyMembersCheckbox:SetPoint("LEFT", autoHiEditBox, "RIGHT", 10, 0)
-    autoHiNewPartyMembersCheckbox:SetScript("OnClick", function(self)
-        ApplicantScoutDB.autoHiGreetNewPartyMembers = not not self:GetChecked()
-        if not ApplicantScoutDB.autoHiGreetNewPartyMembers then
-            entryCreationKeyState.ClearAutoHiAttemptState("new-party")
-        end
-    end)
-    autoHiNewPartyMembersCheckbox:SetHitRectInsets(0, -130, 0, 0)
-    local autoHiNewPartyMembersLabel = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    autoHiNewPartyMembersLabel:SetPoint("LEFT", autoHiNewPartyMembersCheckbox, "RIGHT", 4, 1)
-    autoHiNewPartyMembersLabel:SetText("new party joins")
-    _SetWidgetTooltip(
-        autoHiNewPartyMembersCheckbox,
-        "Greet new party members",
-        "Also send this greeting 10 seconds after a new player joins your party. Disabled in raids."
-    )
-
-    local autoHiPreview = settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    settingsFrame.autoHiPreview = autoHiPreview
-    autoHiPreview:SetPoint("TOPLEFT", settingsFrame, "TOPLEFT", _SETTINGS_LEFT_PAD, -88)
-    autoHiPreview:SetWidth(_SETTINGS_FRAME_WIDTH - _SETTINGS_LEFT_PAD * 2)
-    autoHiPreview:SetJustifyH("LEFT")
-    _SetWidgetTooltip(
-        autoHiPreview,
-        "Auto Hi preview",
-        "What happens with the current greeting text. The channel follows your current group (party, raid, or instance chat)."
-    )
-    _SyncAutoHiPreview()
-
-    -- Re-sync checkboxes from DB on each show. Handles slash-toggle-while-
-    -- panel-was-hidden case: open via /apscout config → checkboxes reflect DB truth.
-    settingsFrame:HookScript("OnShow", function()
-        enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
-        settingsFrame.autoHiNewPartyMembersCheckbox:SetChecked(
-            ApplicantScoutDB.autoHiGreetNewPartyMembers)
-        _SyncAutoMPlusPlaystyleDropdown()
-        entryCreationKeyState.SyncAutoHiEditBox()
-        _SyncAutoHiPreview()
-    end)
-
-    enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)
-    autoHiNewPartyMembersCheckbox:SetChecked(
-        ApplicantScoutDB.autoHiGreetNewPartyMembers and true or false)
-    _SyncAutoMPlusPlaystyleDropdown()
-    entryCreationKeyState.SyncAutoHiEditBox()
-    _SyncAutoHiPreview()
-
-    settingsFrameAttached = true  -- LAST: any earlier failure leaves false → retry next PLAYER_LOGIN
-end
-
 entryCreationKeyState.ToggleSettingsPanel = function()
-    -- Protected frames cannot be shown/moved in combat; fail early with an
-    -- actionable line instead of a silent no-op or a taint-risky toggle.
-    -- Clean read keeps the hardware-event stack secret-safe like the rest of
-    -- this file; clean true/false behave exactly like the raw call.
-    if entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) == true then
-        APSPrint("settings unavailable in combat — leave combat and retry")
-        return false, "combat"
-    end
-    if not settingsFrameAttached then _AttachSettingsPanel() end
-    local parent = _G.PVEFrame
-    if not settingsFrame or not parent then
-        APSPrint("settings unavailable — PVEFrame not loaded; open LFG window once and retry")
-        return false, "unavailable"
-    end
-
-    -- IsShown() only reports the child's own flag. A shown child of a hidden
-    -- PVEFrame is not visible, so only treat the panel as open when both flags
-    -- are true. Otherwise the next slash toggle would hide an invisible child.
-    if parent:IsShown() and settingsFrame:IsShown() then
-        settingsFrame:Hide()
-        return false, "hidden"
-    end
-
-    if not parent:IsShown() then
-        local togglePVEFrame = _G.PVEFrame_ToggleFrame
-        if type(togglePVEFrame) ~= "function" then
-            APSPrint("settings unavailable — Group Finder open helper is missing")
-            return false, "parent-helper-unavailable"
-        end
-        -- Toggle only while the parent is hidden. This preserves Blizzard's
-        -- eligibility checks without risking a toggle that closes an open PVEFrame.
-        local ok = pcall(togglePVEFrame, "GroupFinderFrame", "LFGListPVEStub")
-        if not ok or not parent:IsShown() then
-            APSPrint("settings unavailable — Group Finder could not be opened")
-            return false, "parent-open-failed"
-        end
-    end
-
-    settingsFrame:Show()
-    return true, "shown"
+    return entryCreationKeyState.ToggleAddonSettings()
 end
 
 
@@ -10211,7 +9835,11 @@ do
         end
         local panel, urlBox, heading, body, hint, progress, back, nextButton, scroll, content
         local title, copyHint, languageButton, languageMenu, downloadButton, guideButton, laterButton, doneButton, detailsButton
-        local menu, menuLabels, menuChecks, menuActions, greeting, styleButton, menuLanguage
+        local menu, menuLabels, menuChecks, menuActions, greeting, styleButton
+        local settingsTab, settingsDescription, settingsBackdrop
+        local ensureSettings, refreshSettings
+        local settingsView = false
+        local cards = {}
         local preview, previewCaption, reminder, reminderLabel, reminderHint, menuButton, quickDownloadButton
         local languageItems, stepButtons = {}, {}
         local requested, ready, queued, postponed = false, false, false, false
@@ -10282,6 +9910,7 @@ do
         refresh = function(isRetry)
             local scrollOK, priorScroll = pcall(scroll.GetVerticalScroll, scroll)
             priorScroll = scrollOK and SafeNumber(priorScroll, 0) or 0
+            if settingsView and not menu then ensureSettings() end
             if not isRetry then
                 fontRetryGeneration = fontRetryGeneration + 1
                 fontRetryAttempts = 0
@@ -10302,9 +9931,9 @@ do
             local language = locales[code]
             local pages, ui = language.pages, language.ui
             local step = pages[page]
-            ApplicantScoutDB.setupStep = page
-            heading:SetText(step.title)
-            local showPreview = page == 1 and not expanded
+            if not settingsView then ApplicantScoutDB.setupStep = page end
+            heading:SetText(settingsView and language.menu[1] or step.title)
+            local showPreview = not settingsView and page == 1 and not expanded
             body:SetWidth(showPreview and 400 or 664)
             preview:SetShown(showPreview)
             previewCaption:SetShown(showPreview)
@@ -10321,7 +9950,8 @@ do
             scroll.ScrollBar:SetShown(needsScroll)
             hint:SetText(step.hint)
             title:SetText(ui.title)
-            progress:SetText(string.format(ui.step, page, #pages))
+            progress:SetText(settingsView and (missingFont and "Font unavailable; showing English" or language.menu[1])
+                or string.format(ui.step, page, #pages))
             languageButton:SetText(code == "enUS" and ui.language .. ": " .. language.name
                 or language.name .. " / Language")
             copyHint:SetText(ui.copy)
@@ -10334,16 +9964,16 @@ do
             guideButton:SetWidth(page == 1 and 220 or 328)
             guideButton:GetFontString():SetWidth(guideButton:GetWidth() - 16)
             quickDownloadButton:SetText(ui.companionDownload)
-            quickDownloadButton:SetShown(page == 1)
+            quickDownloadButton:SetShown(not settingsView and page == 1)
             paintButton(downloadButton, page == 2 or page == 3)
-            guideButton:SetShown(page < 4)
+            guideButton:SetShown(not settingsView and page < 4)
             guideButton:SetText(ui.guide)
             detailsButton:SetText(expanded and ui.less or ui.details)
             reminder:SetChecked(ApplicantScoutDB.setupAutoHidden)
             reminderLabel:SetText(ui.noAuto)
             reminderHint:SetText(ui.reminder)
-            menuButton:SetText(ui.menu)
-            laterButton:SetText(ui.later)
+            menuButton:SetText(language.menu[1])
+            laterButton:SetText(settingsView and language.menu[13] or ui.later)
             doneButton:SetText(ui.done)
             back:SetText(ui.back)
             languageItems.auto:SetText(ui.automatic)
@@ -10359,13 +9989,22 @@ do
                 urlBox:SetText(selectedURL)
                 urlBox:SetCursorPosition(0)
             end
-            back:SetEnabled(page > 1)
-            nextButton:SetText(page == #pages and ui.finish or ui.next)
+            back:SetEnabled(settingsView or page > 1)
+            nextButton:SetText(page == #pages and language.menu[1] or ui.next)
             paintButton(nextButton, page ~= 2 and page ~= 3)
             for index, widget in ipairs(stepButtons) do
                 widget:SetText(index .. ". " .. pages[index].chapter)
-                paintButton(widget, false, index == page)
+                paintButton(widget, false, not settingsView and index == page)
             end
+            settingsTab:SetText("6. " .. ui.settings)
+            paintButton(settingsTab, false, settingsView)
+            for _, surface in ipairs(cards) do surface:SetShown(not settingsView) end
+            for _, widget in ipairs({scroll, hint, urlBox, copyHint, downloadButton, detailsButton,
+                doneButton, menuButton, nextButton, reminderHint}) do widget:SetShown(not settingsView) end
+            if menu then menu:SetShown(settingsView) end
+            settingsBackdrop:SetShown(settingsView)
+            settingsDescription:SetShown(settingsView)
+            if settingsView then refreshSettings(language) end
             -- Cold font readback can be inconclusive. Retry briefly, never forever.
             if missingFont and fontRetryAttempts < 3 then
                 fontRetryAttempts = fontRetryAttempts + 1
@@ -10377,7 +10016,9 @@ do
         end
 
         local function navigate(target)
-            if target == page then return end
+            if target == page and not settingsView then return end
+            settingsView = false
+            if greeting then greeting:ClearFocus() end
             page, expanded = target, false
             refresh()
         end
@@ -10432,8 +10073,12 @@ do
                 surface:SetPoint("TOPLEFT", 24, y)
                 surface:SetSize(712, height)
                 surface:SetColorTexture(0.065, 0.085, 0.115, 1)
+                cards[#cards + 1] = surface
                 return surface
             end
+            settingsBackdrop = card(-224, 398)
+            table.remove(cards)
+            settingsDescription = label(-632, "GameFontHighlightSmall", 44, 40, 680)
             card(-224, 220)
             scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
             scroll:SetPoint("TOPLEFT", 40, -236)
@@ -10517,7 +10162,7 @@ do
             end)
             reminderLabel = label(-688, "GameFontHighlightSmall", 32, 164, 252)
             reminderHint = label(-670, "GameFontHighlightSmall", 14, 24, 712, 10)
-            menuButton = button("Menu", 458, 256, 278, function() entryCreationKeyState.ShowAddonMenu() end)
+            menuButton = button("Menu", 458, 256, 278, function() entryCreationKeyState.ShowAddonSettings() end)
             downloadButton = button("Select download link", 40, 136, 340, function() selectLink(links[page]) end,
                 "ApplicantScoutSetupLink")
             guideButton = button("Illustrated guide", 392, 136, 328, function() selectLink(guideURL) end)
@@ -10527,17 +10172,20 @@ do
             laterButton = button("Later", 24, 22, 96, later)
             doneButton = button("Already set up", 270, 256, 176, dismiss)
             back = button("Back", 430, 22, 106, function()
-                if page > 1 then navigate(page - 1) end
+                if settingsView then navigate(page) elseif page > 1 then navigate(page - 1) end
             end)
             nextButton = button("Next", 544, 22, 192, function()
-                if page == #links then dismiss() else navigate(page + 1) end
-            end)
+                if page == #links then entryCreationKeyState.ShowAddonSettings() else navigate(page + 1) end
+            end, "ApplicantScoutSetupNext")
             for index = 1, #links do
                 local target = index
-                stepButtons[index] = button("", 24 + (index - 1) * 144, 590, 136,
+                stepButtons[index] = button("", 24 + (index - 1) * 120, 590, 112,
                     function() navigate(target) end, "ApplicantScoutSetupStep" .. index)
                 stepButtons[index]:SetHeight(42)
             end
+            settingsTab = button("", 624, 590, 112,
+                function() entryCreationKeyState.ShowAddonSettings() end, "ApplicantScoutSetupSettingsTab")
+            settingsTab:SetHeight(42)
             languageButton = button("", 436, 654, 300, nil, "ApplicantScoutSetupLanguageButton")
             languageMenu = CreateFrame("Frame", nil, panel, "BackdropTemplate")
             languageMenu:SetSize(530, 156)
@@ -10579,6 +10227,7 @@ do
             cross:SetScript("OnClick", later)
             panel:SetScript("OnHide", function()
                 urlBox:ClearFocus()
+                if greeting then greeting:ClearFocus() end
                 languageMenu:Hide()
                 -- Escape hides special frames directly; gameplay hides must still resume.
                 if not internalHide and not panel:IsShown() then requested, postponed = false, true end
@@ -10610,15 +10259,13 @@ do
 
         -- Reuse transport gameplay/loading recovery so both surfaces resume together.
         entryCreationKeyState.RefreshCompanionSetupForGameplay = function()
-            if menu and (entryCreationKeyState.qrGameplayLoadingActive
-                or entryCreationKeyState.qrGameplaySuppressed
-                or entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) ~= false) then menu:Hide() end
             if not canShow() then hide(); return end
             if not panel or not panel:IsShown() then queue() end
         end
 
         entryCreationKeyState.ShowCompanionSetup = function()
-            if menu then menu:Hide() end
+            settingsView = false
+            if greeting then greeting:ClearFocus() end
             requested, postponed, page, expanded = true, false, 1, false
             if panel then refresh() end
             queue()
@@ -10628,10 +10275,7 @@ do
         end
 
         local styleTokens = {"disabled", "Learning", "FunRelaxed", "FunSerious", "Expert"}
-        local function refreshMenu()
-            local code = localeCode()
-            if not applyFonts(code) then code = "enUS"; applyFonts(code) end
-            local language = locales[code]
+        refreshSettings = function(language)
             local captions = language.menu
             for index, region in pairs(menuLabels) do region:SetText(captions[index]) end
             for index, control in pairs(menuChecks) do
@@ -10646,26 +10290,13 @@ do
             end
             styleButton:SetText(captions[4] .. ": " .. captions[14 + style])
             if not greeting:HasFocus() then greeting:SetText(ApplicantScoutDB.autoHiMessage) end
-            menuLanguage:SetText(language.name .. " / Language")
+            settingsDescription:SetText(captions[14])
         end
-        entryCreationKeyState.ShowAddonMenu = function()
-            InitDB()
-            if entryCreationKeyState.CleanUnitAPIBoolean(InCombatLockdown) ~= false then
-                APSPrint("/apscout: leave combat to open the menu")
-                return
-            end
-            later()
+        ensureSettings = function()
             if not menu then
-                menu = CreateFrame("Frame", "ApplicantScoutMenu", UIParent, "BackdropTemplate")
-                menu:SetSize(760, 740)
-                menu:SetPoint("CENTER")
-                menu:SetFrameStrata("DIALOG")
-                menu:SetClampedToScreen(true)
-                menu:EnableMouse(true)
-                menu:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1})
-                menu:SetBackdropColor(0.035, 0.045, 0.065, 0.98)
-                menu:SetBackdropBorderColor(0.22, 0.70, 0.63, 1)
-                table.insert(UISpecialFrames, "ApplicantScoutMenu")
+                menu = CreateFrame("Frame", "ApplicantScoutSetupSettings", panel)
+                menu:SetSize(760, 398)
+                menu:SetPoint("TOPLEFT", 0, -224)
                 menuLabels, menuChecks, menuActions = {}, {}, {}
                 local function line(index, y, height, size)
                     local region = menu:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
@@ -10704,38 +10335,24 @@ do
                     control.key, control.label = key, text
                     control:SetScript("OnClick", function(self)
                         callback(self:GetChecked() and true or false)
-                        refreshMenu()
+                        refresh()
                     end)
                     menuChecks[index] = control
+                    if index == 3 then enabledCheckbox = control end
                 end
-                line(1, -28, 32, 20)
-                line(14, -76, 90, 14)
-                action(2, 32, -178, 340, function()
-                    menu:Hide()
-                    entryCreationKeyState.ShowCompanionSetup()
-                end)
-                menuLanguage = action(nil, 388, -178, 340, function()
-                    local current = localeCode()
-                    for index, code in ipairs(languageOrder) do
-                        if code == current then
-                            ApplicantScoutDB.setupLocale = languageOrder[index % #languageOrder + 1]
-                            break
-                        end
-                    end
-                    refreshMenu()
-                end)
-                check(3, "enabled", -236, _SetEnabled)
-                styleButton = action(nil, 32, -278, 696, function()
+                check(3, "enabled", 0, _SetEnabled)
+                styleButton = action(nil, 40, -40, 680, function()
                     local current = ApplicantScoutDB.autoMPlusPlaystyle
                     for index, token in ipairs(styleTokens) do
                         if token == current then _SetAutoMPlusPlaystyle(styleTokens[index % #styleTokens + 1], true); break end
                     end
-                    refreshMenu()
+                    refresh()
                 end)
-                line(5, -332, 24)
+                line(5, -88, 24)
                 greeting = CreateFrame("EditBox", "ApplicantScoutMenuGreeting", menu, "InputBoxTemplate")
-                greeting:SetPoint("TOPLEFT", 38, -362)
+                greeting:SetPoint("TOPLEFT", 46, -118)
                 greeting:SetSize(680, 28)
+                menu.autoHiEditBox = greeting
                 greeting:SetAutoFocus(false)
                 greeting:SetMaxBytes(entryCreationKeyState.AUTO_HI_MAX_BYTES)
                 registerFont(greeting, 12, "GameFontHighlight")
@@ -10750,28 +10367,39 @@ do
                     self:SetText(ApplicantScoutDB.autoHiMessage)
                     self:ClearFocus()
                 end)
-                check(6, "autoHiGreetNewPartyMembers", -408, function(value)
+                check(6, "autoHiGreetNewPartyMembers", -156, function(value)
                     ApplicantScoutDB.autoHiGreetNewPartyMembers = value
                     if not value then entryCreationKeyState.ClearAutoHiAttemptState("new-party") end
                 end)
-                check(7, "qrAlwaysVisible", -446, function(value)
+                check(7, "qrAlwaysVisible", -194, function(value)
                     ApplicantScoutDB.qrAlwaysVisible = value
                     _RefreshQRVisibility()
                 end)
-                check(8, "debug", -484, _SetDebug)
-                check(20, "setupAutoHidden", -522, function(value)
-                    ApplicantScoutDB.setupAutoHidden, ApplicantScoutDB.setupDismissed = value, value
-                end)
-                action(9, 32, -578, 340, entryCreationKeyState.RequestForcedSnapshot)
-                action(12, 388, -578, 340, function() SlashCmdList.APSCOUT("status") end)
-                action(10, 32, -626, 340, entryCreationKeyState.ToggleQRMoveMode)
-                action(11, 388, -626, 340, entryCreationKeyState.ResetQRPositionForSupport)
-                action(13, 544, -682, 184, function() menu:Hide() end)
-                menu:SetScript("OnHide", function() greeting:ClearFocus() end)
+                check(8, "debug", -232, _SetDebug)
+                action(9, 40, -282, 340, entryCreationKeyState.RequestForcedSnapshot)
+                action(12, 392, -282, 328, function() SlashCmdList.APSCOUT("status") end)
+                action(10, 40, -326, 340, entryCreationKeyState.ToggleQRMoveMode)
+                action(11, 392, -326, 328, entryCreationKeyState.ResetQRPositionForSupport)
+                settingsFrame, settingsFrameAttached = menu, true
             end
-            resize(menu)
-            refreshMenu()
-            menu:Show()
+        end
+        entryCreationKeyState.ShowAddonSettings = function()
+            InitDB()
+            requested, postponed, settingsView = true, false, true
+            if panel then refresh() end
+            queue()
+            if not canShow() then APSPrint(locales[localeCode()].ui.deferred) end
+            return canShow(), canShow() and "shown" or "deferred"
+        end
+        entryCreationKeyState.ToggleAddonSettings = function()
+            if panel and panel:IsShown() and settingsView then
+                later()
+                return false, "hidden"
+            end
+            return entryCreationKeyState.ShowAddonSettings()
+        end
+        entryCreationKeyState.ShowAddonMenu = function()
+            entryCreationKeyState.ShowCompanionSetup()
         end
 
         local watcher = CreateFrame("Frame")
@@ -10786,7 +10414,6 @@ do
                 queue()
             else
                 resize(panel)
-                if menu then resize(menu) end
             end
         end)
     end)()

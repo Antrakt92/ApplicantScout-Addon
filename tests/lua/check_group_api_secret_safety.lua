@@ -287,7 +287,7 @@ do
 end
 
 -- Settings combat gate: clean combat still refuses; secret/failing/missing
--- lockdown never raises (unknown proceeds past the gate to unavailable).
+-- lockdown never raises; unsafe visibility is deferred by the shared window.
 do
     local savedPrint = print
     print = function() end
@@ -296,7 +296,7 @@ do
     local ok, toggleOK, toggleReason = pcall(harness.ToggleSettingsPanel)
     if not ok then fail("settings toggle propagated a combat API failure") end
     assert_equal("combat toggle ok", toggleOK, false)
-    assert_equal("combat toggle reason", toggleReason, "combat")
+    assert_equal("combat toggle reason", toggleReason, "deferred")
     InCombatLockdown = function() return secretToken end
     ok, toggleOK = pcall(harness.ToggleSettingsPanel)
     if not ok then fail("settings toggle propagated a secret combat value") end

@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_COMPANION_ROOT = REPO_ROOT.parent / "ApplicantScout-Companion"
 LUA_FIXTURE_GENERATOR = REPO_ROOT / "tests" / "lua" / "generate_aps1_v9_fixture.lua"
@@ -47,9 +46,6 @@ LUA_QR_OVERFLOW_GENERATOR = (
 )
 LUA_SCREENSHOT_CVAR_RECOVERY_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_screenshot_cvar_recovery.lua"
-)
-LUA_SETTINGS_ATTACH_WATCHER_CHECK = (
-    REPO_ROOT / "tests" / "lua" / "check_settings_attach_watcher.lua"
 )
 LUA_PVE_FRAME_MOVEMENT_CHECK = (
     REPO_ROOT / "tests" / "lua" / "check_pve_frame_movement.lua"
@@ -298,7 +294,7 @@ def _forced_snapshot_helper_body(source: str) -> str:
     return _slice_between(
         source,
         FORCED_SNAPSHOT_HELPER_ANCHOR,
-        "-- Lazily creates the settings panel",
+        "entryCreationKeyState.ToggleSettingsPanel = function()",
     )
 
 
@@ -614,7 +610,7 @@ def test_active_mplus_stops_scanner_and_invalidates_optional_background_work():
     ticker_lifecycle = _slice_between(
         source,
         "entryCreationKeyState.StopScanTicker = function()",
-        "-- Settings panel:",
+        "-- Shared setting mutations used by slash commands and the setup window.",
     )
     event_body = _slice_between(
         source,
@@ -2265,47 +2261,17 @@ def test_disable_cleanup_restores_cvars_after_terminal_clear_retry_capture_windo
     assert "restoreSessionGen" in cleanup_body
 
 
-def test_playstyle_dropdown_tooltip_preserves_native_hover_scripts():
+def test_widget_tooltip_preserves_native_hover_scripts():
     source = _lua_source()
     tooltip_body = _slice_between(
         source,
         "_SetWidgetTooltip = function(widget, title, body)",
         "local function _RunDisabledCleanup()",
     )
-    settings_body = _slice_between(
-        source,
-        "_AttachSettingsPanel = function()",
-        "entryCreationKeyState.ToggleSettingsPanel = function()",
-    )
-
     assert 'widget:HookScript("OnEnter"' in tooltip_body
     assert 'widget:HookScript("OnLeave"' in tooltip_body
     assert 'widget:SetScript("OnEnter"' not in tooltip_body
-    assert "_SetWidgetTooltip(\n            autoMPlusPlaystyleDropdown," in settings_body
 
-
-def test_settings_layout_constants_are_function_scoped_for_lua51_local_headroom():
-    source = _lua_source()
-    attach_anchor = "_AttachSettingsPanel = function()"
-    prefix, settings_body = source.split(attach_anchor, 1)
-    settings_body = settings_body.split(
-        "entryCreationKeyState.ToggleSettingsPanel = function()",
-        1,
-    )[0]
-    names = (
-        "_SETTINGS_FRAME_WIDTH",
-        "_SETTINGS_FRAME_HEIGHT",
-        "_SETTINGS_ANCHOR_X",
-        "_SETTINGS_ANCHOR_Y",
-        "_SETTINGS_TOP_PAD",
-        "_SETTINGS_LEFT_PAD",
-        "_SETTINGS_RIGHT_COL_X",
-        "_SETTINGS_DROPDOWN_WIDTH",
-    )
-
-    for name in names:
-        assert f"local {name}" not in prefix
-        assert f"local {name} =" in settings_body
 
 
 def test_single_use_constants_do_not_consume_top_level_lua51_local_slots():
@@ -2972,62 +2938,6 @@ def test_auto_hi_uses_home_or_instance_group_chat_channel(pytestconfig):
     assert output == "auto-hi-chat-channel-ok"
 
 
-def test_auto_hi_settings_panel_persists_user_message_from_edit_box():
-    source = _lua_source()
-    settings_body = _slice_between(
-        source,
-        "-- Settings panel: pinned above PVEFrame",
-        "-- slash commands",
-    )
-
-    assert "ApplicantScoutSettingsAutoHiEditBox" in settings_body
-    assert '"InputBoxTemplate"' in settings_body
-    assert '"ApplicantScoutSettingsDebugCheckbox"' not in settings_body
-    assert 'settingsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")' in settings_body
-    assert "autoHiDivider:SetColorTexture(1, 1, 1, 0.14)" in settings_body
-    assert 'autoHiLabel:SetText("Auto Hi")' in settings_body
-    assert 'autoHiEditBox:SetPoint("LEFT", autoHiLabel, "RIGHT", 8, 0)' in settings_body
-    assert 'autoHiEditBox:SetSize(190, 22)' in settings_body
-    assert "autoHiEditBox:SetMaxBytes(entryCreationKeyState.AUTO_HI_MAX_BYTES)" in (
-        settings_body
-    )
-    assert "autoHiEditBox:SetMaxLetters" not in settings_body
-    assert 'autoHiEditBox:SetScript("OnEnterPressed"' in settings_body
-    assert 'autoHiEditBox:SetScript("OnEditFocusLost"' in settings_body
-    assert "entryCreationKeyState.SetAutoHiMessage(self:GetText(), true)" in settings_body
-    assert "entryCreationKeyState.SyncAutoHiEditBox()" in settings_body
-    assert "ApplicantScoutSettingsAutoHiNewPartyMembersCheckbox" in settings_body
-    assert 'autoHiNewPartyMembersCheckbox:SetScale(0.82)' in settings_body
-    assert 'autoHiNewPartyMembersCheckbox:SetPoint("LEFT", autoHiEditBox, "RIGHT", 10, 0)' in settings_body
-    assert 'autoHiNewPartyMembersLabel:SetText("new party joins")' in settings_body
-    assert 'autoHiNewPartyMembersLabel:SetPoint("LEFT", autoHiNewPartyMembersCheckbox, "RIGHT", 4, 1)' in settings_body
-    assert "ApplicantScoutDB.autoHiGreetNewPartyMembers" in settings_body
-    assert "Disabled in raids." in settings_body
-    assert "10 seconds after a new player joins your party" in settings_body
-
-
-def test_settings_panel_omits_troubleshooting_controls_and_stays_compact():
-    source = _lua_source()
-    settings_body = _slice_between(
-        source,
-        "-- Settings panel: pinned above PVEFrame",
-        "-- slash commands",
-    )
-
-    forbidden = (
-        "ApplicantScoutSettingsStatusButton",
-        "ApplicantScoutSettingsSnapshotButton",
-        "ApplicantScoutSettingsQRMoveButton",
-        "ApplicantScoutSettingsQRResetButton",
-        "ApplicantScoutSettingsDebugButton",
-        "troubleshootingLabel",
-        "_CreateTroubleshootingButton",
-        "SyncTroubleshootingButtons",
-        "ToggleTroubleshootingDebug",
-    )
-    assert "_SETTINGS_FRAME_HEIGHT = 104" in settings_body
-    assert all(token not in settings_body for token in forbidden)
-    assert "SlashCmdList.APSCOUT(" not in settings_body
 
 
 def test_troubleshooting_slash_commands_delegate_to_shared_helpers():
@@ -3059,58 +2969,7 @@ def test_troubleshooting_slash_commands_delegate_to_shared_helpers():
         assert all(token not in branch for token in forbidden)
 
 
-def test_auto_hi_settings_panel_initializes_new_party_checkbox_from_db():
-    source = _lua_source()
-    settings_body = _slice_between(
-        source,
-        "-- Settings panel: pinned above PVEFrame",
-        "-- slash commands",
-    )
 
-    assert settings_body.count("autoHiNewPartyMembersCheckbox:SetChecked(") == 2
-    on_show_idx = settings_body.index('settingsFrame:HookScript("OnShow"')
-    initial_enabled_idx = settings_body.rindex(
-        "enabledCheckbox:SetChecked(ApplicantScoutDB.enabled)"
-    )
-    initial_checkbox_idx = settings_body.rindex(
-        "autoHiNewPartyMembersCheckbox:SetChecked("
-    )
-    attached_idx = settings_body.index("settingsFrameAttached = true")
-
-    assert on_show_idx < initial_enabled_idx < initial_checkbox_idx < attached_idx
-    assert (
-        "ApplicantScoutDB.autoHiGreetNewPartyMembers"
-        in settings_body[initial_checkbox_idx:attached_idx]
-    )
-
-
-def test_settings_panel_reuses_and_retires_lazy_attach_watcher():
-    source = _lua_source()
-    settings_body = _slice_between(
-        source,
-        "_AttachSettingsPanel = function()",
-        "settingsFrame = CreateFrame(",
-    )
-
-    assert "local watcher = entryCreationKeyState.settingsFrameAttachWatcher" in settings_body
-    assert "if watcher then return end" in settings_body
-    assert "entryCreationKeyState.settingsFrameAttachWatcher = watcher" in settings_body
-    assert settings_body.count("watcher:UnregisterAllEvents()") == 2
-    assert settings_body.count('watcher:SetScript("OnEvent", nil)') == 2
-    assert settings_body.count("entryCreationKeyState.settingsFrameAttachWatcher = nil") == 3
-    assert "entryCreationKeyState.settingsFrameAttachWatcher == self" in settings_body
-
-
-def test_settings_panel_watcher_is_singleton_until_runtime_attachment(pytestconfig):
-    output = _run_lua_script(
-        pytestconfig,
-        LUA_SETTINGS_ATTACH_WATCHER_CHECK,
-    ).strip()
-
-    assert output.splitlines()[-1] == (
-        "ok settings-attach-watcher singleton=1 retired=1 attached=1 tools=0 "
-        "parent-opens=3"
-    )
 
 
 def test_group_finder_surface_drag_and_relayout_recovery(pytestconfig):
@@ -3129,29 +2988,6 @@ def test_group_finder_drag_leaves_docked_root_panels_in_place(pytestconfig):
 
     assert output.splitlines()[-1].startswith("ok pve-frame-docking ")
 
-
-def test_settings_toggle_uses_blizzard_gate_before_showing_child():
-    source = _lua_source()
-    settings_body = _slice_between(
-        source,
-        "entryCreationKeyState.ToggleSettingsPanel = function()",
-        "-- slash commands",
-    )
-    slash_body = source[source.index("SlashCmdList.APSCOUT = function(msg)") :]
-
-    assert "if parent:IsShown() and settingsFrame:IsShown() then" in settings_body
-    assert 'pcall(togglePVEFrame, "GroupFinderFrame", "LFGListPVEStub")' in settings_body
-    assert "if not ok or not parent:IsShown() then" in settings_body
-    assert settings_body.index("parent:IsShown()") < settings_body.index("settingsFrame:Show()")
-    assert "ShowUIPanel" not in settings_body
-    assert "PVEFrame_ShowFrame" not in settings_body
-    config_branch = _slice_between(
-        slash_body,
-        'elseif msg == "config" or msg == "settings" then',
-        'elseif msg == "status" then',
-    )
-    assert "entryCreationKeyState.ToggleSettingsPanel()" in config_branch
-    assert "settingsFrame:IsShown()" not in config_branch
 
 
 def test_auto_hi_group_transition_schedules_one_delayed_clean_chat_send():
@@ -6195,3 +6031,11 @@ def test_transport_names_fail_closed_on_secret_values_in_lua51(pytestconfig):
     ).strip()
 
     assert output == "ok transport-name-secret-safety"
+
+
+def test_settings_windows_are_replaced_by_one_shared_dialog():
+    source = _lua_source()
+    assert 'CreateFrame("Frame", "ApplicantScoutSettingsFrame"' not in source
+    assert '"ApplicantScoutMenu"' not in source
+    assert '_AttachSettingsPanel' not in source
+    assert source.count('"ApplicantScoutCompanionSetup", UIParent') == 1

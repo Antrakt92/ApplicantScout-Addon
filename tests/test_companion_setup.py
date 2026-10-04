@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
         "retry-interaction",
         "measurement-zero", "measurement-negative",
         "font-all-missing", "enabled-transition",
-        "resume-step", "legacy-dismissed", "explicit-reminder", "scrollbar",
+        "resume-step", "legacy-dismissed", "explicit-reminder", "scrollbar", "settings-font",
     ],
 )
 def test_companion_setup_lifecycle(pytestconfig, scenario):

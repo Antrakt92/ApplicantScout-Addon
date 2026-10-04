@@ -48,14 +48,17 @@ or turn it off in settings. Auto Hi greetings are optional.
 
 On your first login, the addon opens a five-step guide covering the companion,
 Windows installer, Warcraft Logs API client, Screenshots folder and first results.
-The step bar lets you jump directly to any topic. Short instructions appear first;
+The same window contains a sixth **Settings** tab with all addon controls.
+`/apscout` opens this window at the first installation step; `/apscout config`
+opens or closes its settings section. The last installation step leads directly
+to Settings. The step bar lets you jump to any topic. Short instructions appear first;
 **More detail** expands the complete guide. The first step includes an example
 Companion overlay. Use **Next** and **Back** to move through it.
 **Later** postpones the guide and resumes the same step on your next login or reload;
 **Don’t show automatically again** is the only persistent opt-out. Closing or
 finishing the guide leaves reminders enabled unless you check that box. Older
 guide-completion preferences are reset once so you can make this choice explicitly.
-Open `/apscout` (or `/apscout menu`) for the addon menu, settings and guide,
+Open `/apscout` (or `/apscout menu`) for the combined installation and settings window,
 or `/apscout setup` for the guide. The addon cannot detect whether the
 companion is installed, so finishing the guide does not verify the connection.
 
