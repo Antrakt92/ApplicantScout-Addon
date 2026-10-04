@@ -17,6 +17,9 @@ REQUIRED_ENTRIES = frozenset(
         PurePosixPath(f"{ADDON_NAME}/THIRD-PARTY-NOTICES.md"),
         PurePosixPath(f"{ADDON_NAME}/media/logo.png"),
         PurePosixPath(f"{ADDON_NAME}/media/setup-preview.tga"),
+        PurePosixPath(f"{ADDON_NAME}/media/setup-download.tga"),
+        PurePosixPath(f"{ADDON_NAME}/media/setup-wcl.tga"),
+        PurePosixPath(f"{ADDON_NAME}/media/setup-settings.tga"),
         PurePosixPath(f"{ADDON_NAME}/libs/qrencode.lua"),
     }
 )

@@ -12,7 +12,7 @@ local frames, pending = {}, {}
 local fontstrings, textures = {}, {}
 local now = 1000
 local fontColdUntil
-local measuredHeight = 450
+local measuredHeight = scenario == "design-export" and (tonumber(arg[4]) or 450) or 450
 if scenario == "scrollbar" then measuredHeight = 180 end
 local combat = false
 local challenge, encounter = false, false
@@ -499,13 +499,20 @@ if scenario == "design" or scenario == "design-export" then
         if texture.parent == panel() and texture.width == 712 and texture.shown then
             assert(texture.layer == "BACKGROUND", "card background can cover parent text")
             backgrounds = backgrounds + 1
-        elseif texture.texture == "Interface\\AddOns\\ApplicantScout\\media\\setup-preview.tga" then
+        elseif texture.parent and texture.parent.parent and texture.parent.parent.kind == "ScrollFrame" then
             example = texture
         end
     end
-    assert(backgrounds == 3, "content, hint and link cards are missing")
-    assert(example and example.shown == (desiredPage == 1), "example image is missing or leaked into later steps")
-    if desiredPage == 1 then
+    assert(backgrounds == 2, "instruction and link cards are missing or redundant hint card remains")
+    assert(example and example.shown == true, "example image is missing or leaked into later steps")
+    assert(example.texture:find(({"setup-preview", "setup-download", "setup-wcl", "setup-settings", "setup-preview"})[desiredPage], 1, true), "wrong illustration for guide step")
+    if desiredPage > 1 then
+        assert(example.point[1] == "TOPLEFT" and -example.point[3] == measuredHeight + 16,
+            "illustration overlaps instruction text")
+        assert(example.width == 624 and example.parent.height >= -example.point[3] + example.height,
+            "illustration is outside scrollable content")
+    end
+    do
         details.scripts.OnClick()
         assert(not example.shown, "example covered expanded instructions")
         details.scripts.OnClick()
@@ -655,18 +662,18 @@ if scenario == "retry-interaction" then
     korean.scripts.OnClick()
     button("Illustrated guide").scripts.OnClick()
     local selected = address.text
-    scrollFrame:SetVerticalScroll(150)
+    scrollFrame:SetVerticalScroll(120)
     picker.scripts.OnClick()
     drain()
     assert(address.text == selected and address.focused and address.selected,
         "font retries replaced the selected link or interrupted copying")
-    assert(scrollFrame.offset == 150, "font retries reset reading position")
+    assert(scrollFrame.offset == 120, "font retries reset reading position")
     assert(menu.shown, "font retries closed the open language picker")
     korean.scripts.OnClick()
-    scrollFrame:SetVerticalScroll(150)
+    scrollFrame:SetVerticalScroll(120)
     measuredHeight = 300
     drain()
-    assert(scrollFrame.offset == 312 - scrollFrame.height, "font retries did not clamp scroll after content became shorter")
+    assert(scrollFrame.offset == math.max(0, 312 - scrollFrame.height), "font retries did not clamp scroll after content became shorter")
     print("ok " .. scenario)
     return
 end
@@ -895,7 +902,7 @@ for _, fontstring in ipairs(fontstrings) do
         break
     end
 end
-assert(hasCurseForgeLabel, "setup panel is missing the CurseForge update label")
+assert(not hasCurseForgeLabel, "removed explanatory strip still renders an unrelated update address")
 for _ = 1, 4 do button("Back").scripts.OnClick() end
 -- Navigation keeps one panel and never silently completes account setup.
 local priorDismissal = ApplicantScoutDB.setupDismissed

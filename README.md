@@ -53,7 +53,8 @@ The right sidebar lists the five installation steps and **Addon settings**.
 opens or closes its settings section. The last installation step leads directly
 to Settings. The sidebar lets you jump to any topic. Short instructions appear first;
 **More detail** expands the complete guide. The first step includes an example
-Companion overlay. Use **Next** and **Back** to move through it.
+Companion overlay; later steps include download, Warcraft Logs and Companion
+settings screenshots inside the addon. Use **Next** and **Back** to move through it.
 **Close** postpones the guide and resumes the same step on your next login or reload;
 The Settings tab contains **Do not open this window on login**, the only persistent
 opt-out. Closing the window leaves reminders enabled unless you check that box. Older

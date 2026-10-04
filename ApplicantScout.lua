@@ -9833,20 +9833,20 @@ do
             if ok and code == "enGB" then code = "enUS" end
             return ok and type(code) == "string" and locales[code] and code or "enUS"
         end
-        local panel, urlBox, heading, body, hint, progress, back, nextButton, scroll, content
+        local panel, urlBox, heading, body, progress, back, nextButton, scroll, content
         local title, copyHint, languageButton, languageMenu, downloadButton, guideButton, laterButton, detailsButton
         local menu, menuLabels, menuChecks, menuActions, greeting, styleButton
         local settingsTab, settingsDescription, settingsBackdrop, navigationHeading
         local ensureSettings, refreshSettings
         local settingsView = false
         local cards = {}
-        local preview, previewCaption, reminder, reminderLabel, reminderHint, quickDownloadButton
+        local preview, reminder, reminderLabel, quickDownloadButton
         local languageItems, stepButtons = {}, {}
         local requested, ready, queued, postponed = false, false, false, false
         local internalHide = false
         local fontRetryGeneration, fontRetryAttempts, fontPending = 0, 0, false
         local page, selectedURL, expanded = 1, downloadURL, false
-        local viewHeight = 256
+        local viewHeight = 328
 
         local function savedPage()
             local value = ApplicantScoutDB.setupStep
@@ -9926,22 +9926,44 @@ do
             local step = pages[page]
             if not settingsView then ApplicantScoutDB.setupStep = page end
             heading:SetText(settingsView and language.menu[1] or step.title)
-            local showPreview = not settingsView and page == 1 and not expanded
-            body:SetWidth(showPreview and 400 or 664)
+            local showPreview = not settingsView and not expanded
+            local sidePreview = page == 1
+            body:SetWidth(showPreview and sidePreview and 400 or 664)
             preview:SetShown(showPreview)
-            previewCaption:SetShown(showPreview)
-            previewCaption:SetText(ui.preview)
             body:SetText((missingFont and "This WoW installation could not load the selected language's font. Showing English; your language choice is saved.\n\n" or "")
                 .. (expanded and step.body or step.summary))
             local measured, textHeight = pcall(body.GetStringHeight, body)
             textHeight = measured and SafeNumber(textHeight, 0) or 0
             if textHeight <= 0 then textHeight = 588 end
-            local needsScroll = textHeight > viewHeight
-            local contentHeight = needsScroll and textHeight + 12 or viewHeight
+            local illustratedHeight = textHeight
+            if showPreview then
+                preview:ClearAllPoints()
+                if sidePreview then
+                    preview:SetPoint("TOPRIGHT", 0, -24)
+                    preview:SetSize(212, 170)
+                    preview:SetTexture("Interface\\AddOns\\ApplicantScout\\media\\setup-preview.tga")
+                    preview:SetTexCoord(0, 1, 0, 412 / 512)
+                    illustratedHeight = math.max(textHeight, 194)
+                else
+                    local images = {
+                        [2] = {"setup-download", 114, 600 / 1024, 110 / 128},
+                        [3] = {"setup-wcl", 278, 1, 457 / 512},
+                        [4] = {"setup-settings", 335, 663 / 1024, 356 / 512},
+                        [5] = {"setup-preview", 502, 1, 412 / 512},
+                    }
+                    local illustration = images[page]
+                    preview:SetPoint("TOPLEFT", 0, -textHeight - 16)
+                    preview:SetSize(624, illustration[2])
+                    preview:SetTexture("Interface\\AddOns\\ApplicantScout\\media\\" .. illustration[1] .. ".tga")
+                    preview:SetTexCoord(0, illustration[3], 0, illustration[4])
+                    illustratedHeight = textHeight + 16 + illustration[2]
+                end
+            end
+            local needsScroll = illustratedHeight > viewHeight
+            local contentHeight = needsScroll and illustratedHeight + 12 or viewHeight
             content:SetHeight(contentHeight)
             scroll:SetVerticalScroll(isRetry and math.max(0, math.min(priorScroll, contentHeight - viewHeight)) or 0)
             scroll.ScrollBar:SetShown(needsScroll)
-            hint:SetText(step.hint)
             title:SetText(ui.title)
             progress:SetText(settingsView and (missingFont and "Font unavailable; showing English" or language.menu[1])
                 or string.format(ui.step, page, #pages))
@@ -9964,7 +9986,6 @@ do
             detailsButton:SetText(expanded and ui.less or ui.details)
             reminder:SetChecked(ApplicantScoutDB.setupAutoHidden)
             reminderLabel:SetText(ui.noAuto)
-            reminderHint:SetText(ui.reminder)
             laterButton:SetText(language.menu[13])
             back:SetText(ui.back)
             languageItems.auto:SetText(ui.automatic)
@@ -9991,8 +10012,8 @@ do
             navigationHeading:SetText(language.menu[2])
             paintButton(settingsTab, false, settingsView)
             for _, surface in ipairs(cards) do surface:SetShown(not settingsView) end
-            for _, widget in ipairs({scroll, hint, urlBox, copyHint, downloadButton, detailsButton,
-                nextButton, reminderHint}) do widget:SetShown(not settingsView) end
+            for _, widget in ipairs({scroll, urlBox, copyHint, downloadButton, detailsButton,
+                nextButton}) do widget:SetShown(not settingsView) end
             reminder:SetShown(settingsView)
             reminderLabel:SetShown(settingsView)
             if menu then menu:SetShown(settingsView) end
@@ -10073,7 +10094,7 @@ do
             settingsBackdrop = card(-164, 458)
             table.remove(cards)
             settingsDescription = label(-632, "GameFontHighlightSmall", 44, 40, 680)
-            card(-164, 280)
+            card(-164, 352)
             scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
             scroll:SetPoint("TOPLEFT", 40, -176)
             scroll:SetSize(664, viewHeight)
@@ -10089,18 +10110,11 @@ do
             body:SetJustifyH("LEFT")
             body:SetJustifyV("TOP")
             registerFont(body, 14, "GameFontHighlight")
-            previewCaption = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            previewCaption:SetPoint("TOPRIGHT", 0, 0)
-            previewCaption:SetSize(236, 20)
-            previewCaption:SetJustifyH("CENTER")
-            registerFont(previewCaption, 12, "GameFontHighlightSmall")
             preview = content:CreateTexture(nil, "ARTWORK")
             preview:SetPoint("TOPRIGHT", 0, -24)
             preview:SetSize(212, 170)
             preview:SetTexture("Interface\\AddOns\\ApplicantScout\\media\\setup-preview.tga")
             preview:SetTexCoord(0, 1, 0, 412 / 512)
-            card(-492, 60)
-            hint = label(-504, "GameFontHighlightSmall", 40, 40, 680)
             card(-564, 110)
             urlBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
             urlBox:SetSize(672, 28)
@@ -10139,7 +10153,7 @@ do
                 paintButton(widget)
                 return widget
             end
-            detailsButton = button("More detail", 24, 256, 220, function()
+            detailsButton = button("More detail", 24, 180, 220, function()
                 expanded = not expanded
                 refresh(true)
                 scroll:SetVerticalScroll(0)
@@ -10155,7 +10169,6 @@ do
                 requested = true
             end)
             reminderLabel = label(-688, "GameFontHighlightSmall", 32, 164, 252)
-            reminderHint = label(-670, "GameFontHighlightSmall", 14, 24, 712, 10)
             downloadButton = button("Select download link", 40, 136, 340, function() selectLink(links[page]) end,
                 "ApplicantScoutSetupLink")
             guideButton = button("Illustrated guide", 392, 136, 328, function() selectLink(guideURL) end)

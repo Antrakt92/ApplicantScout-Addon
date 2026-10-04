@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Show download, Warcraft Logs and Companion settings screenshots directly in
+  the guide. Remove the separate explanatory strip below the instructions.
+
 - Move installation steps and addon settings into a right sidebar with full
   section names and a highlighted current section. Expand the instruction area.
 

@@ -1011,3 +1011,18 @@ zhTW = "右側提供 Companion 安裝的五個步驟與插件設定。Warcraft L
 esMX = "A la derecha están los cinco pasos de instalación de Companion y los ajustes del addon. Las claves de Warcraft Logs y la carpeta Screenshots se configuran en Companion para Windows. Ventana: /apscout; comandos: /apscout help.",
 }
 for code, description in pairs(unifiedDescriptions) do locales[code].menu[14] = description end
+
+local installerInstructions = {
+enUS = "1. Copy the download link below: Ctrl+C.\n\n2. On GitHub, click Windows installer, or open Assets and download ApplicantScoutCompanionSetup-*.exe.\n\n3. Run it, install the app and open ApplicantScout Companion from Start.",
+ruRU = "1. Скопируй ссылку ниже: Ctrl+C.\n\n2. На GitHub нажми Windows installer. Или открой Assets и скачай ApplicantScoutCompanionSetup-*.exe.\n\n3. Запусти файл, установи программу и открой ApplicantScout Companion из меню «Пуск».",
+deDE = "1. Link unten kopieren: Ctrl+C.\n\n2. Auf GitHub Windows installer wählen, oder unter Assets ApplicantScoutCompanionSetup-*.exe laden.\n\n3. Datei ausführen, installieren und ApplicantScout Companion im Startmenü öffnen.",
+frFR = "1. Copiez le lien ci-dessous : Ctrl+C.\n\n2. Sur GitHub, cliquez sur Windows installer, ou téléchargez ApplicantScoutCompanionSetup-*.exe dans Assets.\n\n3. Lancez le fichier, installez puis ouvrez ApplicantScout Companion depuis Démarrer.",
+esES = "1. Copia el enlace de abajo: Ctrl+C.\n\n2. En GitHub pulsa Windows installer, o descarga ApplicantScoutCompanionSetup-*.exe desde Assets.\n\n3. Ejecuta el archivo, instala y abre ApplicantScout Companion desde Inicio.",
+esMX = "1. Copia el enlace de abajo: Ctrl+C.\n\n2. En GitHub pulsa Windows installer, o descarga ApplicantScoutCompanionSetup-*.exe desde Assets.\n\n3. Ejecuta el archivo, instala y abre ApplicantScout Companion desde Inicio.",
+itIT = "1. Copia il link sotto: Ctrl+C.\n\n2. Su GitHub scegli Windows installer, oppure scarica ApplicantScoutCompanionSetup-*.exe da Assets.\n\n3. Esegui il file, installa e apri ApplicantScout Companion dal menu Start.",
+ptBR = "1. Copie o link abaixo: Ctrl+C.\n\n2. No GitHub clique em Windows installer, ou baixe ApplicantScoutCompanionSetup-*.exe em Assets.\n\n3. Execute o arquivo, instale e abra ApplicantScout Companion pelo menu Iniciar.",
+koKR = "1. 아래 링크를 복사하세요: Ctrl+C.\n\n2. GitHub에서 Windows installer를 누르거나 Assets에서 ApplicantScoutCompanionSetup-*.exe를 받으세요.\n\n3. 파일을 실행해 설치한 후 시작 메뉴에서 ApplicantScout Companion을 여세요.",
+zhCN = "1. 复制下方链接：Ctrl+C。\n\n2. 在 GitHub 点击 Windows installer，或在 Assets 下载 ApplicantScoutCompanionSetup-*.exe。\n\n3. 运行文件并安装，然后从开始菜单打开 ApplicantScout Companion。",
+zhTW = "1. 複製下方連結：Ctrl+C。\n\n2. 在 GitHub 點擊 Windows installer，或從 Assets 下載 ApplicantScoutCompanionSetup-*.exe。\n\n3. 執行檔案並安裝，再從開始功能表開啟 ApplicantScout Companion。",
+}
+for code, summary in pairs(installerInstructions) do locales[code].pages[2].summary = summary end

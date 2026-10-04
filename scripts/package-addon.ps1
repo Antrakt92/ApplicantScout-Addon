@@ -22,6 +22,9 @@ $RequiredFiles = @(
     "CHANGELOG.md",
     "media\logo.png",
     "media\setup-preview.tga",
+    "media\setup-download.tga",
+    "media\setup-wcl.tga",
+    "media\setup-settings.tga",
     "libs\qrencode.lua"
 )
 $ReleaseInputFiles = $RequiredFiles + @(
