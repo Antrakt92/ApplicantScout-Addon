@@ -9836,7 +9836,7 @@ do
         local panel, urlBox, heading, body, hint, progress, back, nextButton, scroll, content
         local title, copyHint, languageButton, languageMenu, downloadButton, guideButton, laterButton, detailsButton
         local menu, menuLabels, menuChecks, menuActions, greeting, styleButton
-        local settingsTab, settingsDescription, settingsBackdrop
+        local settingsTab, settingsDescription, settingsBackdrop, navigationHeading
         local ensureSettings, refreshSettings
         local settingsView = false
         local cards = {}
@@ -9846,7 +9846,7 @@ do
         local internalHide = false
         local fontRetryGeneration, fontRetryAttempts, fontPending = 0, 0, false
         local page, selectedURL, expanded = 1, downloadURL, false
-        local viewHeight = 196
+        local viewHeight = 256
 
         local function savedPage()
             local value = ApplicantScoutDB.setupStep
@@ -9881,7 +9881,7 @@ do
             if not IsSecretValue(height) and not IsSecretValue(width)
                 and type(height) == "number" and height > 0 and height < math.huge
                 and type(width) == "number" and width > 0 and width < math.huge then
-                target:SetScale(math.min(1, height / 780, width / 800))
+                target:SetScale(math.min(1, height / 780, width / 1040))
             end
         end
 
@@ -9984,10 +9984,11 @@ do
             nextButton:SetText(page == #pages and language.menu[1] or ui.next)
             paintButton(nextButton, page ~= 2 and page ~= 3)
             for index, widget in ipairs(stepButtons) do
-                widget:SetText(index .. ". " .. pages[index].chapter)
+                widget:SetText(index .. ". " .. pages[index].title)
                 paintButton(widget, false, not settingsView and index == page)
             end
-            settingsTab:SetText("6. " .. ui.settings)
+            settingsTab:SetText(language.menu[1])
+            navigationHeading:SetText(language.menu[2])
             paintButton(settingsTab, false, settingsView)
             for _, surface in ipairs(cards) do surface:SetShown(not settingsView) end
             for _, widget in ipairs({scroll, hint, urlBox, copyHint, downloadButton, detailsButton,
@@ -10018,7 +10019,7 @@ do
 
         local function createPanel()
             panel = CreateFrame("Frame", "ApplicantScoutCompanionSetup", UIParent, "BackdropTemplate")
-            panel:SetSize(760, 740)
+            panel:SetSize(1000, 740)
             panel:SetPoint("CENTER")
             panel:SetFrameStrata("DIALOG")
             panel:SetClampedToScreen(true)
@@ -10042,7 +10043,7 @@ do
             panel:SetBackdropBorderColor(0.23, 0.32, 0.39, 1)
             local accent = panel:CreateTexture(nil, "ARTWORK")
             accent:SetPoint("TOPLEFT", 1, -1)
-            accent:SetSize(758, 3)
+            accent:SetSize(998, 3)
             accent:SetColorTexture(0.22, 0.70, 0.63, 1)
             local logo = panel:CreateTexture(nil, "ARTWORK")
             logo:SetPoint("TOPLEFT", 24, -24)
@@ -10059,7 +10060,7 @@ do
             end
             title = label(-26, "GameFontNormalLarge", 28, 88, 622, 20)
             progress = label(-62, "GameFontHighlightSmall", 20, 88, 320)
-            heading = label(-170, "GameFontNormalLarge", 48, nil, nil, 20)
+            heading = label(-110, "GameFontNormalLarge", 48, nil, nil, 20)
             local function card(y, height)
                 -- Background textures share the text's frame; child frames would cover parent labels.
                 local surface = panel:CreateTexture(nil, "BACKGROUND")
@@ -10069,12 +10070,12 @@ do
                 cards[#cards + 1] = surface
                 return surface
             end
-            settingsBackdrop = card(-224, 398)
+            settingsBackdrop = card(-164, 458)
             table.remove(cards)
             settingsDescription = label(-632, "GameFontHighlightSmall", 44, 40, 680)
-            card(-224, 220)
+            card(-164, 280)
             scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
-            scroll:SetPoint("TOPLEFT", 40, -236)
+            scroll:SetPoint("TOPLEFT", 40, -176)
             scroll:SetSize(664, viewHeight)
             scroll:HookScript("OnScrollRangeChanged", function(self, _, verticalRange)
                 self.ScrollBar:SetShown(SafeNumber(verticalRange, 0) > 0)
@@ -10168,15 +10169,22 @@ do
             nextButton = button("Next", 544, 22, 192, function()
                 if page == #links then entryCreationKeyState.ShowAddonSettings() else navigate(page + 1) end
             end, "ApplicantScoutSetupNext")
+            local navigationBackground = panel:CreateTexture(nil, "BACKGROUND")
+            navigationBackground:SetPoint("TOPLEFT", 752, -108)
+            navigationBackground:SetSize(224, 566)
+            navigationBackground:SetColorTexture(0.045, 0.065, 0.09, 1)
+            navigationHeading = label(-116, "GameFontHighlightSmall", 28, 768, 192)
             for index = 1, #links do
                 local target = index
-                stepButtons[index] = button("", 24 + (index - 1) * 120, 590, 112,
+                stepButtons[index] = button("", 768, 528 - (index - 1) * 68, 192,
                     function() navigate(target) end, "ApplicantScoutSetupStep" .. index)
-                stepButtons[index]:SetHeight(42)
+                stepButtons[index]:SetHeight(56)
+                stepButtons[index]:GetFontString():SetHeight(48)
             end
-            settingsTab = button("", 624, 590, 112,
+            settingsTab = button("", 768, 132, 192,
                 function() entryCreationKeyState.ShowAddonSettings() end, "ApplicantScoutSetupSettingsTab")
-            settingsTab:SetHeight(42)
+            settingsTab:SetHeight(56)
+            settingsTab:GetFontString():SetHeight(48)
             languageButton = button("", 436, 654, 300, nil, "ApplicantScoutSetupLanguageButton")
             languageMenu = CreateFrame("Frame", nil, panel, "BackdropTemplate")
             languageMenu:SetSize(530, 156)
@@ -10286,8 +10294,8 @@ do
         ensureSettings = function()
             if not menu then
                 menu = CreateFrame("Frame", "ApplicantScoutSetupSettings", panel)
-                menu:SetSize(760, 398)
-                menu:SetPoint("TOPLEFT", 0, -224)
+                menu:SetSize(760, 458)
+                menu:SetPoint("TOPLEFT", 0, -164)
                 menuLabels, menuChecks, menuActions = {}, {}, {}
                 local function line(index, y, height, size)
                     local region = menu:CreateFontString(nil, "OVERLAY", "GameFontHighlight")

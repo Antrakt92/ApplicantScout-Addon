@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Move installation steps and addon settings into a right sidebar with full
+  section names and a highlighted current section. Expand the instruction area.
+
 - Simplify guide actions to Close, Back and Next. Move the automatic-opening
   preference to Settings and clarify that it controls this window.
 

@@ -221,10 +221,10 @@ if scenario == "scrollbar" then
     named("ApplicantScoutSetupDetails").scripts.OnClick()
     assert(viewport.ScrollBar.shown, "long details have no scrollbar")
     viewport:SetVerticalScroll(120)
-    measuredHeight = 196
+    measuredHeight = viewport.height
     named("ApplicantScoutSetupDetails").scripts.OnClick()
     assert(not viewport.ScrollBar.shown and viewport.offset == 0, "collapsing to an exact fit keeps scrolling")
-    measuredHeight = 197
+    measuredHeight = viewport.height + 1
     button("Next").scripts.OnClick()
     assert(viewport.ScrollBar.shown, "one-pixel overflow is inaccessible")
     viewport.scripts.OnScrollRangeChanged(viewport, 0, 0)
@@ -488,6 +488,12 @@ if scenario == "design" or scenario == "design-export" then
     assert(hasText(language.pages[desiredPage].summary), "short steps were not restored")
     assert(address.text == expectedURL and address.focused, "collapsing details interrupted copying")
     assert(named("ApplicantScoutSetupStep" .. desiredPage).setupSelected, "detail toggle moved the current step")
+    assert(panel().width == 1000, "sidebar has no dedicated space")
+    for index = 1, 5 do
+        local item = named("ApplicantScoutSetupStep" .. index)
+        assert(item.point[2] >= 752 and item.width == 192 and item.height == 56, "installation navigation is not in the right sidebar")
+    end
+    assert(named("ApplicantScoutSetupSettingsTab").point[2] >= 752, "settings are outside the shared sidebar")
     local backgrounds, example = 0, nil
     for _, texture in ipairs(textures) do
         if texture.parent == panel() and texture.width == 712 and texture.shown then
@@ -712,7 +718,7 @@ if scenario == "resize" then
     local before = panel()
     UIParent.width, UIParent.height = 500, 480
     event("DISPLAY_SIZE_CHANGED")
-    assert(panel().scale == math.min(500 / 800, 480 / 780), "display resize retained stale scale")
+    assert(panel().scale == math.min(500 / (panel().width + 40), 480 / (panel().height + 40)), "display resize retained stale scale")
     UIParent.width, UIParent.height = 1920, 1080
     event("UI_SCALE_CHANGED")
     assert(panel().scale == 1 and panel() == before, "UI scale change replaced or failed to resize the panel")
