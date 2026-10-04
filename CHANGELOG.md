@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Shorten guide steps in every language. Keep optional settings and extra
+  explanations in More detail.
+
 - Show download, Warcraft Logs and Companion settings screenshots directly in
   the guide. Remove the separate explanatory strip below the instructions.
 

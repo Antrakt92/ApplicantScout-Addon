@@ -42,8 +42,8 @@ for _, code in ipairs(supported) do
         [1] = {"Companion", "Warcraft Logs", "GitHub"},
         [2] = {"ApplicantScoutCompanionSetup-*.exe", "Assets", "Ctrl+C"},
         [3] = {"http://localhost", "Public Client", "Client ID", "Client Secret", "Test WCL"},
-        [4] = {"Screenshots", "Start and stop with WoW", "Share usage statistics", "Start companion"},
-        [5] = {"/apscout on", "Show overlay", "Test WCL"},
+        [4] = {"Screenshots", "Start companion"},
+        [5] = {"/apscout on", "Party", "Companion"},
     }) do
         for _, term in ipairs(terms) do
             assert(language.pages[step].summary:find(term, 1, true), "missing short-step UI term " .. term .. " in " .. code)

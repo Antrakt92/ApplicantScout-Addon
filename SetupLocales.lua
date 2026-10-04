@@ -547,364 +547,244 @@ end
 
 presentation("enUS", {"More detail", "Short steps", "Project on GitHub", "Select API Clients link"},
     {"Companion", "Install", "Warcraft Logs", "Settings", "Check"}, {
-    [[Install the free Windows Companion to see applicant results beside WoW.
+    [[Companion shows players’ Warcraft Logs results beside WoW. Install it and leave it running while you play.
 
-Addon -> QR screenshot -> Companion -> Warcraft Logs -> overlay.
+Free. Open source: GitHub.]],
+    [[1. Copy the download link below: Ctrl+C.
 
-The screenshot is read locally, not uploaded to Warcraft Logs. Both parts are open source on GitHub; no Blizzard password is needed.]],
-    [[1. Select the installer link below and copy it with Ctrl+C.
+2. On GitHub, click Windows installer, or open Assets and download ApplicantScoutCompanionSetup-*.exe.
 
-2. On GitHub, open Assets and download ApplicantScoutCompanionSetup-*.exe.
-
-3. Install it, then open ApplicantScout Companion from Start.
-
-Windows builds are unsigned. Check the source before running the installer.]],
+3. Run it, install the app and open ApplicantScout Companion from Start.]],
     [[1. Sign in to Warcraft Logs. Open API Clients and choose Create Client.
 
 2. Redirect URL: http://localhost
    Public Client: leave unchecked.
 
-3. Paste Client ID and Client Secret into Companion Settings, then click Test WCL.
+3. Paste Client ID and Client Secret into Companion Settings, then click Test WCL.]],
+    [[1. Select your WoW client's _retail_/Screenshots folder in Companion. (Browse)
 
-Keep Client Secret private; enter it only in Companion.]],
-    [[1. Select your WoW client's Screenshots folder in Companion.
+2. Click Start companion and leave the app running.]],
+    [[1. Outside combat: /apscout on. Open your listing or select Party in Companion.
 
-2. Choose Mythic+ and the raid difficulties you need.
+2. Click the small Companion window.
 
-3. Start and stop with WoW is optional. Share usage statistics starts off.
-
-4. Click Start companion and leave the app running.]],
-    [[1. Outside combat, use /apscout on. Open your listing or select Party in Companion.
-
-2. Click the small launcher to expand the overlay. Missing? Use Show overlay in the Windows tray.
-
-3. Check matching names and Warcraft Logs results. No names? Check Screenshots. No WCL? Click Test WCL.
-
-Finish guide stops reminders; it does not verify the installation.]]})
+The names should match the players shown in WoW.]]})
 presentation("ruRU", {"Подробнее", "Короткие шаги", "Проект на GitHub", "Ссылка на API Clients"},
     {"Companion", "Установка", "Warcraft Logs", "Настройки", "Проверка"}, {
-    [[Установи бесплатный Companion для Windows, чтобы видеть результаты игроков рядом с WoW.
+    [[Companion показывает результаты Warcraft Logs рядом с WoW. Установи программу и оставь её запущенной во время игры.
 
-Аддон -> скриншот QR -> Companion -> Warcraft Logs -> оверлей.
+Бесплатно. Открытый код: GitHub.]],
+    [[1. Скопируй ссылку ниже: Ctrl+C.
 
-Скриншот читается локально и не отправляется в Warcraft Logs. Код обеих частей открыт на GitHub. Пароль Blizzard не нужен.]],
-    [[1. Выдели ссылку на установщик ниже и скопируй её: Ctrl+C.
+2. На GitHub нажми Windows installer. Или открой Assets и скачай ApplicantScoutCompanionSetup-*.exe.
 
-2. На GitHub открой Assets и скачай ApplicantScoutCompanionSetup-*.exe.
-
-3. Установи программу и открой ApplicantScout Companion из меню «Пуск».
-
-Сборки Windows не подписаны. Проверь источник перед запуском установщика.]],
+3. Запусти файл, установи программу и открой ApplicantScout Companion из меню «Пуск».]],
     [[1. Войди в Warcraft Logs. Открой API Clients и нажми Create Client.
 
 2. Redirect URL: http://localhost
    Public Client: галочку не ставить.
 
-3. Вставь Client ID и Client Secret в Companion Settings. Нажми Test WCL.
+3. Вставь Client ID и Client Secret в Companion Settings. Нажми Test WCL.]],
+    [[1. Выбери папку _retail_/Screenshots своего клиента WoW в Companion. (Browse)
 
-Client Secret держи в тайне и вводи только в Companion.]],
-    [[1. Выбери папку Screenshots своего клиента WoW в Companion.
+2. Нажми Start companion и оставь программу запущенной.]],
+    [[1. Вне боя: /apscout on. Открой свою группу с заявками или выбери Party в Companion.
 
-2. Выбери Mythic+ и нужные сложности рейда.
+2. Нажми маленькое окно Companion.
 
-3. Start and stop with WoW — по желанию. Share usage statistics изначально выключено.
-
-4. Нажми Start companion и оставь программу запущенной.]],
-    [[1. Вне боя введи /apscout on. Открой свою группу с заявками либо выбери Party в Companion.
-
-2. Нажми маленькое окно, чтобы открыть оверлей. Его нет? Выбери Show overlay в трее Windows.
-
-3. Проверь имена и логи. Нет имён? Проверь Screenshots. Нет WCL? Нажми Test WCL.
-
-Завершение гида отключает напоминания, но не проверяет установку.]]})
+В окне должны появиться те же имена, что и в WoW.]]})
 presentation("deDE", {"Mehr Details", "Kurze Schritte", "Projekt auf GitHub", "API-Clients-Link markieren"},
     {"Companion", "Installation", "Warcraft Logs", "Einstellungen", "Prüfen"}, {
-    [[Installiere den kostenlosen Windows-Companion, um Bewerberergebnisse neben WoW zu sehen.
+    [[Companion zeigt Ergebnisse aus Warcraft Logs neben WoW. Installieren und beim Spielen laufen lassen.
 
-Addon -> QR-Screenshot -> Companion -> Warcraft Logs -> Overlay.
+Kostenlos. Offener Code: GitHub.]],
+    [[1. Link unten kopieren: Ctrl+C.
 
-Der Screenshot wird lokal gelesen, nicht zu Warcraft Logs hochgeladen. Beide Teile sind quelloffen auf GitHub. Kein Blizzard-Passwort nötig.]],
-    [[1. Markiere den Installer-Link unten und kopiere ihn mit Ctrl+C.
+2. Auf GitHub Windows installer wählen, oder unter Assets ApplicantScoutCompanionSetup-*.exe laden.
 
-2. Öffne auf GitHub Assets und lade ApplicantScoutCompanionSetup-*.exe herunter.
-
-3. Installiere die App und öffne ApplicantScout Companion im Startmenü.
-
-Windows-Builds sind nicht signiert. Prüfe die Quelle vor dem Start.]],
+3. Datei ausführen, installieren und ApplicantScout Companion im Startmenü öffnen.]],
     [[1. Melde dich bei Warcraft Logs an. Öffne API Clients und wähle Create Client.
 
 2. Redirect URL: http://localhost
    Public Client: nicht aktivieren.
 
-3. Client ID und Client Secret in Companion Settings einfügen, dann Test WCL wählen.
+3. Client ID und Client Secret in Companion Settings einfügen, dann Test WCL wählen.]],
+    [[1. Wähle den _retail_/Screenshots-Ordner deines WoW-Clients in Companion. (Browse)
 
-Client Secret geheim halten und nur in Companion eingeben.]],
-    [[1. Wähle den Screenshots-Ordner deines WoW-Clients in Companion.
+2. Klicke Start companion und lasse die App geöffnet.]],
+    [[1. Außerhalb des Kampfes: /apscout on. Eigenes Gesuch öffnen oder Party in Companion wählen.
 
-2. Wähle Mythic+ und die gewünschten Raid-Schwierigkeiten.
+2. Das kleine Companion-Fenster anklicken.
 
-3. Start and stop with WoW ist optional. Share usage statistics ist anfangs aus.
-
-4. Klicke Start companion und lasse die App geöffnet.]],
-    [[1. Außerhalb des Kampfes /apscout on nutzen. Öffne deine Gruppensuche oder wähle Party in Companion.
-
-2. Klicke auf das kleine Fenster für das Overlay. Fehlt es? Nutze Show overlay im Windows-Tray.
-
-3. Namen und Logs prüfen. Keine Namen? Screenshots prüfen. Kein WCL? Test WCL nutzen.
-
-Das Beenden der Anleitung stoppt Erinnerungen, prüft aber keine Installation.]]})
+Die Namen müssen zu den Spielern in WoW passen.]]})
 presentation("frFR", {"Plus de détails", "Étapes courtes", "Projet sur GitHub", "Sélectionner API Clients"},
     {"Companion", "Installation", "Warcraft Logs", "Réglages", "Vérification"}, {
-    [[Installez le Companion gratuit pour Windows pour voir les résultats des candidats à côté de WoW.
+    [[Companion affiche les résultats Warcraft Logs à côté de WoW. Installez-le et gardez-le ouvert pendant le jeu.
 
-Addon -> capture QR -> Companion -> Warcraft Logs -> overlay.
+Gratuit. Code ouvert : GitHub.]],
+    [[1. Copiez le lien ci-dessous : Ctrl+C.
 
-La capture est lue localement, sans envoi à Warcraft Logs. Le code des deux parties est ouvert sur GitHub. Aucun mot de passe Blizzard requis.]],
-    [[1. Sélectionnez le lien de l'installateur et copiez-le avec Ctrl+C.
+2. Sur GitHub, cliquez sur Windows installer, ou téléchargez ApplicantScoutCompanionSetup-*.exe dans Assets.
 
-2. Sur GitHub, ouvrez Assets et téléchargez ApplicantScoutCompanionSetup-*.exe.
-
-3. Installez puis ouvrez ApplicantScout Companion depuis Démarrer.
-
-Les versions Windows ne sont pas signées. Vérifiez la source avant de les lancer.]],
+3. Lancez le fichier, installez puis ouvrez ApplicantScout Companion depuis Démarrer.]],
     [[1. Connectez-vous à Warcraft Logs. Ouvrez API Clients puis Create Client.
 
 2. Redirect URL : http://localhost
    Public Client : ne pas cocher.
 
-3. Collez Client ID et Client Secret dans Companion Settings, puis cliquez sur Test WCL.
+3. Collez Client ID et Client Secret dans Companion Settings, puis cliquez sur Test WCL.]],
+    [[1. Sélectionnez le dossier _retail_/Screenshots de votre client WoW dans Companion. (Browse)
 
-Gardez Client Secret privé et saisissez-le uniquement dans Companion.]],
-    [[1. Sélectionnez le dossier Screenshots de votre client WoW dans Companion.
+2. Cliquez sur Start companion et laissez l'application ouverte.]],
+    [[1. Hors combat : /apscout on. Ouvrez votre annonce ou choisissez Party dans Companion.
 
-2. Choisissez Mythic+ et les difficultés de raid voulues.
+2. Cliquez sur la petite fenêtre Companion.
 
-3. Start and stop with WoW est facultatif. Share usage statistics est désactivé au départ.
-
-4. Cliquez sur Start companion et laissez l'application ouverte.]],
-    [[1. Hors combat, utilisez /apscout on. Ouvrez votre groupe ou choisissez Party dans Companion.
-
-2. Cliquez sur la petite fenêtre pour agrandir l'overlay. Absente ? Utilisez Show overlay dans la zone de notification Windows.
-
-3. Vérifiez les noms et les logs. Aucun nom ? Vérifiez Screenshots. Pas de WCL ? Test WCL.
-
-Terminer le guide arrête les rappels sans vérifier l'installation.]]})
+Les noms doivent correspondre aux joueurs affichés dans WoW.]]})
 presentation("esES", {"Más detalles", "Pasos breves", "Proyecto en GitHub", "Seleccionar API Clients"},
     {"Companion", "Instalación", "Warcraft Logs", "Ajustes", "Comprobar"}, {
-    [[Instala el Companion gratuito para Windows para ver resultados junto a WoW.
+    [[Companion muestra resultados de Warcraft Logs junto a WoW. Instálalo y déjalo abierto mientras juegas.
 
-Addon -> captura QR -> Companion -> Warcraft Logs -> overlay.
+Gratis. Código abierto: GitHub.]],
+    [[1. Copia el enlace de abajo: Ctrl+C.
 
-La captura se lee localmente, no se sube a Warcraft Logs. Ambas partes tienen código abierto en GitHub. No hace falta la contraseña de Blizzard.]],
-    [[1. Selecciona el enlace del instalador y cópialo con Ctrl+C.
+2. En GitHub pulsa Windows installer, o descarga ApplicantScoutCompanionSetup-*.exe desde Assets.
 
-2. En GitHub, abre Assets y descarga ApplicantScoutCompanionSetup-*.exe.
-
-3. Instálalo y abre ApplicantScout Companion desde Inicio.
-
-Las versiones Windows no están firmadas. Comprueba la fuente antes de ejecutarlas.]],
+3. Ejecuta el archivo, instala y abre ApplicantScout Companion desde Inicio.]],
     [[1. Inicia sesión en Warcraft Logs. Abre API Clients y pulsa Create Client.
 
 2. Redirect URL: http://localhost
    Public Client: dejar sin marcar.
 
-3. Pega Client ID y Client Secret en Companion Settings y pulsa Test WCL.
+3. Pega Client ID y Client Secret en Companion Settings y pulsa Test WCL.]],
+    [[1. Selecciona la carpeta _retail_/Screenshots de tu cliente WoW en Companion. (Browse)
 
-Mantén Client Secret privado e introdúcelo solo en Companion.]],
-    [[1. Selecciona la carpeta Screenshots de tu cliente WoW en Companion.
+2. Pulsa Start companion y deja la aplicación abierta.]],
+    [[1. Fuera de combate: /apscout on. Abre tu anuncio o elige Party en Companion.
 
-2. Elige Mythic+ y las dificultades de banda que necesites.
+2. Pulsa la pequeña ventana de Companion.
 
-3. Start and stop with WoW es opcional. Share usage statistics empieza desactivado.
-
-4. Pulsa Start companion y deja la aplicación abierta.]],
-    [[1. Fuera de combate, usa /apscout on. Abre tu grupo o selecciona Party en Companion.
-
-2. Pulsa la ventana pequeña para ampliar el overlay. ¿No aparece? Usa Show overlay en la bandeja de Windows.
-
-3. Comprueba nombres y logs. ¿Sin nombres? Revisa Screenshots. ¿Sin WCL? Test WCL.
-
-Finalizar la guía detiene los recordatorios, pero no verifica la instalación.]]})
+Los nombres deben coincidir con los jugadores de WoW.]]})
 presentation("itIT", {"Più dettagli", "Passaggi brevi", "Progetto su GitHub", "Seleziona API Clients"},
     {"Companion", "Installazione", "Warcraft Logs", "Impostazioni", "Verifica"}, {
-    [[Installa il Companion gratuito per Windows per vedere i risultati accanto a WoW.
+    [[Companion mostra i risultati Warcraft Logs accanto a WoW. Installalo e lascialo aperto mentre giochi.
 
-Addon -> screenshot QR -> Companion -> Warcraft Logs -> overlay.
+Gratuito. Codice aperto: GitHub.]],
+    [[1. Copia il link sotto: Ctrl+C.
 
-Lo screenshot viene letto localmente, non inviato a Warcraft Logs. Entrambe le parti sono open source su GitHub. Nessuna password Blizzard richiesta.]],
-    [[1. Seleziona il link all'installer e copialo con Ctrl+C.
+2. Su GitHub scegli Windows installer, oppure scarica ApplicantScoutCompanionSetup-*.exe da Assets.
 
-2. Su GitHub apri Assets e scarica ApplicantScoutCompanionSetup-*.exe.
-
-3. Installa e apri ApplicantScout Companion dal menu Start.
-
-Le versioni Windows non sono firmate. Verifica la fonte prima di avviarle.]],
+3. Esegui il file, installa e apri ApplicantScout Companion dal menu Start.]],
     [[1. Accedi a Warcraft Logs. Apri API Clients e scegli Create Client.
 
 2. Redirect URL: http://localhost
    Public Client: non selezionare.
 
-3. Incolla Client ID e Client Secret in Companion Settings e premi Test WCL.
+3. Incolla Client ID e Client Secret in Companion Settings e premi Test WCL.]],
+    [[1. Seleziona la cartella _retail_/Screenshots del tuo client WoW in Companion. (Browse)
 
-Mantieni Client Secret privato e inseriscilo solo in Companion.]],
-    [[1. Seleziona la cartella Screenshots del tuo client WoW in Companion.
+2. Premi Start companion e lascia l'app aperta.]],
+    [[1. Fuori dal combattimento: /apscout on. Apri il tuo annuncio o scegli Party in Companion.
 
-2. Scegli Mythic+ e le difficoltà di incursione desiderate.
+2. Clicca sulla piccola finestra Companion.
 
-3. Start and stop with WoW è facoltativo. Share usage statistics è inizialmente disattivato.
-
-4. Premi Start companion e lascia l'app aperta.]],
-    [[1. Fuori dal combattimento, usa /apscout on. Apri il tuo gruppo o scegli Party in Companion.
-
-2. Premi la finestra piccola per espandere l'overlay. Assente? Usa Show overlay nell'area di notifica Windows.
-
-3. Controlla nomi e log. Nessun nome? Controlla Screenshots. Nessun WCL? Test WCL.
-
-Terminare la guida interrompe i promemoria, senza verificare l'installazione.]]})
+I nomi devono corrispondere ai giocatori in WoW.]]})
 presentation("ptBR", {"Mais detalhes", "Passos curtos", "Projeto no GitHub", "Selecionar API Clients"},
     {"Companion", "Instalação", "Warcraft Logs", "Opções", "Verificar"}, {
-    [[Instale o Companion gratuito para Windows para ver resultados ao lado do WoW.
+    [[O Companion mostra resultados Warcraft Logs ao lado do WoW. Instale e deixe aberto enquanto joga.
 
-Addon -> captura QR -> Companion -> Warcraft Logs -> overlay.
+Grátis. Código aberto: GitHub.]],
+    [[1. Copie o link abaixo: Ctrl+C.
 
-A captura é lida localmente, sem envio ao Warcraft Logs. Ambas as partes têm código aberto no GitHub. A senha Blizzard não é necessária.]],
-    [[1. Selecione o link do instalador e copie com Ctrl+C.
+2. No GitHub clique em Windows installer, ou baixe ApplicantScoutCompanionSetup-*.exe em Assets.
 
-2. No GitHub, abra Assets e baixe ApplicantScoutCompanionSetup-*.exe.
-
-3. Instale e abra ApplicantScout Companion pelo menu Iniciar.
-
-As versões Windows não são assinadas. Confira a origem antes de executar.]],
+3. Execute o arquivo, instale e abra ApplicantScout Companion pelo menu Iniciar.]],
     [[1. Entre no Warcraft Logs. Abra API Clients e escolha Create Client.
 
 2. Redirect URL: http://localhost
    Public Client: deixe desmarcado.
 
-3. Cole Client ID e Client Secret em Companion Settings e clique em Test WCL.
+3. Cole Client ID e Client Secret em Companion Settings e clique em Test WCL.]],
+    [[1. Selecione a pasta _retail_/Screenshots do seu cliente WoW no Companion. (Browse)
 
-Mantenha Client Secret privado e insira apenas no Companion.]],
-    [[1. Selecione a pasta Screenshots do seu cliente WoW no Companion.
+2. Clique em Start companion e mantenha o aplicativo aberto.]],
+    [[1. Fora de combate: /apscout on. Abra seu anúncio ou escolha Party no Companion.
 
-2. Escolha Mythic+ e as dificuldades de raide desejadas.
+2. Clique na pequena janela do Companion.
 
-3. Start and stop with WoW é opcional. Share usage statistics começa desativado.
-
-4. Clique em Start companion e mantenha o aplicativo aberto.]],
-    [[1. Fora de combate, use /apscout on. Abra seu grupo ou selecione Party no Companion.
-
-2. Clique na janela pequena para expandir o overlay. Não aparece? Use Show overlay na bandeja do Windows.
-
-3. Confira nomes e logs. Sem nomes? Confira Screenshots. Sem WCL? Test WCL.
-
-Concluir o guia encerra os lembretes, mas não verifica a instalação.]]})
+Os nomes devem corresponder aos jogadores do WoW.]]})
 presentation("koKR", {"자세히 보기", "간단한 단계", "GitHub 프로젝트", "API Clients 링크 선택"},
     {"Companion", "설치", "Warcraft Logs", "설정", "확인"}, {
-    [[무료 Windows Companion을 설치하면 WoW 옆에서 신청자 결과를 볼 수 있습니다.
+    [[Companion은 WoW 옆에 Warcraft Logs 결과를 표시합니다. 설치하고 게임 중에는 실행해 두세요.
 
-애드온 -> QR 스크린샷 -> Companion -> Warcraft Logs -> 오버레이.
+무료. 공개 코드: GitHub.]],
+    [[1. 아래 링크를 복사하세요: Ctrl+C.
 
-스크린샷은 로컬에서 읽으며 Warcraft Logs에 업로드하지 않습니다. 두 프로그램의 소스는 GitHub에 공개되어 있습니다. Blizzard 비밀번호는 필요 없습니다.]],
-    [[1. 아래 설치 링크를 선택하고 Ctrl+C로 복사하세요.
+2. GitHub에서 Windows installer를 누르거나 Assets에서 ApplicantScoutCompanionSetup-*.exe를 받으세요.
 
-2. GitHub의 Assets에서 ApplicantScoutCompanionSetup-*.exe를 다운로드하세요.
-
-3. 설치 후 시작 메뉴에서 ApplicantScout Companion을 여세요.
-
-Windows 빌드는 서명되지 않았습니다. 실행 전에 출처를 확인하세요.]],
+3. 파일을 실행해 설치한 후 시작 메뉴에서 ApplicantScout Companion을 여세요.]],
     [[1. Warcraft Logs에 로그인하세요. API Clients에서 Create Client를 선택하세요.
 
 2. Redirect URL: http://localhost
    Public Client: 체크하지 마세요.
 
-3. Companion Settings에 Client ID와 Client Secret을 붙여 넣고 Test WCL을 누르세요.
+3. Companion Settings에 Client ID와 Client Secret을 붙여 넣고 Test WCL을 누르세요.]],
+    [[1. Companion에서 사용하는 WoW 클라이언트의 _retail_/Screenshots 폴더를 선택하세요. (Browse)
 
-Client Secret은 비공개로 유지하고 Companion에만 입력하세요.]],
-    [[1. Companion에서 사용하는 WoW 클라이언트의 Screenshots 폴더를 선택하세요.
-
-2. Mythic+와 필요한 공격대 난이도를 선택하세요.
-
-3. Start and stop with WoW는 선택 사항입니다. Share usage statistics는 기본으로 꺼져 있습니다.
-
-4. Start companion을 누르고 프로그램을 실행해 두세요.]],
+2. Start companion을 누르고 프로그램을 실행해 두세요.]],
     [[1. 전투 밖에서 /apscout on을 입력하세요. 모집 목록을 열거나 Companion에서 Party를 선택하세요.
 
-2. 작은 창을 눌러 오버레이를 펼치세요. 없다면 Windows 트레이의 Show overlay를 사용하세요.
+2. 작은 Companion 창을 누르세요.
 
-3. 이름과 로그를 확인하세요. 이름이 없으면 Screenshots, WCL이 없으면 Test WCL을 확인하세요.
-
-가이드 완료는 알림만 중지하며 설치를 검증하지 않습니다.]]})
+WoW에 표시된 플레이어와 같은 이름이 나와야 합니다.]]})
 presentation("zhCN", {"详细说明", "简明步骤", "GitHub 项目", "选择 API Clients 链接"},
     {"Companion", "安装", "Warcraft Logs", "设置", "检查"}, {
-    [[安装免费的 Windows Companion，即可在 WoW 旁查看申请者结果。
+    [[Companion 在 WoW 旁显示 Warcraft Logs 成绩。安装后，游戏时保持运行。
 
-插件 -> QR 截图 -> Companion -> Warcraft Logs -> 浮窗。
+免费。开源代码：GitHub。]],
+    [[1. 复制下方链接：Ctrl+C。
 
-截图仅在本地读取，不上传至 Warcraft Logs。两部分代码均在 GitHub 开源，无需 Blizzard 密码。]],
-    [[1. 选择下方安装链接，按 Ctrl+C 复制。
+2. 在 GitHub 点击 Windows installer，或在 Assets 下载 ApplicantScoutCompanionSetup-*.exe。
 
-2. 在 GitHub 的 Assets 中下载 ApplicantScoutCompanionSetup-*.exe。
-
-3. 安装后从开始菜单打开 ApplicantScout Companion。
-
-Windows 构建未签名。运行前请核实来源。]],
+3. 运行文件并安装，然后从开始菜单打开 ApplicantScout Companion。]],
     [[1. 登录 Warcraft Logs，在 API Clients 中选择 Create Client。
 
 2. Redirect URL：http://localhost
    Public Client：不要勾选。
 
-3. 将 Client ID 和 Client Secret 粘贴到 Companion Settings，点击 Test WCL。
+3. 将 Client ID 和 Client Secret 粘贴到 Companion Settings，点击 Test WCL。]],
+    [[1. 在 Companion 中选择所用 WoW 客户端的 _retail_/Screenshots 文件夹。 (Browse)
 
-请保密 Client Secret，仅在 Companion 中输入。]],
-    [[1. 在 Companion 中选择所用 WoW 客户端的 Screenshots 文件夹。
+2. 点击 Start companion，保持程序运行。]],
+    [[1. 战斗外输入 /apscout on。打开招募列表，或在 Companion 选择 Party。
 
-2. 选择 Mythic+ 和需要的团队难度。
+2. 点击 Companion 小窗口。
 
-3. Start and stop with WoW 为可选项。Share usage statistics 默认关闭。
-
-4. 点击 Start companion，保持程序运行。]],
-    [[1. 战斗外输入 /apscout on，打开招募列表或在 Companion 中选择 Party。
-
-2. 点击小窗口展开浮窗。找不到？使用 Windows 托盘的 Show overlay。
-
-3. 核对姓名和日志。无姓名？检查 Screenshots。无 WCL？点击 Test WCL。
-
-完成指南只关闭提醒，不验证安装。]]})
+姓名应与 WoW 中显示的玩家一致。]]})
 presentation("zhTW", {"詳細說明", "簡明步驟", "GitHub 專案", "選取 API Clients 連結"},
     {"Companion", "安裝", "Warcraft Logs", "設定", "檢查"}, {
-    [[安裝免費的 Windows Companion，即可在 WoW 旁查看申請者結果。
+    [[Companion 在 WoW 旁顯示 Warcraft Logs 成績。安裝後，遊戲時保持執行。
 
-插件 -> QR 截圖 -> Companion -> Warcraft Logs -> 浮窗。
+免費。開源程式碼：GitHub。]],
+    [[1. 複製下方連結：Ctrl+C。
 
-截圖只在本機讀取，不上傳至 Warcraft Logs。兩部分程式碼均在 GitHub 開源，不需要 Blizzard 密碼。]],
-    [[1. 選取下方安裝連結，按 Ctrl+C 複製。
+2. 在 GitHub 點擊 Windows installer，或從 Assets 下載 ApplicantScoutCompanionSetup-*.exe。
 
-2. 在 GitHub 的 Assets 中下載 ApplicantScoutCompanionSetup-*.exe。
-
-3. 安裝後從開始功能表開啟 ApplicantScout Companion。
-
-Windows 建置未簽署。執行前請確認來源。]],
+3. 執行檔案並安裝，再從開始功能表開啟 ApplicantScout Companion。]],
     [[1. 登入 Warcraft Logs，在 API Clients 中選擇 Create Client。
 
 2. Redirect URL：http://localhost
    Public Client：不要勾選。
 
-3. 將 Client ID 與 Client Secret 貼到 Companion Settings，點擊 Test WCL。
+3. 將 Client ID 與 Client Secret 貼到 Companion Settings，點擊 Test WCL。]],
+    [[1. 在 Companion 中選擇所用 WoW 用戶端的 _retail_/Screenshots 資料夾。 (Browse)
 
-請保密 Client Secret，只在 Companion 中輸入。]],
-    [[1. 在 Companion 中選擇所用 WoW 用戶端的 Screenshots 資料夾。
+2. 點擊 Start companion，保持程式執行。]],
+    [[1. 戰鬥外輸入 /apscout on。開啟招募列表，或在 Companion 選擇 Party。
 
-2. 選擇 Mythic+ 和需要的團隊難度。
+2. 點擊 Companion 小視窗。
 
-3. Start and stop with WoW 是選用項目。Share usage statistics 預設關閉。
-
-4. 點擊 Start companion，保持程式執行。]],
-    [[1. 戰鬥外輸入 /apscout on，開啟招募列表或在 Companion 中選擇 Party。
-
-2. 點擊小視窗展開浮窗。找不到？使用 Windows 系統匣的 Show overlay。
-
-3. 核對姓名和紀錄。無姓名？檢查 Screenshots。無 WCL？點擊 Test WCL。
-
-完成指南只關閉提醒，不驗證安裝。]]})
+姓名應與 WoW 中顯示的玩家一致。]]})
 
 local previewCaptions = {
     enUS = "Companion: example", ruRU = "Companion: пример", deDE = "Companion: Beispiel",
@@ -947,17 +827,17 @@ esMX = {"Ajustes del addon", "Guía de instalación", "Activado", "Estilo del gr
 for code, captions in pairs(menuCaptions) do locales[code].menu = captions end
 
 local reminderExplanations = {
-enUS = "Only Don’t show automatically again disables future reminders. Closing or finishing returns next login/reload. The addon cannot verify Companion installation. Reopen: /apscout.",
-ruRU = "Только галочка «Больше не показывать автоматически» отключает напоминания. После закрытия или завершения окно вернётся при входе/reload. Аддон не проверяет установку Companion. Открыть: /apscout.",
-deDE = "Nur Nicht mehr automatisch anzeigen deaktiviert Erinnerungen. Nach Schließen oder Abschluss erscheint das Fenster beim Login/Reload erneut. Die Installation wird nicht geprüft. Öffnen: /apscout.",
-frFR = "Seule la case Ne plus afficher automatiquement désactive les rappels. Après fermeture ou fin du guide, il revient à la connexion/reload. L’installation n’est pas vérifiée. Ouvrir : /apscout.",
-esES = "Solo No volver a mostrar automáticamente desactiva los avisos. Al cerrar o finalizar, vuelve al entrar/reload. No se verifica la instalación. Abrir: /apscout.",
-itIT = "Solo Non mostrare più automaticamente disattiva i promemoria. Dopo chiusura o fine guida, riappare all’accesso/reload. L’installazione non viene verificata. Apri: /apscout.",
-ptBR = "Somente Não mostrar automaticamente novamente desativa os lembretes. Ao fechar ou concluir, volta ao entrar/reload. A instalação não é verificada. Abrir: /apscout.",
-koKR = "다시 자동으로 표시하지 않기만 알림을 끕니다. 닫거나 완료하면 다음 접속/reload에 다시 표시합니다. 설치는 검증하지 않습니다. 열기: /apscout.",
-zhCN = "只有“不再自动显示”关闭提醒。关闭或完成后下次登录/reload再次显示。插件无法验证安装。打开：/apscout。",
-zhTW = "只有「不再自動顯示」關閉提醒。關閉或完成後下次登入/reload再次顯示。插件無法驗證安裝。開啟：/apscout。",
-esMX = "Solo No volver a mostrar automáticamente desactiva los avisos. Al cerrar o finalizar, vuelve al entrar/reload. No se verifica la instalación. Abrir: /apscout.",
+enUS = "Automatic opening is controlled in Addon settings. Reopen this window: /apscout.",
+ruRU = "Автопоказ отключается в настройках аддона. Открыть это окно снова: /apscout.",
+deDE = "Automatisches Öffnen wird in den Addon-Einstellungen gesteuert. Fenster öffnen: /apscout.",
+frFR = "L’ouverture automatique se règle dans les réglages de l’addon. Rouvrir : /apscout.",
+esES = "La apertura automática se controla en los ajustes del addon. Abrir de nuevo: /apscout.",
+esMX = "La apertura automática se controla en los ajustes del addon. Abrir de nuevo: /apscout.",
+itIT = "L’apertura automatica si controlla nelle impostazioni dell’addon. Riapri: /apscout.",
+ptBR = "A abertura automática é controlada nas configurações do addon. Reabrir: /apscout.",
+koKR = "자동 열기는 애드온 설정에서 변경합니다. 다시 열기: /apscout.",
+zhCN = "自动打开可在插件设置中调整。重新打开：/apscout。",
+zhTW = "自動開啟可在插件設定中調整。重新開啟：/apscout。",
 }
 for code, explanation in pairs(reminderExplanations) do
     local page = locales[code].pages[5]
@@ -1011,18 +891,3 @@ zhTW = "右側提供 Companion 安裝的五個步驟與插件設定。Warcraft L
 esMX = "A la derecha están los cinco pasos de instalación de Companion y los ajustes del addon. Las claves de Warcraft Logs y la carpeta Screenshots se configuran en Companion para Windows. Ventana: /apscout; comandos: /apscout help.",
 }
 for code, description in pairs(unifiedDescriptions) do locales[code].menu[14] = description end
-
-local installerInstructions = {
-enUS = "1. Copy the download link below: Ctrl+C.\n\n2. On GitHub, click Windows installer, or open Assets and download ApplicantScoutCompanionSetup-*.exe.\n\n3. Run it, install the app and open ApplicantScout Companion from Start.",
-ruRU = "1. Скопируй ссылку ниже: Ctrl+C.\n\n2. На GitHub нажми Windows installer. Или открой Assets и скачай ApplicantScoutCompanionSetup-*.exe.\n\n3. Запусти файл, установи программу и открой ApplicantScout Companion из меню «Пуск».",
-deDE = "1. Link unten kopieren: Ctrl+C.\n\n2. Auf GitHub Windows installer wählen, oder unter Assets ApplicantScoutCompanionSetup-*.exe laden.\n\n3. Datei ausführen, installieren und ApplicantScout Companion im Startmenü öffnen.",
-frFR = "1. Copiez le lien ci-dessous : Ctrl+C.\n\n2. Sur GitHub, cliquez sur Windows installer, ou téléchargez ApplicantScoutCompanionSetup-*.exe dans Assets.\n\n3. Lancez le fichier, installez puis ouvrez ApplicantScout Companion depuis Démarrer.",
-esES = "1. Copia el enlace de abajo: Ctrl+C.\n\n2. En GitHub pulsa Windows installer, o descarga ApplicantScoutCompanionSetup-*.exe desde Assets.\n\n3. Ejecuta el archivo, instala y abre ApplicantScout Companion desde Inicio.",
-esMX = "1. Copia el enlace de abajo: Ctrl+C.\n\n2. En GitHub pulsa Windows installer, o descarga ApplicantScoutCompanionSetup-*.exe desde Assets.\n\n3. Ejecuta el archivo, instala y abre ApplicantScout Companion desde Inicio.",
-itIT = "1. Copia il link sotto: Ctrl+C.\n\n2. Su GitHub scegli Windows installer, oppure scarica ApplicantScoutCompanionSetup-*.exe da Assets.\n\n3. Esegui il file, installa e apri ApplicantScout Companion dal menu Start.",
-ptBR = "1. Copie o link abaixo: Ctrl+C.\n\n2. No GitHub clique em Windows installer, ou baixe ApplicantScoutCompanionSetup-*.exe em Assets.\n\n3. Execute o arquivo, instale e abra ApplicantScout Companion pelo menu Iniciar.",
-koKR = "1. 아래 링크를 복사하세요: Ctrl+C.\n\n2. GitHub에서 Windows installer를 누르거나 Assets에서 ApplicantScoutCompanionSetup-*.exe를 받으세요.\n\n3. 파일을 실행해 설치한 후 시작 메뉴에서 ApplicantScout Companion을 여세요.",
-zhCN = "1. 复制下方链接：Ctrl+C。\n\n2. 在 GitHub 点击 Windows installer，或在 Assets 下载 ApplicantScoutCompanionSetup-*.exe。\n\n3. 运行文件并安装，然后从开始菜单打开 ApplicantScout Companion。",
-zhTW = "1. 複製下方連結：Ctrl+C。\n\n2. 在 GitHub 點擊 Windows installer，或從 Assets 下載 ApplicantScoutCompanionSetup-*.exe。\n\n3. 執行檔案並安裝，再從開始功能表開啟 ApplicantScout Companion。",
-}
-for code, summary in pairs(installerInstructions) do locales[code].pages[2].summary = summary end
