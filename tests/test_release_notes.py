@@ -29,16 +29,16 @@ def _changelog(
     )
 
 
-def test_release_notes_include_only_current_version():
+def test_release_notes_include_complete_released_history():
     notes = extract_release_notes(_changelog(), "v1.2.3")
 
     assert notes.startswith("## 1.2.3 - 22-Jul-2026 - Current release\n")
     assert "Fixed the current release" in notes
     assert "Unreleased" not in notes
     assert "Future work" not in notes
-    assert "1.2.2" not in notes
-    assert "Historical work" not in notes
-    assert notes.count("\n## ") == 0
+    assert "1.2.2" in notes
+    assert "Historical work" in notes
+    assert notes.count("\n## ") == 1
     assert notes.endswith("\n")
 
 
@@ -62,7 +62,7 @@ def test_release_notes_accept_promoted_changelog_without_unreleased(with_older_r
 
     notes = extract_release_notes(changelog, "v1.2.3")
 
-    assert notes == "## 1.2.3 - 22-Jul-2026 - Current release\n\n- Fixed the current release.\n"
+    assert notes == changelog[changelog.index("## 1.2.3"):].strip() + "\n"
 
 
 def test_release_notes_accept_empty_unreleased_section():
@@ -72,7 +72,7 @@ def test_release_notes_accept_empty_unreleased_section():
     )
 
 
-def test_real_repository_release_notes_include_only_current_version(tmp_path: Path):
+def test_real_repository_release_notes_include_complete_released_history(tmp_path: Path):
     root = Path(__file__).resolve().parents[1]
     toc = (root / "ApplicantScout.toc").read_text(encoding="utf-8")
     version = re.search(r"(?m)^## Version: ([0-9]+\.[0-9]+\.[0-9]+)$", toc)
@@ -90,8 +90,7 @@ def test_real_repository_release_notes_include_only_current_version(tmp_path: Pa
         changelog[current_start + 1 :],
     )
     assert older_heading is not None
-    current_end = current_start + 1 + older_heading.start()
-    assert notes == changelog[current_start:current_end].strip() + "\n"
+    assert notes == changelog[current_start:].strip() + "\n"
     assert "Paired release with ApplicantScout Companion" in notes
 
 

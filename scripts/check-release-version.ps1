@@ -376,7 +376,8 @@ function Test-PublishedCompanionManifest {
         [string]$ReleaseTag,
         [string]$ManifestName,
         [string[]]$ExpectedPayloadAssets,
-        [string]$AddonTag
+        [string]$AddonTag,
+        [string]$CompatibilityBaselineTag
     )
 
     $Assets = @($Release.assets)
@@ -433,9 +434,19 @@ function Test-PublishedCompanionManifest {
     if ($AddonCommit -cne $CheckoutCommit) {
         throw "Remote addon tag $AddonTag moved away from the release checkout commit."
     }
-    if ([string]$Manifest.pairedAddonTag -cne $AddonTag -or
-        [string]$Manifest.pairedAddonCommit -cne $AddonCommit) {
-        throw "Paired companion release manifest does not bind to addon $AddonTag at $AddonCommit."
+    $BoundAddonTag, $BoundAddonCommit = $AddonTag, $AddonCommit
+    if ($CompatibilityBaselineTag) {
+        $BoundAddonTag = $CompatibilityBaselineTag
+        $BoundAddonCommit = Resolve-GitHubTagCommit -CliPath $CliPath `
+            -Repo "Antrakt92/ApplicantScout-Addon" -ReleaseTag $BoundAddonTag
+        & git merge-base --is-ancestor $BoundAddonCommit $CheckoutCommit
+        if ($LASTEXITCODE -ne 0) {
+            throw "Companion compatibility baseline is not an ancestor of this addon release."
+        }
+    }
+    if ([string]$Manifest.pairedAddonTag -cne $BoundAddonTag -or
+        [string]$Manifest.pairedAddonCommit -cne $BoundAddonCommit) {
+        throw "Paired companion release manifest does not bind to addon $BoundAddonTag at $BoundAddonCommit."
     }
 
     $ManifestFiles = @($Manifest.files)
@@ -538,6 +549,20 @@ if ($Errors.Count -gt 0) {
     throw ($Errors -join "`n")
 }
 
+$CompatibilityBaselineMatches = [regex]::Matches($TopChangelogSection,
+    '(?m)^Companion compatibility baseline: ApplicantScout addon `((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))`\.[ \t\r]*$')
+$CompatibilityBaselineTag = ""
+if ($TopChangelogSection.Contains("Companion compatibility baseline:") -and $CompatibilityBaselineMatches.Count -ne 1) {
+    throw "Companion compatibility baseline must name exactly one canonical addon version."
+}
+if ($CompatibilityBaselineMatches.Count -eq 1) {
+    $BaselineVersion = $CompatibilityBaselineMatches[0].Groups[1].Value
+    if ((Compare-SemVer -Left $BaselineVersion -Right $TagVersion) -ge 0) {
+        throw "Companion compatibility baseline must precede the current addon version."
+    }
+    $CompatibilityBaselineTag = "v$BaselineVersion"
+}
+
 $PairedCompanionVersion = $PairedCompanionVersions[0]
 if (-not [string]::IsNullOrWhiteSpace($PairedCompanionRoot)) {
     $CompanionMetadata = Get-CompanionReleaseMetadata -Root $PairedCompanionRoot
@@ -585,7 +610,8 @@ if ($RequirePublishedPairedCompanionAssets) {
         -ReleaseTag $PairedCompanionTag `
         -ManifestName $CompanionManifestName `
         -ExpectedPayloadAssets $ExpectedCompanionPayloadAssets `
-        -AddonTag "v$TagVersion"
+        -AddonTag "v$TagVersion" `
+        -CompatibilityBaselineTag $CompatibilityBaselineTag
 }
 
 Write-Host "Release version check passed: $TagName -> $TagVersion"

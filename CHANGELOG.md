@@ -1,56 +1,36 @@
 # Changelog
 
-## Unreleased
+## 0.14.0 - 04-Oct-2026 — Guided setup and unified settings
 
-- Put the login reminder action beside the close button. Hide it on future
-  logins or restore automatic opening from the same button.
+Compatible with ApplicantScout Companion `0.22.2`; the Windows app is unchanged.
+Companion compatibility baseline: ApplicantScout addon `0.13.5`.
 
-- Make setup and settings more compact, with shorter navigation labels, tighter
-  spacing and a solid background for readable text.
+### Added
 
-- Shorten guide steps in every language. Keep optional settings and extra
-  explanations in More detail.
+- Set up Companion in a five-step in-game guide with installation, Warcraft Logs,
+  screenshot folders, startup options and a first-results check.
+- View download, Warcraft Logs, Companion settings and results screenshots
+  directly in the guide. Select separate project, download and illustrated-guide links.
+- Use the guide in every supported WoW language, with remembered language choices
+  and compatible font fallbacks.
+- Find ApplicantScout under Dungeons & Raids in the AddOn list in every language.
 
-- Show download, Warcraft Logs and Companion settings screenshots directly in
-  the guide. Remove the separate explanatory strip below the instructions.
+### Improved
 
-- Move installation steps and addon settings into a right sidebar with full
-  section names and a highlighted current section. Expand the instruction area.
+- Installation and addon settings share one compact window with sidebar navigation.
+  Open it with `/apscout`; open addon settings with `/apscout config`.
+- Read shorter instructions, open More detail when needed, and resume unfinished steps.
+- Choose Don't show on login beside the close button to disable future automatic
+  opening. Reopen manually and use Show on login to restore it. Ordinary closing
+  postpones the window until the next login or reload.
+- Use a solid background, tighter spacing and aligned checkbox captions.
 
-- Simplify guide actions to Close, Back and Next. Move the automatic-opening
-  preference to Settings and clarify that it controls this window.
+### Fixed
 
-- Combine installation and addon settings in one window with shared language
-  selection. `/apscout` starts the guide; the sixth tab contains settings.
-  Remove the separate settings windows.
-
-- Separate the GitHub project, Companion download and illustrated guide links
-  on the introduction step.
-
-- Hide the setup scrollbar when the instructions fit, while keeping scrolling
-  available for longer details.
-
-- Add an explicit automatic-reminder checkbox and an `/apscout` menu with addon
-  settings, setup help and troubleshooting controls in every supported language.
-  Older guide-completion flags no longer hide the first reminder.
-
-- Refresh first-run setup with a clearer step bar, short instructions, expandable
-  details, an overlay example and links matched to each step. Resume unfinished
-  setup after Later instead of starting over.
-- Keep the selected setup language when a compatible backup WoW font is available.
-- Keep automatic setup in sync with scouting on/off, while preserving manual
-  help and reminder preferences. Retain distinct button states with fallback fonts.
-- Keep the selected link, reading position and language menu intact during font
-  recovery, and update language-choice fonts once they become available.
-- Close setup with Escape, adapt it to display changes, and preserve readable
-  button states and fallback text when fonts cannot be applied.
-- Switch setup fonts with the selected language and keep a readable English
-  fallback when the client cannot load its font.
-- Read the setup guide in every supported WoW client language, or pick a language
-  on any step. Your choice is remembered across characters and reloads.
-- Walk through Companion installation, Warcraft Logs credentials, startup options
-  and first results in a five-step in-game guide with selectable links.
-- Postpone first-run setup with Later, or stop its reminder after finishing the guide.
+- Show setup until automatic opening is explicitly disabled, including after older
+  guide-completion flags. Hide scrollbars when content fits.
+- Preserve copying, reading position and language choices during font recovery.
+- Close with Escape and keep the window within the screen after display changes.
 
 ## 0.13.5 - 02-Oct-2026 — Companion sorting and reliability
 

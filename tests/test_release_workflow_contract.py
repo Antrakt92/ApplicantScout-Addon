@@ -87,6 +87,12 @@ CURRENT_CHECKOUT_COMMIT = subprocess.run(
     text=True,
 ).stdout.strip()
 FAKE_COMPANION_COMMIT = "c" * 40
+COMPATIBILITY_BASELINE_TAG = "v0.13.5"
+COMPATIBILITY_BASELINE_COMMIT = subprocess.check_output(
+    ["git", "rev-parse", f"{COMPATIBILITY_BASELINE_TAG}^{{commit}}"],
+    cwd=REPO_ROOT, text=True,
+).strip()
+
 
 
 def _valid_paired_release_fixture() -> tuple[dict[str, object], dict[str, object]]:
@@ -137,8 +143,8 @@ def _valid_paired_release_fixture() -> tuple[dict[str, object], dict[str, object
         "purpose": "Release",
         "tag": CURRENT_COMPANION_TAG,
         "commit": FAKE_COMPANION_COMMIT,
-        "pairedAddonTag": CURRENT_ADDON_TAG,
-        "pairedAddonCommit": CURRENT_CHECKOUT_COMMIT,
+        "pairedAddonTag": COMPATIBILITY_BASELINE_TAG,
+        "pairedAddonCommit": COMPATIBILITY_BASELINE_COMMIT,
         "workflowRunId": "1",
         "workflowRunAttempt": 1,
         "files": files,
@@ -380,6 +386,7 @@ def _fake_gh_release_view(
     manifest_json: dict[str, object] | None = None,
     companion_commit: str = FAKE_COMPANION_COMMIT,
     addon_commit: str = CURRENT_CHECKOUT_COMMIT,
+    baseline_commit: str = COMPATIBILITY_BASELINE_COMMIT,
     default_immutable: bool = True,
     stderr: str = "",
 ) -> Path:
@@ -405,6 +412,7 @@ def _fake_gh_release_view(
                 "    if ($repo -eq 'wrong') { Write-Error 'unexpected tag repo'; exit 2 }",
                 f"    $sha = if ($repo -eq 'companion') {{ {companion_commit!r} }} else {{ {addon_commit!r} }}",
                 "    $tag = ($args[1] -split '/git/ref/tags/', 2)[1]",
+                f"    if ($repo -eq 'addon' -and $tag -eq {COMPATIBILITY_BASELINE_TAG!r}) {{ $sha = {baseline_commit!r} }}",
                 "    Write-Output (@{ ref = \"refs/tags/$tag\"; object = @{ type = 'commit'; sha = $sha } } | ConvertTo-Json -Compress)",
                 "    exit 0",
                 "}",
@@ -719,7 +727,7 @@ def test_release_and_recovery_share_max_non_cancelling_concurrency_queue():
     assert _workflow_concurrency_contract(_auto_recovery_workflow_source()) == expected
 
 
-def test_release_and_recovery_publish_only_generated_exact_version_notes():
+def test_release_and_recovery_publish_validated_cumulative_notes():
     cases = (
         (
             _workflow_source(), "release", "$env:GITHUB_REF_NAME",
@@ -2233,3 +2241,41 @@ def test_public_slash_help_and_handler_branches_are_symmetric():
 
     assert hidden_aliases <= handler_roots
     assert handler_roots - hidden_aliases == help_roots
+
+
+def test_published_companion_requires_ancestor_compatibility_baseline(tmp_path: Path):
+    release_json, manifest_json = _valid_paired_release_fixture()
+    gh = _fake_gh_release_view(
+        tmp_path, expected_tag=CURRENT_COMPANION_TAG,
+        release_json=release_json, manifest_json=manifest_json,
+        baseline_commit="a" * 40,
+    )
+    result = _run_release_check(
+        "-Tag", CURRENT_ADDON_TAG, "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath", str(gh), "-PublishedReleaseWaitSeconds", "0",
+    )
+    assert result.returncode != 0
+    assert "not an ancestor" in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("replacement", [
+    "Companion compatibility baseline: ApplicantScout addon `01.2.3`.",
+    f"Companion compatibility baseline: ApplicantScout addon `{CURRENT_ADDON_VERSION}`.",
+    "Companion compatibility baseline: ApplicantScout addon `99.0.0`.",
+    ("Companion compatibility baseline: ApplicantScout addon `0.13.5`.\n"
+     "Companion compatibility baseline: ApplicantScout addon `0.13.5`."),
+])
+def test_compatibility_baseline_rejects_invalid_equal_future_or_duplicate_declarations(
+    tmp_path: Path, replacement: str,
+):
+    repo = _copy_release_check_fixture(tmp_path)
+    path = repo / "CHANGELOG.md"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace(
+        "Companion compatibility baseline: ApplicantScout addon `0.13.5`.",
+        replacement,
+    )
+    path.write_text(text, encoding="utf-8")
+    result = _run_release_check_in(repo, "-Tag", CURRENT_ADDON_TAG)
+    assert result.returncode != 0
+    assert "compatibility baseline" in result.stdout + result.stderr
