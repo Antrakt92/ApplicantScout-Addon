@@ -10340,7 +10340,7 @@ do
                     control:SetSize(28, 28)
                     control:SetHitRectInsets(0, -532, 0, 0)
                     local text = control:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                    text:SetPoint("LEFT", control, "RIGHT", 8, 0)
+                    text:SetPoint("LEFT", control, "RIGHT", 8, 4)
                     text:SetSize(532, 28)
                     text:SetJustifyH("LEFT")
                     text:SetJustifyV("MIDDLE")

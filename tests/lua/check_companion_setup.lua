@@ -305,7 +305,7 @@ if scenario == "menu" or scenario == "menu-export" then
         local control = named("ApplicantScoutMenuCheck" .. index)
         local text = control.label
         assert(text.point[1] == "LEFT" and text.point[2] == control and text.point[3] == "RIGHT"
-            and text.point[4] == 8 and text.point[5] == 0 and text.justifyV == "MIDDLE",
+            and text.point[4] == 8 and text.point[5] == 4 and text.justifyV == "MIDDLE",
             "checkbox caption is not vertically centered on its square")
     end
     for _, f in ipairs(frames) do
