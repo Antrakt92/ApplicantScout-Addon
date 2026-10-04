@@ -9834,13 +9834,13 @@ do
             return ok and type(code) == "string" and locales[code] and code or "enUS"
         end
         local panel, urlBox, heading, body, hint, progress, back, nextButton, scroll, content
-        local title, copyHint, languageButton, languageMenu, downloadButton, guideButton, laterButton, doneButton, detailsButton
+        local title, copyHint, languageButton, languageMenu, downloadButton, guideButton, laterButton, detailsButton
         local menu, menuLabels, menuChecks, menuActions, greeting, styleButton
         local settingsTab, settingsDescription, settingsBackdrop
         local ensureSettings, refreshSettings
         local settingsView = false
         local cards = {}
-        local preview, previewCaption, reminder, reminderLabel, reminderHint, menuButton, quickDownloadButton
+        local preview, previewCaption, reminder, reminderLabel, reminderHint, quickDownloadButton
         local languageItems, stepButtons = {}, {}
         local requested, ready, queued, postponed = false, false, false, false
         local internalHide = false
@@ -9883,13 +9883,6 @@ do
                 and type(width) == "number" and width > 0 and width < math.huge then
                 target:SetScale(math.min(1, height / 780, width / 800))
             end
-        end
-
-        local function dismiss()
-            ApplicantScoutDB.setupStep = nil
-            postponed = true
-            requested = false
-            hide()
         end
 
         local function later()
@@ -9972,9 +9965,7 @@ do
             reminder:SetChecked(ApplicantScoutDB.setupAutoHidden)
             reminderLabel:SetText(ui.noAuto)
             reminderHint:SetText(ui.reminder)
-            menuButton:SetText(language.menu[1])
-            laterButton:SetText(settingsView and language.menu[13] or ui.later)
-            doneButton:SetText(ui.done)
+            laterButton:SetText(language.menu[13])
             back:SetText(ui.back)
             languageItems.auto:SetText(ui.automatic)
             for _, choiceCode in ipairs(languageOrder) do
@@ -10000,7 +9991,9 @@ do
             paintButton(settingsTab, false, settingsView)
             for _, surface in ipairs(cards) do surface:SetShown(not settingsView) end
             for _, widget in ipairs({scroll, hint, urlBox, copyHint, downloadButton, detailsButton,
-                doneButton, menuButton, nextButton, reminderHint}) do widget:SetShown(not settingsView) end
+                nextButton, reminderHint}) do widget:SetShown(not settingsView) end
+            reminder:SetShown(settingsView)
+            reminderLabel:SetShown(settingsView)
             if menu then menu:SetShown(settingsView) end
             settingsBackdrop:SetShown(settingsView)
             settingsDescription:SetShown(settingsView)
@@ -10162,15 +10155,13 @@ do
             end)
             reminderLabel = label(-688, "GameFontHighlightSmall", 32, 164, 252)
             reminderHint = label(-670, "GameFontHighlightSmall", 14, 24, 712, 10)
-            menuButton = button("Menu", 458, 256, 278, function() entryCreationKeyState.ShowAddonSettings() end)
             downloadButton = button("Select download link", 40, 136, 340, function() selectLink(links[page]) end,
                 "ApplicantScoutSetupLink")
             guideButton = button("Illustrated guide", 392, 136, 328, function() selectLink(guideURL) end)
             quickDownloadButton = button("Select download link", 270, 136, 220,
                 function() selectLink(downloadURL) end, "ApplicantScoutSetupQuickDownload")
             paintButton(quickDownloadButton, true)
-            laterButton = button("Later", 24, 22, 96, later)
-            doneButton = button("Already set up", 270, 256, 176, dismiss)
+            laterButton = button("Close", 24, 22, 96, later)
             back = button("Back", 430, 22, 106, function()
                 if settingsView then navigate(page) elseif page > 1 then navigate(page - 1) end
             end)

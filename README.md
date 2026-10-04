@@ -54,9 +54,9 @@ opens or closes its settings section. The last installation step leads directly
 to Settings. The step bar lets you jump to any topic. Short instructions appear first;
 **More detail** expands the complete guide. The first step includes an example
 Companion overlay. Use **Next** and **Back** to move through it.
-**Later** postpones the guide and resumes the same step on your next login or reload;
-**Don’t show automatically again** is the only persistent opt-out. Closing or
-finishing the guide leaves reminders enabled unless you check that box. Older
+**Close** postpones the guide and resumes the same step on your next login or reload;
+The Settings tab contains **Do not open this window on login**, the only persistent
+opt-out. Closing the window leaves reminders enabled unless you check that box. Older
 guide-completion preferences are reset once so you can make this choice explicitly.
 Open `/apscout` (or `/apscout menu`) for the combined installation and settings window,
 or `/apscout setup` for the guide. The addon cannot detect whether the

@@ -915,20 +915,20 @@ local previewCaptions = {
 for code, caption in pairs(previewCaptions) do locales[code].ui.preview = caption end
 
 local reminderCaptions = {
-enUS = {"Don’t show automatically again", "Menu", "Close: until next login/reload. Reopen anytime: /apscout"},
-ruRU = {"Больше не показывать автоматически", "Меню", "Закрытие — до входа или /reload. Открыть снова: /apscout"},
-deDE = {"Nicht mehr automatisch anzeigen", "Menü", "Schließen: bis zum Login/Reload. Erneut öffnen: /apscout"},
-frFR = {"Ne plus afficher automatiquement", "Menu", "Fermer : jusqu’à la connexion/reload. Rouvrir : /apscout"},
-esES = {"No volver a mostrar automáticamente", "Menú", "Cerrar: hasta entrar/reload. Abrir de nuevo: /apscout"},
-esMX = {"No volver a mostrar automáticamente", "Menú", "Cerrar: hasta entrar/reload. Abrir de nuevo: /apscout"},
-itIT = {"Non mostrare più automaticamente", "Menu", "Chiudi: fino all’accesso/reload. Riapri: /apscout"},
-ptBR = {"Não mostrar automaticamente novamente", "Menu", "Fechar: até entrar/reload. Reabrir: /apscout"},
-koKR = {"다시 자동으로 표시하지 않기", "메뉴", "닫기: 다음 접속/reload까지. 다시 열기: /apscout"},
-zhCN = {"不再自动显示", "菜单", "关闭后下次登录/reload再显示。随时打开：/apscout"},
-zhTW = {"不再自動顯示", "選單", "關閉後下次登入/reload再顯示。隨時開啟：/apscout"},
+enUS = {"Do not open this window on login", "Close for this session. Automatic opening: Settings tab. Reopen: /apscout"},
+ruRU = {"Не открывать это окно при входе", "Закрыть до следующего входа. Автопоказ — во вкладке «Настройки». Открыть: /apscout"},
+deDE = {"Dieses Fenster beim Login nicht öffnen", "Für diese Sitzung schließen. Automatisches Öffnen: Einstellungen. Öffnen: /apscout"},
+frFR = {"Ne pas ouvrir cette fenêtre à la connexion", "Fermer pour cette session. Ouverture automatique : Réglages. Ouvrir : /apscout"},
+esES = {"No abrir esta ventana al entrar", "Cerrar esta sesión. Apertura automática: Ajustes. Abrir: /apscout"},
+esMX = {"No abrir esta ventana al entrar", "Cerrar esta sesión. Apertura automática: Ajustes. Abrir: /apscout"},
+itIT = {"Non aprire questa finestra all’accesso", "Chiudi per questa sessione. Apertura automatica: Impostazioni. Apri: /apscout"},
+ptBR = {"Não abrir esta janela ao entrar", "Fechar nesta sessão. Abertura automática: Configurações. Abrir: /apscout"},
+koKR = {"접속 시 이 창을 열지 않기", "이번 접속 동안 닫습니다. 자동 열기: 설정 탭. 다시 열기: /apscout"},
+zhCN = {"登录时不打开此窗口", "本次登录期间关闭。自动打开：设置标签。重新打开：/apscout"},
+zhTW = {"登入時不開啟此視窗", "本次登入期間關閉。自動開啟：設定分頁。重新開啟：/apscout"},
 }
 for code, captions in pairs(reminderCaptions) do
-    locales[code].ui.noAuto, locales[code].ui.menu, locales[code].ui.reminder = unpack(captions)
+    locales[code].ui.noAuto, locales[code].ui.reminder = unpack(captions)
 end
 
 local menuCaptions = {

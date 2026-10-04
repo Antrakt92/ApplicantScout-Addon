@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Simplify guide actions to Close, Back and Next. Move the automatic-opening
+  preference to Settings and clarify that it controls this window.
+
 - Combine installation and addon settings in one window with shared language
   selection. `/apscout` starts the guide; the sixth tab contains settings.
   Remove the separate settings windows.

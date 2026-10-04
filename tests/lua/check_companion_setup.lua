@@ -238,13 +238,17 @@ if scenario == "legacy-dismissed" or scenario == "explicit-reminder" then
     assert(shown(), "old completion flag blocked first explicit-preference onboarding")
     assert(not ApplicantScoutDB.setupAutoHidden, "old dismissal was treated as explicit consent")
     local choice = named("ApplicantScoutSetupNoAuto")
+    assert(not choice.shown, "automatic-opening control leaked into installation")
+    named("ApplicantScoutSetupSettingsTab").scripts.OnClick()
+    assert(choice.shown, "automatic-opening control missing from settings")
     choice:SetChecked(true)
     choice.scripts.OnClick(choice)
     assert(ApplicantScoutDB.setupAutoHidden and shown(), "checkbox failed to save without closing")
     event("PLAYER_REGEN_ENABLED")
     drain()
     assert(shown(), "saving preference unexpectedly closed the active guide")
-    button("Later").scripts.OnClick()
+    named("ApplicantScoutSetupStep1").scripts.OnClick()
+    button("Close").scripts.OnClick()
     frames, pending, fontstrings = {}, {}, {}
     harness = env.load_addon({})
     watcher = frames[#frames]
@@ -254,9 +258,11 @@ if scenario == "legacy-dismissed" or scenario == "explicit-reminder" then
     drain()
     assert(shown() and named("ApplicantScoutSetupNoAuto").checked, "manual reopening lost preference")
     choice = named("ApplicantScoutSetupNoAuto")
+    named("ApplicantScoutSetupSettingsTab").scripts.OnClick()
+    assert(choice.shown, "manual opening did not expose the preference in settings")
     choice:SetChecked(false)
     choice.scripts.OnClick(choice)
-    button("Later").scripts.OnClick()
+    button("Close").scripts.OnClick()
     frames, pending, fontstrings = {}, {}, {}
     harness = env.load_addon({})
     watcher = frames[#frames]
@@ -428,7 +434,7 @@ end
 if scenario == "resume-step" then
     button("Next").scripts.OnClick()
     button("Next").scripts.OnClick()
-    button("Later").scripts.OnClick()
+    button("Close").scripts.OnClick()
     assert(ApplicantScoutDB.setupStep == 3 and not ApplicantScoutDB.setupDismissed,
         "postponing forgot current progress or completed setup")
     frames, pending, fontstrings = {}, {}, {}
@@ -439,12 +445,16 @@ if scenario == "resume-step" then
     SlashCmdList.APSCOUT("setup")
     drain()
     assert(ApplicantScoutDB.setupStep == 1, "manual help did not restart the guide")
-    button("Already set up").scripts.OnClick()
-    assert(ApplicantScoutDB.setupStep == nil, "dismissal retained unfinished progress")
+    button("Close").scripts.OnClick()
+    assert(ApplicantScoutDB.setupStep == 1, "closing lost guide progress")
     print("ok " .. scenario)
     return
 end
 if scenario == "design" or scenario == "design-export" then
+    assert(not named("ApplicantScoutSetupNoAuto").shown, "guide exposes unrelated automatic-opening preference")
+    for _, f in ipairs(frames) do
+        assert(f.text ~= "Already set up" and f.text ~= "Menu", "redundant guide action was created")
+    end
     local ns = {}
     assert(loadfile("SetupLocales.lua"))("ApplicantScout", ns)
     local language = ns.CompanionSetupLocales[clientLocale]
@@ -547,14 +557,14 @@ if scenario == "design" or scenario == "design-export" then
                 rawget(f, "enabled") ~= false, rawget(f, "name") or ""}
         end
         for _, f in ipairs(textures) do
-            if f.parent == panel() and f.layer == "BACKGROUND" then export(f, "texture") end
+            if f.parent == panel() and f.shown and f.layer == "BACKGROUND" then export(f, "texture") end
         end
         for _, f in ipairs(frames) do
             if f.parent == panel() and f.shown and f.template ~= "UIPanelCloseButton" then export(f, f.kind) end
         end
-        for _, f in ipairs(fontstrings) do if f.parent == panel() then export(f, "text") end end
+        for _, f in ipairs(fontstrings) do if f.parent == panel() and f.shown then export(f, "text") end end
         for _, f in ipairs(textures) do
-            if f.parent == panel() and f.layer ~= "BACKGROUND" then export(f, "texture") end
+            if f.parent == panel() and f.shown and f.layer ~= "BACKGROUND" then export(f, "texture") end
         end
         for _, f in ipairs(fontstrings) do
             if f.shown and f.parent ~= panel() and rawget(f, "fontObject") then
@@ -609,7 +619,7 @@ if scenario == "enabled-transition" then
     harness.SetEnabled(true)
     drain()
     assert(shown(), "enabling scouting did not restore the unfinished guide")
-    button("Later").scripts.OnClick()
+    button("Close").scripts.OnClick()
     harness.SetEnabled(false)
     harness.SetEnabled(true)
     drain()
@@ -621,7 +631,7 @@ if scenario == "enabled-transition" then
     harness.SetEnabled(false)
     drain()
     assert(shown(), "idempotent disable closed manually requested setup")
-    button("Already set up").scripts.OnClick()
+    button("Close").scripts.OnClick()
     harness.SetEnabled(true)
     drain()
     assert(not shown() and not ApplicantScoutDB.setupAutoHidden, "completion changed reminder preference or reopened this session")
@@ -815,7 +825,7 @@ if scenario:find("language", 1, true) or scenario:find("locale-api", 1, true) th
     return
 end
 if scenario == "postponed" then
-    button("Later").scripts.OnClick()
+    button("Close").scripts.OnClick()
     assert(not ApplicantScoutDB.setupDismissed and not shown(), "Later persisted dismissal")
     frames, pending = {}, {}
     harness = env.load_addon({})
@@ -895,7 +905,7 @@ assert(url.text == guideURL, "guide address remained editable")
 button("Select download link").scripts.OnClick()
 assert(url.text == downloadURL and url.selected, "download action did not restore official address")
 button("Back").scripts.OnClick()
-button("Later").scripts.OnClick()
+button("Close").scripts.OnClick()
 assert(ApplicantScoutDB.setupDismissed == priorDismissal and not shown(), "Later changed persistent dismissal")
 event("PLAYER_REGEN_ENABLED")
 drain()
@@ -955,7 +965,7 @@ for _, activity in ipairs({ "challenge", "encounter" }) do
         "transport did not reconcile the missed activity end")
     assert(shown(), "setup retained a stale activity latch after transport recovery")
 end
-button("Already set up").scripts.OnClick()
+button("Close").scripts.OnClick()
 assert(ApplicantScoutDB.setupDismissed == priorDismissal and not shown(), "completion changed reminder preference")
 for _ = 1, 3 do
     event("PLAYER_ENTERING_WORLD")
