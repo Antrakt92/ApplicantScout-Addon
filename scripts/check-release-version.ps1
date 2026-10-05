@@ -55,6 +55,29 @@ function Get-TopChangelogSection {
     if (-not $Match.Success) {
         throw "Missing top changelog section in $Path"
     }
+    # WHY: loose Markdown lists wrap item text in paragraphs; marketplace
+    # styles can then place the text below its bullet. Validate new copy only.
+    $InList = $false
+    $BlankAfterItem = $false
+    foreach ($Line in ($Match.Value -split '\r?\n')) {
+        if ($Line -match '^[ \t]*$') {
+            if ($InList) { $BlankAfterItem = $true }
+            continue
+        }
+        $IsBullet = $Line -match '^[ \t]*[-+*](?:[ \t]+|$)'
+        $IsContinuation = $Line -match '^[ \t]+\S'
+        if (($IsBullet -and $Line -match '^[ \t]*[-+*][ \t]*$') -or
+            ($InList -and $BlankAfterItem -and ($IsBullet -or $IsContinuation))) {
+            throw "Use compact changelog lists in the top release: remove blank lines between items/paragraphs and put text beside each bullet."
+        }
+        if ($IsBullet) {
+            $InList = $true
+        }
+        elseif (-not $IsContinuation) {
+            $InList = $false
+        }
+        $BlankAfterItem = $false
+    }
     return $Match
 }
 

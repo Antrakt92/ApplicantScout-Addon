@@ -85,6 +85,12 @@ Preserve the BSD-3-Clause notice when changing the bundled QR encoder.
 
 ## Development Package
 
+Keep each new `CHANGELOG.md` release list compact: put text beside every bullet,
+with no blank lines between items or paragraphs inside an item. Long lines may
+wrap onto indented continuation lines. Separate Added, Improved and Fixed lists
+with headings. The release-version check validates the newest entry before
+packaging; older entries stay unchanged.
+
 From a clean addon checkout:
 
 ```powershell

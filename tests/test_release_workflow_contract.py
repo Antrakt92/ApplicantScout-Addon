@@ -374,6 +374,48 @@ def _copy_release_check_fixture(tmp_path: Path) -> Path:
     return repo
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize(
+    "copy",
+    [
+        "- First item.\n\n- Second item.",
+        "- First item\n  with wrapped text.\n \t\n- Second item.",
+        "- First item.\n\n  A second paragraph in the same item.",
+        "-\n  Text below an empty marker.",
+    ],
+)
+def test_release_version_rejects_loose_current_changelog_lists(tmp_path, copy, newline):
+    repo = _copy_release_check_fixture(tmp_path)
+    path = repo / "CHANGELOG.md"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("### Added", f"### Formatting\n\n{copy}\n\n### Added", 1)
+    path.write_bytes(text.replace("\n", newline).encode("utf-8"))
+
+    result = _run_release_check_in(repo, "-Tag", CURRENT_ADDON_TAG)
+
+    assert result.returncode != 0
+    assert "compact changelog lists" in result.stdout + result.stderr
+
+
+def test_release_version_accepts_wrapping_and_preserves_loose_history(tmp_path):
+    repo = _copy_release_check_fixture(tmp_path)
+    path = repo / "CHANGELOG.md"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace(
+        "### Added",
+        "### Formatting\n\n- First item\n  with `/apscout setup` and wrapped text.\n"
+        "- Second item.\n\n### Added",
+        1,
+    )
+    text += "\n## 0.0.1 - 01-Jan-2026 - History\n\n- Old item.\n\n- Another old item.\n"
+    path.write_text(text, encoding="utf-8")
+
+    result = _run_release_check_in(repo, "-Tag", CURRENT_ADDON_TAG)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert path.read_text(encoding="utf-8") == text
+
+
 def _fake_gh_release_view(
     tmp_path: Path,
     *,
