@@ -229,8 +229,8 @@ details, and the development-only addon ZIP. Report security issues through
 
 ## License
 
-ApplicantScout is free to use. Future copies distributed with the [Antrakt Attribution and CurseForge Rewards License 1.1](https://github.com/Antrakt92/ApplicantScout-Addon/blob/main/LICENSE) let you modify and share my original work without asking first.
+ApplicantScout is free to use. Future copies carrying the [Antrakt Attribution and CurseForge Rewards License 1.2](https://github.com/Antrakt92/ApplicantScout-Addon/blob/main/LICENSE) may be modified and shared without asking first.
 
-For a public fork, port or substantial reuse of meaningful feature code, keep the license, credit **antrakt92**, and name and link to [ApplicantScout](https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay). If that derivative project earns CurseForge Reward Points, allocate at least **10% of its points** to `antrakt92` through Members. This applies separately to each original project substantially reused.
+For a public fork, port or substantial reuse of my original feature code, keep the license, credit **antrakt92**, and name and link to [ApplicantScout](https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay). If that derivative earns CurseForge Reward Points, share at least **10% of that project's points** with `antrakt92` through Members. One share covers all my projects reused in it; each separate derivative has its own 10% requirement.
 
-Small snippets, independent implementations and translations, and dependency or collection links do not trigger a share by themselves. Earlier MIT and 1.0 copies retain their terms; third-party material keeps its own license. See [third-party notices](https://github.com/Antrakt92/ApplicantScout-Addon/blob/main/THIRD-PARTY-NOTICES.md).
+Small snippets, independent code and translations, compatibility patches, dependencies and collection links require no share by themselves. Earlier MIT and 1.0/1.1 grants remain; the single-share permission also applies to earlier custom versions. [Third-party material](https://github.com/Antrakt92/ApplicantScout-Addon/blob/main/THIRD-PARTY-NOTICES.md) keeps its own terms.
