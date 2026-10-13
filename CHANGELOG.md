@@ -1,9 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.14.1 - 13-Oct-2026 — Companion player estimates and dungeon results
 
-- Companion: base Mythic+ Fit on keys completed in time, clarify missing evidence,
-  and update overlay explanations and previews.
+Paired release with ApplicantScout Companion `0.23.0`.
+
+- Companion: combine nearby applying-spec WCL damage and verified in-time
+  experience in Mythic+ Fit, with clear sources and limited-log indicators.
+- Companion: match M+ DPS summaries and colours to visible dungeon logs;
+  improve target sorting, raid refreshes, missing-data handling and resizing.
+- Refresh overlay explanations and previews. The addon capture format is unchanged.
+- Update original-code reuse terms. Earlier license grants and third-party terms
+  remain in force; see `LICENSE`.
 
 ## 0.14.0 - 04-Oct-2026 — Guided setup and unified settings
 

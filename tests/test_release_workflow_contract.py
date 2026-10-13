@@ -95,7 +95,11 @@ COMPATIBILITY_BASELINE_COMMIT = subprocess.check_output(
 
 
 
-def _valid_paired_release_fixture() -> tuple[dict[str, object], dict[str, object]]:
+def _valid_paired_release_fixture(
+    *,
+    paired_addon_tag: str = CURRENT_ADDON_TAG,
+    paired_addon_commit: str = CURRENT_CHECKOUT_COMMIT,
+) -> tuple[dict[str, object], dict[str, object]]:
     payload_names = [
         f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}.exe",
         f"ApplicantScoutCompanionSetup-{CURRENT_COMPANION_VERSION}.exe.sha256",
@@ -143,8 +147,8 @@ def _valid_paired_release_fixture() -> tuple[dict[str, object], dict[str, object
         "purpose": "Release",
         "tag": CURRENT_COMPANION_TAG,
         "commit": FAKE_COMPANION_COMMIT,
-        "pairedAddonTag": COMPATIBILITY_BASELINE_TAG,
-        "pairedAddonCommit": COMPATIBILITY_BASELINE_COMMIT,
+        "pairedAddonTag": paired_addon_tag,
+        "pairedAddonCommit": paired_addon_commit,
         "workflowRunId": "1",
         "workflowRunAttempt": 1,
         "files": files,
@@ -358,7 +362,9 @@ def _run_release_check(*args: str) -> subprocess.CompletedProcess[str]:
     return _run_release_check_in(REPO_ROOT, *args)
 
 
-def _copy_release_check_fixture(tmp_path: Path) -> Path:
+def _copy_release_check_fixture(
+    tmp_path: Path, *, with_git_context: bool = False,
+) -> Path:
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
     for path in (
@@ -371,7 +377,49 @@ def _copy_release_check_fixture(tmp_path: Path) -> Path:
         target = repo / path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+    if with_git_context:
+        # The checker only reads HEAD and ancestry; reuse objects without creating refs.
+        git_dir = subprocess.check_output(
+            ["git", "rev-parse", "--absolute-git-dir"],
+            cwd=REPO_ROOT,
+            text=True,
+        ).strip()
+        (repo / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
     return repo
+
+
+def _insert_current_changelog_copy(text: str, copy: str) -> str:
+    top = re.search(
+        r"(?ms)^##\s+\d+\.\d+\.\d+\s+-.*?(?=^##\s+\d+\.\d+\.\d+\s+-|\Z)",
+        text,
+    )
+    assert top is not None, "Fixture changelog must contain a current release"
+    heading, separator, body = top.group(0).partition("\n")
+    assert separator, "Current release heading must have a body"
+    body = body.lstrip("\n")
+    updated_top = f"{heading}\n\n{copy.rstrip()}\n\n{body}"
+    updated = text[:top.start()] + updated_top + text[top.end():]
+    assert updated != text, "Fixture must mutate the current release"
+    assert copy.rstrip() in updated_top
+    assert updated.endswith(text[top.end():]), "Historical copy must remain unchanged"
+    return updated
+
+
+def _set_fixture_compatibility_baseline(repo: Path, declaration: str) -> None:
+    path = repo / "CHANGELOG.md"
+    text = path.read_text(encoding="utf-8")
+    top = re.search(
+        r"(?ms)^##\s+\d+\.\d+\.\d+\s+-.*?(?=^##\s+\d+\.\d+\.\d+\s+-|\Z)",
+        text,
+    )
+    assert top is not None, "Fixture changelog must contain a current release"
+    current = re.sub(
+        r"(?m)^Companion compatibility baseline:.*\n?", "", top.group(0),
+    )
+    without_baseline = text[:top.start()] + current + text[top.end():]
+    updated = _insert_current_changelog_copy(without_baseline, declaration)
+    assert updated.endswith(text[top.end():]), "Historical baseline must remain unchanged"
+    path.write_text(updated, encoding="utf-8")
 
 
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
@@ -388,7 +436,7 @@ def test_release_version_rejects_loose_current_changelog_lists(tmp_path, copy, n
     repo = _copy_release_check_fixture(tmp_path)
     path = repo / "CHANGELOG.md"
     text = path.read_text(encoding="utf-8")
-    text = text.replace("### Added", f"### Formatting\n\n{copy}\n\n### Added", 1)
+    text = _insert_current_changelog_copy(text, f"### Formatting\n\n{copy}")
     path.write_bytes(text.replace("\n", newline).encode("utf-8"))
 
     result = _run_release_check_in(repo, "-Tag", CURRENT_ADDON_TAG)
@@ -401,11 +449,10 @@ def test_release_version_accepts_wrapping_and_preserves_loose_history(tmp_path):
     repo = _copy_release_check_fixture(tmp_path)
     path = repo / "CHANGELOG.md"
     text = path.read_text(encoding="utf-8")
-    text = text.replace(
-        "### Added",
+    text = _insert_current_changelog_copy(
+        text,
         "### Formatting\n\n- First item\n  with `/apscout setup` and wrapped text.\n"
-        "- Second item.\n\n### Added",
-        1,
+        "- Second item.\n\n### Original release copy",
     )
     text += "\n## 0.0.1 - 01-Jan-2026 - History\n\n- Old item.\n\n- Another old item.\n"
     path.write_text(text, encoding="utf-8")
@@ -2285,15 +2332,73 @@ def test_public_slash_help_and_handler_branches_are_symmetric():
     assert handler_roots - hidden_aliases == help_roots
 
 
+def test_published_companion_rejects_undeclared_compatibility_baseline(tmp_path: Path):
+    repo = _copy_release_check_fixture(tmp_path, with_git_context=True)
+    path = repo / "CHANGELOG.md"
+    text = path.read_text(encoding="utf-8")
+    top = re.search(
+        r"(?ms)^##\s+\d+\.\d+\.\d+\s+-.*?(?=^##\s+\d+\.\d+\.\d+\s+-|\Z)",
+        text,
+    )
+    assert top is not None
+    current = re.sub(
+        r"(?m)^Companion compatibility baseline:.*\n?", "", top.group(0),
+    )
+    path.write_text(text[:top.start()] + current + text[top.end():], encoding="utf-8")
+    release_json, manifest_json = _valid_paired_release_fixture(
+        paired_addon_tag=COMPATIBILITY_BASELINE_TAG,
+        paired_addon_commit=COMPATIBILITY_BASELINE_COMMIT,
+    )
+    gh = _fake_gh_release_view(
+        tmp_path, expected_tag=CURRENT_COMPANION_TAG,
+        release_json=release_json, manifest_json=manifest_json,
+    )
+    result = _run_release_check_in(
+        repo, "-Tag", CURRENT_ADDON_TAG, "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath", str(gh), "-PublishedReleaseWaitSeconds", "0",
+    )
+    assert result.returncode != 0
+    assert "does not bind to addon" in result.stdout + result.stderr
+
+
+def test_published_companion_accepts_ancestor_compatibility_baseline(tmp_path: Path):
+    repo = _copy_release_check_fixture(tmp_path, with_git_context=True)
+    _set_fixture_compatibility_baseline(
+        repo,
+        f"Companion compatibility baseline: ApplicantScout addon `{COMPATIBILITY_BASELINE_TAG[1:]}`.",
+    )
+    release_json, manifest_json = _valid_paired_release_fixture(
+        paired_addon_tag=COMPATIBILITY_BASELINE_TAG,
+        paired_addon_commit=COMPATIBILITY_BASELINE_COMMIT,
+    )
+    gh = _fake_gh_release_view(
+        tmp_path, expected_tag=CURRENT_COMPANION_TAG,
+        release_json=release_json, manifest_json=manifest_json,
+    )
+    result = _run_release_check_in(
+        repo, "-Tag", CURRENT_ADDON_TAG, "-RequirePublishedPairedCompanionAssets",
+        "-GitHubCliPath", str(gh), "-PublishedReleaseWaitSeconds", "0",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_published_companion_requires_ancestor_compatibility_baseline(tmp_path: Path):
-    release_json, manifest_json = _valid_paired_release_fixture()
+    repo = _copy_release_check_fixture(tmp_path, with_git_context=True)
+    _set_fixture_compatibility_baseline(
+        repo,
+        f"Companion compatibility baseline: ApplicantScout addon `{COMPATIBILITY_BASELINE_TAG[1:]}`.",
+    )
+    release_json, manifest_json = _valid_paired_release_fixture(
+        paired_addon_tag=COMPATIBILITY_BASELINE_TAG,
+        paired_addon_commit="a" * 40,
+    )
     gh = _fake_gh_release_view(
         tmp_path, expected_tag=CURRENT_COMPANION_TAG,
         release_json=release_json, manifest_json=manifest_json,
         baseline_commit="a" * 40,
     )
-    result = _run_release_check(
-        "-Tag", CURRENT_ADDON_TAG, "-RequirePublishedPairedCompanionAssets",
+    result = _run_release_check_in(
+        repo, "-Tag", CURRENT_ADDON_TAG, "-RequirePublishedPairedCompanionAssets",
         "-GitHubCliPath", str(gh), "-PublishedReleaseWaitSeconds", "0",
     )
     assert result.returncode != 0
@@ -2311,13 +2416,7 @@ def test_compatibility_baseline_rejects_invalid_equal_future_or_duplicate_declar
     tmp_path: Path, replacement: str,
 ):
     repo = _copy_release_check_fixture(tmp_path)
-    path = repo / "CHANGELOG.md"
-    text = path.read_text(encoding="utf-8")
-    text = text.replace(
-        "Companion compatibility baseline: ApplicantScout addon `0.13.5`.",
-        replacement,
-    )
-    path.write_text(text, encoding="utf-8")
+    _set_fixture_compatibility_baseline(repo, replacement)
     result = _run_release_check_in(repo, "-Tag", CURRENT_ADDON_TAG)
     assert result.returncode != 0
     assert "compatibility baseline" in result.stdout + result.stderr
