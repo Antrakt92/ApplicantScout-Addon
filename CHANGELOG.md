@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Companion: base Mythic+ Fit on keys completed in time, clarify missing evidence,
+  and update overlay explanations and previews.
+
 ## 0.14.0 - 04-Oct-2026 — Guided setup and unified settings
 
 Compatible with ApplicantScout Companion `0.22.2`; the Windows app is unchanged.
