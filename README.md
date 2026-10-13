@@ -85,13 +85,16 @@ Normal, Heroic, Mythic, and M+ results use the applying specialization.
 WCL percentiles keep their usual colours. Missing logs are marked as missing;
 tooltips explain best/median values and limited samples.
 
-**Fit**, shown as a coloured estimate such as **~65**, describes verified in-time
-key experience for Mythic+ or available raid output evidence. It is not an overall
+**Fit**, shown as a coloured estimate such as **~65**, combines applying-spec
+WCL damage around the target key with verified in-time RaiderIO experience for
+Mythic+, or available raid output evidence. It is not an overall
 skill rating, success probability or Warcraft Logs percentile. Missing evidence
 stays unknown; incomplete grouped applications show `partial`. Hover Fit for
 sources, recorded coverage, sample counts and limitations. Applications default
 to the target estimate; click a WCL or RIO heading to compare that metric instead.
-Untimed keys, WCL logs and general rating do not produce M+ Fit.
+Nearby WCL performance is the primary M+ component; timed experience provides
+additional support. If only one source is available, Fit identifies it. Untimed
+keys and general rating do not establish successful key experience.
 Optional local RaiderIO data adds dungeon, raid and main-score context.
 
 Party also shows raid Fit without a Group Finder listing. Inside a raid it uses
@@ -99,8 +102,9 @@ the instance difficulty; outside it uses the selected Normal, Heroic or Mythic
 raid difficulty. Click a column heading to sort and click again to reverse it.
 
 **M+ WCL values measure damage for every role**, including tanks and healers.
-They do not measure healing, survival, interrupts, or other utility, and do not
-change M+ Fit.
+They do not measure healing, survival, interrupts, or other utility. Fit uses the
+selected logged brackets within two levels of the target; farther fallback logs
+remain visible as context.
 ApplicantScout does not auto-invite players or automate gameplay; you choose
 whom to invite.
 
