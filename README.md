@@ -85,7 +85,7 @@ Normal, Heroic, Mythic, and M+ results use the applying specialization.
 WCL percentiles keep their usual colours. Missing logs are marked as missing;
 tooltips explain best/median values and limited samples.
 
-**Fit**, shown as a neutral estimate such as **~65**, describes verified in-time
+**Fit**, shown as a coloured estimate such as **~65**, describes verified in-time
 key experience for Mythic+ or available raid output evidence. It is not an overall
 skill rating, success probability or Warcraft Logs percentile. Missing evidence
 stays unknown; incomplete grouped applications show `partial`. Hover Fit for
