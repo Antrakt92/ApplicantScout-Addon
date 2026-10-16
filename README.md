@@ -195,9 +195,8 @@ Advanced commands (`/apscout help all`):
 
 ## Compatibility
 
-- WoW Retail Midnight: Interfaces `120100, 120105`.
-- One addon package supports Retail 12.1.0 and PTR 12.1.5. PTR compatibility
-  is based on Blizzard UI source review; in-game PTR validation is still pending.
+- WoW Retail Midnight: Interface `120105`.
+- Supports Retail 12.1.5, including The Unbinding of Kith'ix in Companion.
 - Keep both the addon and Windows companion on their latest releases.
 - Classic-era clients are not supported.
 

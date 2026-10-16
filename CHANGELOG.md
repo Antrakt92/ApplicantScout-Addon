@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.14.2 - 16-Oct-2026 — Retail 12.1.5 and Kith'ix
+
+Paired release with ApplicantScout Companion `0.24.0`.
+
+- Update compatibility metadata for Retail 12.1.5.
+- Companion: include Kith'ix in raid results, logged coverage and manual boss details.
+- The addon capture format is unchanged.
+
 ## 0.14.1 - 13-Oct-2026 — Companion player estimates and dungeon results
 
 Paired release with ApplicantScout Companion `0.23.0`.
