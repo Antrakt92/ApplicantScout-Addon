@@ -1,6 +1,14 @@
 # Changelog
 
-## 0.14.3 - 17-Oct-2026 — Companion raid progress fixes
+## 0.14.4 - 18-Oct-2026 — Companion raid progress and installation fixes
+
+Paired release with ApplicantScout Companion `0.24.2`.
+
+- Companion: restore recorded Nymrissa Wavecaller kills and keep seasonal raid progress on the correct bosses.
+- Companion: avoid false running-app errors during installation when Windows process checks are slow.
+- The addon capture format is unchanged.
+
+## 0.14.3 - 17-Oct-2026 — Companion raid progress fixes (not published)
 
 Paired release with ApplicantScout Companion `0.24.1`.
 
