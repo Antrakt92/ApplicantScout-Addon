@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.14.3 - 17-Oct-2026 — Companion raid progress fixes
+
+Paired release with ApplicantScout Companion `0.24.1`.
+
+- Companion: restore recorded Nymrissa Wavecaller kills after RaiderIO moves her raid out of its current raid list.
+- Companion: keep seasonal boss progress matched to the correct raid and reject duplicate raid records.
+- The addon capture format is unchanged.
+
 ## 0.14.2 - 16-Oct-2026 — Retail 12.1.5 and Kith'ix
 
 Paired release with ApplicantScout Companion `0.24.0`.
