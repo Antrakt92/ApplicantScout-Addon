@@ -9003,6 +9003,16 @@ entryCreationKeyState.CanShowSelfTestCopy = function()
     return S.CleanUnitAPIBoolean(InCombatLockdown) == false
 end
 
+entryCreationKeyState.RegisterDialogLayer = function(panel, onBlur)
+    local layers = rawget(_G, "AntraktWindowLayers")
+    if type(layers) == "table" and type(layers.Register) == "function" then layers.Register(panel, onBlur) end
+end
+
+entryCreationKeyState.FocusDialogLayer = function(panel)
+    local layers = rawget(_G, "AntraktWindowLayers")
+    if type(layers) == "table" and type(layers.Focus) == "function" then layers.Focus(panel) end
+end
+
 entryCreationKeyState.CreateSelfTestCopyPanel = function()
     local S = entryCreationKeyState
     local panel = CreateFrame("Frame", "ApplicantScoutSelfTestCopy", UIParent, "BackdropTemplate")
@@ -9074,6 +9084,7 @@ entryCreationKeyState.CreateSelfTestCopyPanel = function()
     panel:Hide()
     S.selfTestCopyPanel = panel
     S.selfTestCopyBox = box
+    S.RegisterDialogLayer(panel)
 end
 
 entryCreationKeyState.RefreshSelfTestCopyText = function()
@@ -9100,6 +9111,7 @@ entryCreationKeyState.TryShowSelfTestCopyWindow = function()
     if not S.selfTestCopyPanel then S.CreateSelfTestCopyPanel() end
     S.RefreshSelfTestCopyText()
     S.selfTestCopyPanel:Show()
+    S.FocusDialogLayer(S.selfTestCopyPanel)
     return true
 end
 
@@ -10242,6 +10254,7 @@ do
             end)
             refresh()
             hide()
+            entryCreationKeyState.RegisterDialogLayer(panel, function() languageMenu:Hide() end)
         end
 
         local function canShow()
@@ -10257,6 +10270,7 @@ do
             if not panel then createPanel()
             elseif fontPending then refresh(true) end
             panel:Show()
+            entryCreationKeyState.FocusDialogLayer(panel)
         end
 
         local function queue()

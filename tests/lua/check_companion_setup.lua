@@ -33,9 +33,20 @@ local function widget()
     local noop = function() end
     local methods = {
         RegisterEvent = function(self, event) self.events[event] = true end,
+        HasScript = function() return true end,
         SetScript = function(self, name, fn) self.scripts[name] = fn end,
-        HookScript = function(self, name, fn) self.scripts[name] = fn end,
-        Show = function(self) self.shown = true end,
+        HookScript = function(self, name, fn)
+            local previous = self.scripts[name]
+            self.scripts[name] = function(...)
+                if previous then previous(...) end
+                fn(...)
+            end
+        end,
+        Show = function(self)
+            local wasShown = self.shown
+            self.shown = true
+            if not wasShown and self.scripts.OnShow then self.scripts.OnShow(self) end
+        end,
         SetShown = function(self, value) if value then self:Show() else self:Hide() end end,
         Hide = function(self)
             local wasShown = self.shown
@@ -72,7 +83,23 @@ local function widget()
         SetVerticalScroll = function(self, offset) self.offset = offset end,
         GetVerticalScroll = function(self) return rawget(self, "offset") or 0 end,
         GetEffectiveScale = function() return 1 end,
-        GetFrameLevel = function() return 1 end,
+        GetFrameLevel = function(self) return rawget(self, "frameLevel") or 1 end,
+        SetFrameLevel = function(self, level) self.frameLevel = level end,
+        GetFrameStrata = function(self)
+            local parent = rawget(self, "parent")
+            return rawget(self, "strata") or (parent and parent:GetFrameStrata()) or "MEDIUM"
+        end,
+        SetFrameStrata = function(self, strata) self.strata = strata end,
+        GetParent = function(self) return rawget(self, "parent") end,
+        GetChildren = function(self)
+            local children = {}
+            for _, child in ipairs(frames) do if rawget(child, "parent") == self then children[#children + 1] = child end end
+            return unpack(children)
+        end,
+        IsVisible = function(self)
+            local parent = rawget(self, "parent")
+            return self.shown and (not parent or parent:IsVisible())
+        end,
         SetText = function(self, text)
             self.text = text
             if rawget(self, "fontstring") then self.fontstring.text = text end
@@ -214,6 +241,53 @@ local function login()
 end
 if scenario == "combat" then combat = true end
 login()
+if scenario == "window-layers" then
+    local root = assert(panel(), "setup panel missing")
+    local languageButton = named("ApplicantScoutSetupLanguageButton")
+    languageButton.scripts.OnClick()
+    local languageMenu = named("ApplicantScoutSetupLanguage_enUS").parent
+    assert(languageMenu.shown, "precondition: language popup is visible")
+    local relativeMenu = languageMenu:GetFrameLevel() - root:GetFrameLevel()
+    local foreign = CreateFrame("Frame", "ForeignSettingsFixture", UIParent)
+    foreign:SetFrameLevel(4)
+    local foreignControl = CreateFrame("Button", nil, foreign)
+    foreignControl:SetFrameLevel(84)
+    local clicks = 0
+    foreignControl:SetScript("OnMouseDown", function() clicks = clicks + 1 end)
+    AntraktWindowLayers.Register(foreign)
+    AntraktWindowLayers.Focus(foreign)
+    assert(not languageMenu.shown, "losing focus leaves no language popup over another addon")
+    local function bounds(owner)
+        local low, high = owner:GetFrameLevel(), owner:GetFrameLevel()
+        local function visit(frame)
+            low, high = math.min(low, frame:GetFrameLevel()), math.max(high, frame:GetFrameLevel())
+            for _, child in ipairs({frame:GetChildren()}) do visit(child) end
+        end
+        visit(owner)
+        return low, high
+    end
+    local foreignLow = bounds(foreign)
+    local _, ownHigh = bounds(root)
+    assert(foreignLow > ownHigh, "a focused foreign window covers the entire setup family")
+    local child = named("ApplicantScoutSetupNext")
+    assert(type(child.scripts.OnMouseDown) == "function", "setup controls activate their window family")
+    child.scripts.OnMouseDown(child)
+    local ownLow = bounds(root)
+    local _, foreignHigh = bounds(foreign)
+    assert(ownLow > foreignHigh, "clicking a setup control raises every setup child together")
+    assert(languageMenu:GetFrameLevel() - root:GetFrameLevel() == relativeMenu,
+        "promotion preserves the language popup's relative layer")
+    foreignControl.scripts.OnMouseDown(foreignControl)
+    assert(clicks == 1, "family focus preserves existing mouse handlers")
+    local stable = foreign:GetFrameLevel()
+    for _ = 1, 100 do
+        child.scripts.OnMouseDown(child)
+        foreignControl.scripts.OnMouseDown(foreignControl)
+    end
+    assert(foreign:GetFrameLevel() == stable, "repeated activation compacts instead of growing frame levels")
+    print("ok window-layers")
+    return
+end
 if scenario == "scrollbar" then
     local viewport
     for _, f in ipairs(frames) do

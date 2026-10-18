@@ -134,6 +134,13 @@ def test_marketplace_archive_rejects_missing_setup_translations(tmp_path: Path):
         validate_marketplace_archive(archive_path)
 
 
+def test_marketplace_archive_rejects_missing_window_layers(tmp_path: Path):
+    archive_path = tmp_path / "ApplicantScout-0.5.3.zip"
+    _write_archive(archive_path, omit="ApplicantScout/AntraktWindowLayers.lua")
+    with pytest.raises(ArchiveContractError, match="AntraktWindowLayers.lua"):
+        validate_marketplace_archive(archive_path)
+
+
 def test_marketplace_archive_rejects_missing_setup_example(tmp_path: Path):
     archive_path = tmp_path / "ApplicantScout-0.5.3.zip"
     _write_archive(archive_path, omit="ApplicantScout/media/setup-preview.tga")

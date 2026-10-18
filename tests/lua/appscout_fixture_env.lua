@@ -385,6 +385,7 @@ env.load_addon = function(qr)
     local fixtureHarness = {}
     local setupNamespace = {}
     assert(loadfile("SetupLocales.lua"))("ApplicantScout", setupNamespace)
+    assert(loadfile("AntraktWindowLayers.lua"))()
     local chunk = assert(loadfile("ApplicantScout.lua"))
     chunk("ApplicantScout", {
         QR = qr or {},

@@ -12,6 +12,7 @@ REQUIRED_ENTRIES = frozenset(
         PurePosixPath(f"{ADDON_NAME}/ApplicantScout.toc"),
         PurePosixPath(f"{ADDON_NAME}/ApplicantScout.lua"),
         PurePosixPath(f"{ADDON_NAME}/SetupLocales.lua"),
+        PurePosixPath(f"{ADDON_NAME}/AntraktWindowLayers.lua"),
         PurePosixPath(f"{ADDON_NAME}/LICENSE"),
         PurePosixPath(f"{ADDON_NAME}/CHANGELOG.md"),
         PurePosixPath(f"{ADDON_NAME}/THIRD-PARTY-NOTICES.md"),

@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
         "parent-hide", "measurement-invalid", "measurement-error",
         "retry-interaction",
         "measurement-zero", "measurement-negative",
-        "font-all-missing", "enabled-transition",
+        "font-all-missing", "enabled-transition", "window-layers",
         "resume-step", "legacy-dismissed", "explicit-reminder", "scrollbar", "settings-font",
     ],
 )
@@ -107,6 +107,8 @@ def test_setup_translations_load_before_runtime_and_are_packaged():
     assert toc.index("SetupLocales.lua") < toc.index("ApplicantScout.lua")
     package_script = (ROOT / "scripts/package-addon.ps1").read_text(encoding="utf-8")
     assert '"SetupLocales.lua"' in package_script
+    assert toc.index("AntraktWindowLayers.lua") < toc.index("ApplicantScout.lua")
+    assert '"AntraktWindowLayers.lua"' in package_script
 
 
 @pytest.mark.parametrize("locale", ["enUS", "ruRU", "deDE", "frFR", "esES", "esMX", "itIT", "ptBR", "koKR", "zhCN", "zhTW"])

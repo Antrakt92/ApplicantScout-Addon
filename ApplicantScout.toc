@@ -26,4 +26,5 @@
 
 libs\qrencode.lua
 SetupLocales.lua
+AntraktWindowLayers.lua
 ApplicantScout.lua

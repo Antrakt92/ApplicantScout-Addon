@@ -8,6 +8,7 @@ $ConfigPath = Join-Path $PSScriptRoot "lua-diagnostics.luarc.json"
 $LocksPath = Join-Path $PSScriptRoot "tool-version-locks.json"
 $LuaPath = Join-Path $RepoRoot "ApplicantScout.lua"
 $SetupLocalesPath = Join-Path $RepoRoot "SetupLocales.lua"
+$WindowLayersPath = Join-Path $RepoRoot "AntraktWindowLayers.lua"
 $TypesPath = Join-Path $PSScriptRoot "types\wow-globals.d.lua"
 
 function Invoke-NativeCapture {
@@ -77,7 +78,7 @@ function Assert-LuaDiagnosticsSensitive {
     }
 }
 
-foreach ($RequiredPath in @($ConfigPath, $LocksPath, $LuaPath, $SetupLocalesPath, $TypesPath)) {
+foreach ($RequiredPath in @($ConfigPath, $LocksPath, $LuaPath, $SetupLocalesPath, $WindowLayersPath, $TypesPath)) {
     if (-not (Test-Path -LiteralPath $RequiredPath -PathType Leaf)) {
         throw "Missing Lua diagnostics input: $RequiredPath"
     }
@@ -118,6 +119,7 @@ try {
     New-Item -ItemType Directory -Path $WorkspacePath | Out-Null
     Copy-Item -LiteralPath $LuaPath -Destination (Join-Path $WorkspacePath "ApplicantScout.lua")
     Copy-Item -LiteralPath $SetupLocalesPath -Destination (Join-Path $WorkspacePath "SetupLocales.lua")
+    Copy-Item -LiteralPath $WindowLayersPath -Destination (Join-Path $WorkspacePath "AntraktWindowLayers.lua")
     Copy-Item -LiteralPath $TypesPath -Destination (Join-Path $WorkspacePath "wow-globals.d.lua")
 
     $CleanResult = Invoke-NativeCapture -FilePath $LuaLanguageServer -Arguments @(
