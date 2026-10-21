@@ -3105,7 +3105,7 @@ end
 -- (~75% JPG quality) for safety with the smaller modules. SetCVar persists in
 -- Config.wtf, so every capture restores the prior values after Screenshot().
 local function EnsureScreenshotCVars(quiet)
-    if not (SetCVar and GetCVar) then return end
+    if not (SetCVar and GetCVar) then return false end
     local q = tonumber(GetCVar("screenshotQuality")) or 0
     if q < 8 then
         -- Stash original ONCE — if user already disabled+enabled this would
@@ -3146,6 +3146,13 @@ local function EnsureScreenshotCVars(quiet)
                      ") for QR screenshot transport")
         end
     end
+    -- A non-throwing SetCVar can still be ignored. Only verified settings may
+    -- reach Screenshot(), otherwise an unreadable capture could commit dedup.
+    local finalQuality = SafeNumber(GetCVar("screenshotQuality"), -1)
+    local finalFormat = SafeEnumKey(GetCVar("screenshotFormat"), "")
+    return finalQuality >= 8 and finalQuality <= 10
+        and finalQuality == math.floor(finalQuality)
+        and type(finalFormat) == "string" and finalFormat:lower() == "jpg"
 end
 
 -- Restore the user's pre-capture screenshot CVars. Each stash is restored
@@ -3224,13 +3231,13 @@ local function AcquireScreenshotCVarLease()
     entryCreationKeyState.screenshotCVarLeaseGeneration =
         (entryCreationKeyState.screenshotCVarLeaseGeneration or 0) + 1
     local leaseGeneration = entryCreationKeyState.screenshotCVarLeaseGeneration
-    local ok = pcall(EnsureScreenshotCVars, true)
-    if not ok then
+    local ok, ready = pcall(EnsureScreenshotCVars, true)
+    if not ok or not ready then
         -- Setup can fail after changing the first CVar, before the caller has
         -- scheduled its lease release. Roll back partial writes immediately.
         RestoreScreenshotCVars(true)
     end
-    return leaseGeneration, ok
+    return leaseGeneration, ok and ready == true
 end
 
 local function ReleaseScreenshotCVarLease(leaseGeneration, delay)

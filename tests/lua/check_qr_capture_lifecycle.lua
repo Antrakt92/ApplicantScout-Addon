@@ -356,6 +356,7 @@ local cvars = {
     screenshotQuality = "3",
 }
 env.cvarFailures = 0
+env.cvarIgnoredWriteField = arg and arg[2]
 GetCVar = function(name)
     if fixture_mode == "cvar-read-error" and name == "screenshotFormat"
        and cvars.screenshotQuality == "8" and env.cvarFailures == 0 then
@@ -365,11 +366,14 @@ GetCVar = function(name)
     return cvars[name]
 end
 SetCVar = function(name, value)
-    if name == "screenshotFormat" and value == "jpg"
+    if ((env.cvarIgnoredWriteField and name == env.cvarIgnoredWriteField
+            and value == (name == "screenshotFormat" and "jpg" or "8"))
+        or (not env.cvarIgnoredWriteField and name == "screenshotFormat" and value == "jpg"))
        and ((fixture_mode == "cvar-write-error" and env.cvarFailures == 0)
             or fixture_mode == "cvar-always-fail"
             or (fixture_mode == "cvar-terminal-fail" and env.cvarTerminalStarted)) then
         env.cvarFailures = env.cvarFailures + 1
+        if env.cvarIgnoredWriteField then return end
         error("screenshot format write failed")
     end
     cvars[name] = tostring(value)

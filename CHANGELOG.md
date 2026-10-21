@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Retry captures when WoW does not accept the screenshot settings needed for readable QR codes.
+
 ## 0.14.4 - 18-Oct-2026 — Companion raid progress and installation fixes
 
 Paired release with ApplicantScout Companion `0.24.2`.

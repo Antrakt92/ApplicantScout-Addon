@@ -4341,6 +4341,22 @@ def test_screenshot_cvar_setup_failure_recovers_without_false_delivery(pytestcon
     )
 
 
+@pytest.mark.parametrize("mode", [
+    "cvar-write-error", "cvar-always-fail", "cvar-terminal-fail"
+])
+@pytest.mark.parametrize("field", ["screenshotFormat", "screenshotQuality"])
+def test_ignored_screenshot_cvar_write_never_acknowledges_delivery(
+    pytestconfig, mode, field
+):
+    output = _run_lua_script(
+        pytestconfig, LUA_QR_CAPTURE_LIFECYCLE_CHECK, mode, field
+    ).strip()
+    attempts = 0 if mode == "cvar-always-fail" else 2
+    assert output.splitlines()[-1] == (
+        f"ok qr-capture-lifecycle mode={mode} shots={attempts} attempts={attempts}"
+    )
+
+
 def test_screenshot_exception_keeps_same_snapshot_retryable(pytestconfig):
     output = _run_lua_script(
         pytestconfig,
