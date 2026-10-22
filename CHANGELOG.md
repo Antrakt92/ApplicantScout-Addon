@@ -1,8 +1,32 @@
 # Changelog
 
-## Unreleased
+## 0.14.5 - 22-Oct-2026 — Copyable diagnostics and reliability
 
-- Retry captures when WoW does not accept the screenshot settings needed for readable QR codes.
+Paired release with ApplicantScout Companion `0.24.3`.
+
+### Addon
+
+- Open `/apscout status diag` in a scrollable window with Select all and Ctrl+C instead of flooding chat.
+- Keep full reports readable and copyable with long or unusual group and listing text; recover rejected text and show a clear error if the client cannot display it.
+- Preserve self-test reports separately and defer opening the copy window until combat ends.
+- Show unavailable group counts accurately instead of reporting zero.
+- Retry capture setup when WoW does not accept the screenshot settings needed for readable QR codes, and restore the original settings afterward.
+- Keep setup and settings windows layered correctly alongside other addons.
+- The addon capture format is unchanged.
+
+### Companion
+
+- Update screenshot decoding, trusted certificates and Qt to address dependency security advisories, and remove unused bundled components.
+- Keep the target key readable in compact overlay controls.
+- Distinguish temporary Warcraft Logs outages from rejected credentials.
+- Preserve player realm information across queued captures with temporarily missing identity data.
+- Improve WoW sync helper startup, cancellation and shutdown handling.
+- Recover damaged usage preferences without enabling reporting.
+- Reject incomplete RaiderIO databases and invalid Warcraft Logs key levels.
+
+### License
+
+- Let authors choose their positive reward share when reusing original code. Earlier permissions and third-party terms remain valid.
 
 ## 0.14.4 - 18-Oct-2026 — Companion raid progress and installation fixes
 
