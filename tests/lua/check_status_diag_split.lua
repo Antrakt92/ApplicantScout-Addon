@@ -7,6 +7,22 @@ GetCVar = function(name)
 end
 
 ApplicantScoutDB = { enabled = true, debug = false }
+local diagnostic_text
+local originalCreateFrame = CreateFrame
+CreateFrame = function(kind, ...)
+    local frame = originalCreateFrame(kind, ...)
+    local function noop() end
+    setmetatable(frame, { __index = function() return noop end })
+    local createFontString = frame.CreateFontString
+    frame.CreateFontString = function(...)
+        return setmetatable(createFontString(...), { __index = function() return noop end })
+    end
+    if kind == "EditBox" then
+        frame.SetText = function(self, text) diagnostic_text = text; self.__text = text end
+        frame.GetText = function(self) return self.__text end
+    end
+    return frame
+end
 
 local harness = env.load_addon()
 assert(type(harness.StartSession) == "function", "session harness is unavailable")
@@ -58,7 +74,11 @@ assert(contains(short_debug, "/apscout debug off"),
 ApplicantScoutDB.debug = false
 
 -- Full diagnostics stay behind "status diag" and keep delivery order.
-local diag = run_status("diag")
+local diag_chat = run_status("diag")
+assert(#diag_chat <= 2, "detailed diagnostics flooded chat")
+assert(diagnostic_text, "detailed diagnostics did not open a copy window")
+local diag = {}
+for line in diagnostic_text:gmatch("[^\n]+") do diag[#diag + 1] = line end
 assert(#diag > #short, "diag output did not expand beyond short status")
 local hash_idx, delivery_idx, sends_idx, pending_idx
 for index, line in ipairs(diag) do

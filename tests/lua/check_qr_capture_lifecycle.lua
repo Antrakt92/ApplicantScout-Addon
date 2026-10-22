@@ -508,6 +508,21 @@ local function frame_stub(name)
     end
     function frame:GetWidth() return self.width end
     function frame:GetHeight() return self.height end
+    function frame:SetWidth(width) self.width = width end
+    function frame:SetHeight(height) self.height = height end
+    function frame:SetText(text) self.text = text end
+    function frame:GetText() return self.text end
+    function frame:SetScrollChild(child) self.scrollchild = child end
+    function frame:SetMultiLine() end
+    function frame:SetFontObject() end
+    function frame:SetJustifyV() end
+    function frame:SetVerticalScroll() end
+    function frame:SetAutoFocus() end
+    function frame:SetMaxLetters() end
+    function frame:SetCursorPosition() end
+    function frame:SetFocus() end
+    function frame:ClearFocus() end
+    function frame:HighlightText() end
     function frame:GetLeft() return 0 end
     function frame:GetTop() return self.height end
     function frame:SetPoint()
@@ -554,10 +569,12 @@ local function frame_stub(name)
     function frame:CreateFontString()
         return {
             SetPoint = function() end,
+            SetSize = function() end,
             SetText = function() end,
             SetTextColor = function() end,
             SetFontObject = function() end,
             SetJustifyH = function() end,
+            SetJustifyV = function() end,
         }
     end
     return frame
@@ -707,18 +724,22 @@ if diagnostic_api_errors then
     end
 
     local taintOK = pcall(SlashCmdList.APSCOUT, "taintcheck")
-    local statusOK = pcall(SlashCmdList.APSCOUT, "status diag")
+    local statusOK, statusError = pcall(SlashCmdList.APSCOUT, "status diag")
 
     print = originalPrint
     C_LFGList.GetApplicants = originalApplicants
     C_LFGList.GetKeystoneForActivity = originalKeystone
     assert(taintOK, "taintcheck crashed on an unavailable applicant API")
-    assert(statusOK, "status crashed on an unavailable keystone API")
+    assert(statusOK, "status crashed on an unavailable keystone API: " .. tostring(statusError))
     local output = table.concat(lines, "\n")
     assert(output:find("applicants: unavailable", 1, true),
         "taintcheck did not report the unavailable applicant API")
-    assert(output:find("activity.keystoneLevel: unavailable", 1, true),
-        "status did not report the unavailable keystone API")
+    local diagnosticOutput
+    for _, frame in ipairs(frames) do
+        if frame.scrollchild then diagnosticOutput = frame.scrollchild.text end
+    end
+    assert(diagnosticOutput and diagnosticOutput:find("activity.keystoneLevel: unavailable", 1, true),
+        "status copy window did not report the unavailable keystone API")
 end
 
 if not gameplay_loading_initial then

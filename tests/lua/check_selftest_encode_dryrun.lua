@@ -51,11 +51,15 @@ local function stub_frame()
     f.SetScrollChild = function(self, child) self.__scrollchild = child end
     f.SetMultiLine = function() end
     f.SetFontObject = function() end
+    f.SetAlpha = function() end
+    f.SetJustifyV = function() end
+    f.SetVerticalScroll = function() end
     f.SetWidth = function() end
     f.SetHeight = function() end
     f.SetAutoFocus = function() end
     f.SetMaxLetters = function() end
     f.SetText = function(self, text) self.__text = text end
+    f.GetText = function(self) return self.__text end
     f.SetCursorPosition = function() end
     f.SetFocus = function() end
     f.HighlightText = function() end

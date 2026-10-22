@@ -173,7 +173,7 @@ FIXTURE_HARNESS_BOUNDARY_ANCHOR = (
     'if type(_addonNS.ApplicantScoutFixtureHarness) == "table" then'
 )
 CHECK_SESSION_TRANSITION_ANCHOR = "CheckSessionTransition = function(lfgReadsAllowed)"
-STATUS_HELPER_ANCHOR = "entryCreationKeyState.PrintTroubleshootingStatus = function()"
+STATUS_HELPER_ANCHOR = "entryCreationKeyState.PrintTroubleshootingStatus = function(output)"
 FORCED_SNAPSHOT_HELPER_ANCHOR = "entryCreationKeyState.RequestForcedSnapshot = function()"
 STALE_FUNCTION_ANCHORS = {
     "MaybeTriggerScreenshot = function(force, entryHint, terminalClear)",
@@ -1253,7 +1253,7 @@ def test_roster_composition_change_waits_for_inspect_until_fallback_deadline():
     roster_change_body = _slice_between(
         source,
         "entryCreationKeyState.ClearRosterCompositionChanged = function()",
-        "entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()",
+        "entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function(output)",
     )
     screenshot_body = _slice_between(
         source,
@@ -2944,7 +2944,7 @@ def test_troubleshooting_slash_commands_delegate_to_shared_helpers():
     source = _lua_source()
     slash_body = source[source.index("SlashCmdList.APSCOUT = function(msg)") :]
     expected = (
-        ("status", 'elseif msg == "taintcheck" then', "PrintTroubleshootingStatus"),
+        ("status", 'elseif msg == "taintcheck" then', "ShowTroubleshootingCopyWindow"),
         ("shotnow", 'elseif msg == "qrvisible" then', "RequestForcedSnapshot"),
         ("qrmove", 'elseif msg == "qrreset" then', "ToggleQRMoveMode"),
         (
@@ -3646,11 +3646,11 @@ def test_status_reports_roster_inspect_batch_diagnostics_without_raw_ids():
     status_body = _status_helper_body(source)
     diagnostics_body = _slice_between(
         source,
-        "entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()",
+        "entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function(output)",
         "entryCreationKeyState.ScheduleRosterInspectBatchRetry = function(delay)",
     )
 
-    assert "entryCreationKeyState.PrintRosterInspectBatchDiagnostics()" in status_body
+    assert "entryCreationKeyState.PrintRosterInspectBatchDiagnostics(print)" in status_body
     assert "roster inspect batch:" in diagnostics_body
     assert "batch pending:" in diagnostics_body
     assert "pending inspect:" in diagnostics_body
@@ -3677,8 +3677,8 @@ def test_status_support_command_skips_lfg_reads_during_chat_lockdown():
 
     assert guard_idx < raw_idx < raw_guard_idx < active_idx < has_idx < applicants_idx
     assert raw_idx < skipped_idx < visibility_idx
-    assert "entryCreationKeyState.PrintRosterInspectBatchDiagnostics()" in status_body[:raw_idx]
-    assert "entryCreationKeyState.PrintDiagnostics()" in status_body[visibility_idx:]
+    assert "entryCreationKeyState.PrintRosterInspectBatchDiagnostics(print)" in status_body[:raw_idx]
+    assert "entryCreationKeyState.PrintDiagnostics(print)" in status_body[visibility_idx:]
 
 
 def test_taintcheck_support_command_skips_lfg_reads_during_chat_lockdown():
@@ -5506,11 +5506,11 @@ def test_status_reports_key_capture_hooks_and_cache_decision_separately():
     status_body = _status_helper_body(source)
     diagnostics_body = _slice_between(
         source,
-        "entryCreationKeyState.PrintDiagnostics = function()",
+        "entryCreationKeyState.PrintDiagnostics = function(output)",
         "entryCreationKeyState.ReconcileEntryCreationKeyCache = function(listingContext)",
     )
 
-    assert "entryCreationKeyState.PrintDiagnostics()" in status_body
+    assert "entryCreationKeyState.PrintDiagnostics(print)" in status_body
     assert "entry creation hooks:" in diagnostics_body
     assert "default playstyle hooks:" not in status_body
     assert "pendingEntryCreationCache.keyLevel" in diagnostics_body
@@ -5815,7 +5815,7 @@ def test_showcase_help_prints_essential_commands_with_more_hint():
     ]
     assert 'print("  more: /apscout help all")' in body
     for advanced_line in (
-        "/apscout status diag    show detailed QR diagnostics",
+        "/apscout status diag    open detailed diagnostics to scroll and copy",
         "/apscout qrvisible      toggle persistent QR always-visible mode; off clears it",
         "/apscout qrmove         toggle QR move mode (Alt+drag QR frame)",
         "/apscout qrreset        reset QR frame position to top-left",
@@ -5840,7 +5840,7 @@ def test_help_all_prints_every_command_verbatim():
         "/apscout config         open/close settings panel",
         "/apscout setup          show companion download and setup",
         "/apscout status         show a short capture summary",
-        "/apscout status diag    show detailed QR diagnostics",
+        "/apscout status diag    open detailed diagnostics to scroll and copy",
         "/apscout selftest       start/finish/show in-game diagnostics + copy window",
         "/apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle",
         "/apscout reset          clear transport cache, queue fresh snapshot",
@@ -5997,8 +5997,8 @@ def test_selftest_copy_window_keeps_secret_contract():
         assert forbidden not in window_body
     assert "CreateFrame(" in window_body
     assert "selfTestLastReport" in window_body
-    assert window_body.count("SetText(S.BuildSelfTestCopyText())") == 2
-    assert window_body.count("self:SetText(S.BuildSelfTestCopyText())") == 1
+    assert "pcall(S.selfTestCopyBox.SetText" in window_body
+    assert "self:SetText(S.selfTestCopyRenderedText or S.BuildSelfTestCopyText())" in window_body
     assert "SetMaxLetters(S.SELFTEST_COPY_MAX_LETTERS)" in window_body
     assert "CleanUnitAPIBoolean(InCombatLockdown)" in window_body
 

@@ -13,6 +13,17 @@ end
 local frames = {}
 local timers = {}
 local in_combat = false
+local reject_all_report_text = false
+local reject_non_ascii = false
+local reject_everything = false
+local invalid_native = "[%z\1-\8\11\12\14-\31\255]"
+local function escape_invalid(text)
+    return (text:gsub(invalid_native, function(char)
+        return string.format("\\%03d", string.byte(char))
+    end))
+end
+local native_font_missing = arg and arg[1] == "font-missing"
+GameFontHighlightSmall = {}
 InCombatLockdown = function() return in_combat end
 C_Timer.After = function(_delay, fn)
     timers[#timers + 1] = fn
@@ -26,8 +37,12 @@ local function stub_frame()
         __highlighted = false,
     }
     f.SetSize = function() end
-    f.SetPoint = function() end
+    f.SetPoint = function(self, ...) self.__point = { ... } end
+    f.SetJustifyV = function(self, justify) self.__justifyV = justify end
+    f.SetVerticalScroll = function(self, value) self.__verticalscroll = value end
     f.SetFrameStrata = function() end
+    f.SetAlpha = function(self, alpha) self.__alpha = alpha end
+    f.SetTextColor = function(self, ...) self.__color = { ... } end
     f.SetClampedToScreen = function() end
     f.EnableMouse = function() end
     f.SetBackdrop = function() end
@@ -37,25 +52,44 @@ local function stub_frame()
     f.Show = function(self) self.__shown = true end
     f.Hide = function(self) self.__shown = false end
     f.IsShown = function(self) return self.__shown end
+    f.IsVisible = function(self) return self.__shown end
     f.RegisterEvent = function() end
     f.UnregisterAllEvents = function() end
+    f.__labels = {}
     f.CreateFontString = function()
-        return {
+        local label = {
             SetPoint = function() end,
             SetSize = function() end,
             SetJustifyH = function() end,
             SetJustifyV = function() end,
-            SetText = function() end,
+            SetText = function(self, text) self.__text = text end,
         }
+        f.__labels[#f.__labels + 1] = label
+        return label
     end
     f.SetScrollChild = function(self, child) self.__scrollchild = child end
     f.SetMultiLine = function() end
-    f.SetFontObject = function() end
+    f.SetFontObject = function(self, font) self.__font = font end
+    f.GetFont = function(self)
+        if self.__fontPath then return self.__fontPath, self.__fontSize, "" end
+        if not native_font_missing and self.__font == GameFontHighlightSmall then
+            return "Fonts\\ARIALN.TTF", 11, ""
+        end
+    end
+    f.SetFont = function(self, path, size) self.__fontPath, self.__fontSize = path, size end
+    f.GetText = function(self) return self.__text end
     f.SetWidth = function() end
-    f.SetHeight = function() end
+    f.SetHeight = function(self, height) self.__height = height end
     f.SetAutoFocus = function() end
-    f.SetMaxLetters = function() end
-    f.SetText = function(self, text) self.__text = text end
+    f.SetMaxLetters = function(self, limit) self.__maxletters = limit end
+    f.SetText = function(self, text)
+        if reject_everything or text:find(invalid_native) or (reject_non_ascii and text:find("[\128-\255]"))
+            or (reject_all_report_text and not text:find("Report display failed", 1, true)) then
+            self.__text = ""
+        else
+            self.__text = self.__maxletters and text:sub(1, self.__maxletters) or text
+        end
+    end
     f.SetCursorPosition = function() end
     f.SetFocus = function() end
     f.HighlightText = function(self) self.__highlighted = true end
@@ -63,7 +97,11 @@ local function stub_frame()
     frames[#frames + 1] = f
     return f
 end
-CreateFrame = function() return stub_frame() end
+CreateFrame = function(_kind, _name, parent)
+    local frame = stub_frame()
+    frame.__parent = parent
+    return frame
+end
 
 ApplicantScoutDB = { enabled = true, debug = false }
 ApplicantScoutSelfTest = nil
@@ -110,7 +148,7 @@ end
 local function shown_panels()
     local out = {}
     for _, f in ipairs(frames) do
-        if f.__shown then out[#out + 1] = f end
+        if f.__shown and f.__parent == UIParent then out[#out + 1] = f end
     end
     return out
 end
@@ -286,6 +324,148 @@ assert(ApplicantScoutDB.ApplicantScoutSelfTest == nil,
     "selftest must not nest inside ApplicantScoutDB")
 assert(ApplicantScoutDB.enabled == true, "selftest changed the enabled flag")
 assert(ApplicantScoutDB.debug == false, "selftest changed the debug flag")
+
+-- Detailed status shares the copy panel without overwriting the saved selftest.
+local saved_report = ApplicantScoutSelfTest
+local selftest_text = box_text()
+captured = {}
+SlashCmdList.APSCOUT("status diag")
+assert(#captured <= 2, "diagnostics flooded chat instead of the copy window")
+assert(#shown_panels() == 1, "diagnostics did not open the shared copy panel")
+local diagnostic_text = box_text()
+assert(diagnostic_text:find("roster inspect batch:", 1, true),
+    "copy report omitted nested inspect diagnostics")
+assert(diagnostic_text:find("listing cache decision:", 1, true),
+    "copy report omitted nested listing diagnostics")
+assert(not diagnostic_text:find("|cff", 1, true), "copy report retained chat colors")
+assert(ApplicantScoutSelfTest == saved_report, "diagnostics replaced saved selftest")
+captured = {}
+run_timers()
+assert(contains(captured, "copy UI: bytes="), "diagnostics omitted its bounded presentation trace")
+assert(not contains(captured, "Friend") and not contains(captured, "roster inspect batch:"),
+    "presentation trace leaked report content or character identity")
+for _, f in ipairs(frames) do
+    if f.__scrollchild then
+        assert(f.__shown and f.__scrollchild.__shown,
+            "diagnostic scroll viewport or edit box remains hidden")
+        assert(f.__scrollchild.__font == GameFontHighlightSmall,
+            "copy text did not receive the native FontObject")
+        assert(f.__scrollchild.__alpha == 1 and f.__scrollchild.__color[4] == 1,
+            "copy text is transparent")
+        assert(f.__scrollchild.__point and f.__scrollchild.__point[1] == "TOPLEFT"
+            and f.__scrollchild.__point[2] == f,
+            "copy text has no top-left anchor in its scroll viewport")
+        assert(f.__scrollchild.__justifyV == "TOP",
+            "tall diagnostic copy text is vertically centered below the viewport")
+        assert(f.__verticalscroll == 0, "fresh diagnostic report did not reset scroll")
+        local line_count = 0
+        for _ in diagnostic_text:gmatch("[^\n]+") do line_count = line_count + 1 end
+        assert(f.__scrollchild:GetText() == diagnostic_text and line_count > 50,
+            "diagnostic copy readback lost report lines")
+        f.__scrollchild.__scripts.OnTextChanged(f.__scrollchild, true)
+        assert(f.__scrollchild.__text == diagnostic_text,
+            "editing diagnostics restored the wrong report")
+    end
+end
+local originalGetCVar = GetCVar
+GetCVar = function(name)
+    if name == "screenshotFormat" then return string.rep("x", 18000) .. "REPORT-END" end
+    return originalGetCVar(name)
+end
+SlashCmdList.APSCOUT("status diag")
+GetCVar = originalGetCVar
+assert(#box_text() > 18000 and box_text():find("REPORT-END", 1, true),
+    "copy window truncated a diagnostic report above the old text limit")
+-- Unknown group API values must not masquerade as a confirmed solo count.
+local savedGroupCount, savedSecretCheck = GetNumGroupMembers, issecretvalue
+local secretCount = {}
+issecretvalue = function(value) return value == secretCount end
+for _, readCount in ipairs({
+    function() return secretCount end,
+    function() error("temporary group API failure") end,
+}) do
+    GetNumGroupMembers = readCount
+    SlashCmdList.APSCOUT("status diag")
+    assert(box_text():find("group members: unavailable", 1, true),
+        "unreadable group count was reported as zero")
+end
+GetNumGroupMembers = function() return 0 end
+SlashCmdList.APSCOUT("status diag")
+assert(box_text():find("group members: 0", 1, true), "confirmed solo count was lost")
+GetNumGroupMembers, issecretvalue = savedGroupCount, savedSecretCheck
+
+-- Model native rejection at the boundary for group-only raw listing fields.
+local oldHas, oldEntry = C_LFGList.HasActiveEntryInfo, C_LFGList.GetActiveEntryInfo
+local oldCount = GetNumGroupMembers
+GetNumGroupMembers = function() return 3 end
+C_LFGList.HasActiveEntryInfo = function() return true end
+local rawComment = ""
+C_LFGList.GetActiveEntryInfo = function()
+    return { activityIDs = {}, name = "group|title", comment = rawComment }
+end
+for _, clientAPI in ipairs({ true, false }) do
+    C_StringUtil = clientAPI and { EscapeDecimalNonPrintables = escape_invalid } or nil
+    for _, byte in ipairs({ 0, 31, 255 }) do
+        rawComment = "BEGIN" .. string.char(byte) .. "END"
+        SlashCmdList.APSCOUT("status diag")
+        assert(box_text():find("BEGIN" .. string.format("\\%03d", byte) .. "END", 1, true),
+            "group diagnostic rejected/lost raw byte " .. byte)
+        assert(box_text():find("group\\124title", 1, true), "raw UI markup was not literalized")
+        assert(box_text():find("listing cache decision:", 1, true), "encoding lost report tail")
+    end
+end
+-- A native rejection despite sanitization retries exactly one ASCII form.
+C_StringUtil = { EscapeDecimalNonPrintables = escape_invalid }
+rawComment = "valid UTF8 " .. string.char(195, 169)
+SlashCmdList.APSCOUT("status diag")
+assert(box_text():find(string.char(195, 169), 1, true), "client sanitizer damaged valid UTF-8")
+reject_non_ascii = true
+SlashCmdList.APSCOUT("status diag")
+assert(box_text():find("\\195\\169", 1, true), "native rejection did not recover ASCII bytes")
+reject_non_ascii = false
+-- Failure after both representations must leave an explicit visible error.
+reject_all_report_text = true
+SlashCmdList.APSCOUT("status diag")
+assert(box_text():find("Report display failed", 1, true), "persistent rejection left a blank window")
+reject_all_report_text = false
+reject_everything = true
+SlashCmdList.APSCOUT("status diag")
+run_timers()
+local visibleFailure = false
+for _, frame in ipairs(frames) do
+    -- FontStrings below are recorded independently of the rejecting EditBox.
+    for _, label in ipairs(frame.__labels or {}) do
+        if (label.__text or ""):find("Report display failed", 1, true) then visibleFailure = true end
+    end
+end
+assert(visibleFailure, "rejecting every EditBox write left no independent visible error")
+reject_everything = false
+-- Deferred clearing on Show/next frame also gets one bounded recovery.
+SlashCmdList.APSCOUT("status diag")
+for _, frame in ipairs(frames) do
+    if frame.__scrollchild then frame.__scrollchild.__text = "" end
+end
+run_timers()
+assert(box_text() ~= "" and box_text():find("listing cache decision:", 1, true),
+    "post-show native clearing was not recovered")
+C_StringUtil = nil
+C_LFGList.HasActiveEntryInfo, C_LFGList.GetActiveEntryInfo = oldHas, oldEntry
+GetNumGroupMembers = oldCount
+
+run_selftest("show")
+assert(box_text() == selftest_text, "selftest show did not restore its own report")
+click_all()
+in_combat = true
+captured = {}
+SlashCmdList.APSCOUT("status diag")
+assert(#shown_panels() == 0, "diagnostic window opened in combat")
+assert(#captured <= 2 and contains(captured, "deferred"),
+    "combat diagnostic request lost its short deferral hint")
+in_combat = false
+run_timers()
+assert(#shown_panels() == 1, "diagnostic window did not open after combat")
+assert(box_text():find("roster inspect batch:", 1, true),
+    "deferred diagnostic request reopened selftest instead")
 
 print = real_print
 print("ok selftest-export lines=" .. #wlines)

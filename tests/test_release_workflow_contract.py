@@ -2298,8 +2298,8 @@ def test_documented_slash_commands_match_lua_help_across_both_repositories(
     assert "/apscout setup          show companion download and setup" in essential_lines
     assert "/apscout toggle         flip enabled state" in essential_lines
     assert "/apscout selftest       start/finish/show in-game diagnostics + copy window" in essential_lines
-    assert "/apscout status diag    show detailed QR diagnostics" in full_lines
-    assert "/apscout status diag    show detailed QR diagnostics" not in essential_lines
+    assert "/apscout status diag    open detailed diagnostics to scroll and copy" in full_lines
+    assert "/apscout status diag    open detailed diagnostics to scroll and copy" not in essential_lines
     assert "/apscout taintcheck     probe C_LFGList field secret-tagging" in full_lines
     advanced_lines = [line for line in full_lines if line not in set(essential_lines)]
     assert len(advanced_lines) == 7

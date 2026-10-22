@@ -3595,7 +3595,8 @@ local function _ClearEntryCreationKeystoneLevelCache(activityID, questID)
     end
 end
 
-entryCreationKeyState.PrintDiagnostics = function()
+entryCreationKeyState.PrintDiagnostics = function(output)
+    local print = output or print
     print("  entry creation hooks: " .. tostring(lfgEntryCreationHookState.hooksSetup)
           .. (lfgEntryCreationHookState.hookError
               and (" (error: " .. lfgEntryCreationHookState.hookError .. ")")
@@ -4505,7 +4506,8 @@ entryCreationKeyState.CountRosterInspectBatch = function()
     end
     return skipped, cooling, exhausted
 end
-entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function()
+entryCreationKeyState.PrintRosterInspectBatchDiagnostics = function(output)
+    local print = output or print
     local skippedInspectCount, inspectCooldownCount, exhaustedInspectCount =
         entryCreationKeyState.CountRosterInspectBatch()
     local pendingInspectAge = "n/a"
@@ -8688,7 +8690,8 @@ entryCreationKeyState.PrintShortStatus = function()
     print("  details: /apscout status diag")
 end
 
-entryCreationKeyState.PrintTroubleshootingStatus = function()
+entryCreationKeyState.PrintTroubleshootingStatus = function(output)
+    local print = output or print
     print("|cff00ff7fApplicantScout|r status:")
     print("  enabled: " .. tostring(ApplicantScoutDB.enabled))
     print("  debug: " .. tostring(ApplicantScoutDB and ApplicantScoutDB.debug))
@@ -8697,8 +8700,8 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
     print("  session active: " .. tostring(isSessionActive))
     print("  session gen: " .. tostring(sessionGen))
     print("  scanDirty: " .. tostring(scanDirty))
-    print("  group members: "
-          .. tostring(math.floor(SafeNumber(GetNumGroupMembers and GetNumGroupMembers(), 0))))
+    local groupMembers = entryCreationKeyState.CleanGroupMemberCount()
+    print("  group members: " .. (groupMembers == nil and "unavailable" or tostring(groupMembers)))
     print("  transport poll age: "
           .. (lastTransportPollTime > 0
                and string.format("%.1fs", GetTime() - lastTransportPollTime)
@@ -8791,7 +8794,7 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
     print("  last shot time: " .. (lastShotTime > 0
           and string.format("%.1fs ago", GetTime() - lastShotTime) or "never"))
     print("  pending throttled shot: " .. tostring(pendingShotDirty))
-    entryCreationKeyState.PrintRosterInspectBatchDiagnostics()
+    entryCreationKeyState.PrintRosterInspectBatchDiagnostics(print)
     print("  last QR encode: " .. tostring(lastQREncodeMode)
           .. " (" .. tostring(lastQREncodeBytes) .. " bytes)")
     print("  last QR error: " .. tostring(lastQREncodeError or "none"))
@@ -8947,7 +8950,7 @@ entryCreationKeyState.PrintTroubleshootingStatus = function()
     print("  movement setup: " .. tostring(PVEFrame
           and PVEFrame.apsMovementSetup or false))
     print("  move Group Finder: drag its title bar outside combat")
-    entryCreationKeyState.PrintDiagnostics()
+    entryCreationKeyState.PrintDiagnostics(print)
     if entryCreationKeyState.pveFramePosition then
         local point, _, x, y, ok =
             _NormalizePVEFramePosition(entryCreationKeyState.pveFramePosition)
@@ -8996,7 +8999,33 @@ entryCreationKeyState.selfTestCopyPending = false
 -- HighlightText/Ctrl+C, and a combat gate with deferred re-show (a slash
 -- window is user-invoked, so only combat blocks it; the setup panel gates
 -- loading as well because it auto-shows at login).
+-- EditBox accepts renderable UTF-8, while diagnostic sources can contain raw
+-- bytes. Keep nonprintable bytes visible as escapes rather than losing a report.
+entryCreationKeyState.EscapeCopyText = function(text, asciiOnly)
+    if not asciiOnly then
+        local api = rawget(_G, "C_StringUtil")
+        if type(api) == "table" and type(api.EscapeDecimalNonPrintables) == "function" then
+            local ok, escaped = pcall(api.EscapeDecimalNonPrintables, text)
+            if ok and not IsSecretValue(escaped) and type(escaped) == "string" then
+                return (escaped:gsub("|", "\\124"))
+            end
+        end
+    end
+    -- Client API absence/rejection uses an ASCII representation; each escaped
+    -- byte remains recoverable, including bytes from non-Latin text.
+    return (text:gsub(".", function(char)
+        local byte = string.byte(char)
+        if byte == 124 or byte >= 127 or (byte < 32 and byte ~= 9 and byte ~= 10 and byte ~= 13) then
+            return string.format("\\%03d", byte)
+        end
+        return char
+    end))
+end
+
 entryCreationKeyState.BuildSelfTestCopyText = function()
+    if entryCreationKeyState.selfTestCopyKind == "diagnostics" then
+        return entryCreationKeyState.statusDiagnosticCopyText or ""
+    end
     local report = entryCreationKeyState.selfTestLastReport
     if type(report) ~= "table" or #report == 0 then return "" end
     return "ASCOUT1: " .. table.concat(report, "\nASCOUT1: ")
@@ -9004,7 +9033,7 @@ end
 
 entryCreationKeyState.CanShowSelfTestCopy = function()
     local S = entryCreationKeyState
-    if type(S.selfTestLastReport) ~= "table" or #S.selfTestLastReport == 0 then
+    if S.BuildSelfTestCopyText() == "" then
         return false
     end
     return S.CleanUnitAPIBoolean(InCombatLockdown) == false
@@ -9052,13 +9081,37 @@ entryCreationKeyState.CreateSelfTestCopyPanel = function()
     scroll:SetSize(560, 300)
     scroll:SetPoint("TOPLEFT", 30, -80)
     local box = CreateFrame("EditBox", nil, scroll)
+    box:SetPoint("TOPLEFT", scroll, "TOPLEFT", 0, 0)
     box:SetMultiLine(true)
-    box:SetFontObject("GameFontHighlightSmall")
+    box:SetFontObject(rawget(_G, "GameFontHighlightSmall") or "GameFontHighlightSmall")
+    if type(box.GetFont) == "function" and type(box.SetFont) == "function" then
+        local ok, path, size = pcall(box.GetFont, box)
+        if not ok or IsSecretValue(path) or IsSecretValue(size)
+            or type(path) ~= "string" or path == "" or SafeNumber(size, 0) <= 0 then
+            local font = rawget(_G, "STANDARD_TEXT_FONT")
+            if IsSecretValue(font) or type(font) ~= "string" or font == "" then
+                local localeAPI = rawget(_G, "GetLocale")
+                local localeOK, locale = pcall(function()
+                    return type(localeAPI) == "function" and localeAPI() or "enUS"
+                end)
+                locale = localeOK and SafeEnumKey(locale, "enUS") or "enUS"
+                font = locale == "koKR" and "Fonts\\2002.TTF"
+                    or ((locale == "zhCN" or locale == "zhTW") and "Fonts\\ARKai_T.ttf")
+                    or "Fonts\\ARIALN.TTF"
+            end
+            pcall(box.SetFont, box, font, 12, "")
+        end
+    end
+    if type(box.SetTextColor) == "function" then box:SetTextColor(1, 1, 1, 1) end
+    box:SetAlpha(1)
+    box:SetJustifyV("TOP")
     box:SetWidth(540)
     box:SetHeight(1600)
     box:SetAutoFocus(false)
     box:SetMaxLetters(S.SELFTEST_COPY_MAX_LETTERS)
     scroll:SetScrollChild(box)
+    scroll:Show()
+    box:Show()
     box:SetScript("OnEscapePressed", function(self)
         self:ClearFocus()
         S.HideSelfTestCopyWindow()
@@ -9068,7 +9121,7 @@ entryCreationKeyState.CreateSelfTestCopyPanel = function()
     -- Read-only in effect: restore the report after any keypress or paste.
     box:SetScript("OnTextChanged", function(self, userInput)
         if userInput then
-            self:SetText(S.BuildSelfTestCopyText())
+            self:SetText(S.selfTestCopyRenderedText or S.BuildSelfTestCopyText())
             self:HighlightText()
         end
     end)
@@ -9088,16 +9141,71 @@ entryCreationKeyState.CreateSelfTestCopyPanel = function()
     local cross = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
     cross:SetPoint("TOPRIGHT", -2, -2)
     cross:SetScript("OnClick", function() S.HideSelfTestCopyWindow() end)
+    local copyStatus = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    copyStatus:SetPoint("BOTTOMLEFT", 24, 62)
+    copyStatus:SetSize(572, 18)
+    copyStatus:SetJustifyH("LEFT")
+    S.selfTestCopyStatus = copyStatus
     panel:Hide()
     S.selfTestCopyPanel = panel
     S.selfTestCopyBox = box
+    S.selfTestCopyScroll = scroll
+    S.selfTestCopyTitle = title
+    S.selfTestCopyHint = hint
     S.RegisterDialogLayer(panel)
+end
+
+entryCreationKeyState.RecoverCopyReadback = function()
+    local S = entryCreationKeyState
+    local box = S.selfTestCopyBox
+    local expected = S.selfTestCopyRenderedText or ""
+    local function matches(candidate)
+        local ok, actual = pcall(box.GetText, box)
+        return ok and not IsSecretValue(actual) and type(actual) == "string" and actual == candidate
+    end
+    if matches(expected) then return end
+    if S.selfTestCopyRecovery == "none" then
+        S.selfTestCopyRecovery = "ASCII"
+        expected = S.EscapeCopyText(expected, true)
+        S.selfTestCopyRenderedText = expected
+        box:SetMaxLetters(math.max(S.SELFTEST_COPY_MAX_LETTERS, #expected))
+        pcall(box.SetText, box, expected)
+        if matches(expected) then return end
+    end
+    S.selfTestCopyRecovery = "failed"
+    S.selfTestCopyRenderedText = "Report display failed. Native EditBox rejected the report text."
+    pcall(box.SetText, box, S.selfTestCopyRenderedText)
+    -- Remains informative even if EditBox rejects the plain error message.
+    S.selfTestCopyStatus:SetText("Report display failed: native text rejected. Copy is unavailable.")
 end
 
 entryCreationKeyState.RefreshSelfTestCopyText = function()
     local S = entryCreationKeyState
     if S.selfTestCopyBox then
-        S.selfTestCopyBox:SetText(S.BuildSelfTestCopyText())
+        local diagnostics = S.selfTestCopyKind == "diagnostics"
+        S.selfTestCopyTitle:SetText(diagnostics
+            and "ApplicantScout status — copy diagnostics"
+            or "ApplicantScout selftest — copy report")
+        S.selfTestCopyHint:SetText(diagnostics
+            and "Select all, then Ctrl+C. Reopen: /apscout status diag."
+            or "Select all, then press Ctrl+C. Reopen with /apscout selftest show.")
+        local text = S.BuildSelfTestCopyText()
+        S.selfTestCopyBox:SetMaxLetters(math.max(S.SELFTEST_COPY_MAX_LETTERS, #text))
+        S.selfTestCopyExpectedBytes = #text
+        S.selfTestCopyRenderedText = text
+        S.selfTestCopyRecovery = "none"
+        S.selfTestCopyStatus:SetText("")
+        pcall(S.selfTestCopyBox.SetText, S.selfTestCopyBox, text)
+        S.RecoverCopyReadback()
+        text = S.selfTestCopyRenderedText
+        -- Native multiline EditBox sizes itself from accepted content;
+        -- this estimate also supports simpler frame implementations.
+        local rows = 0
+        for line in (text .. "\n"):gmatch("(.-)\n") do
+            rows = rows + math.max(1, math.ceil(#line / 40))
+        end
+        S.selfTestCopyBox:SetHeight(math.max(300, rows * 20 + 24))
+        S.selfTestCopyScroll:SetVerticalScroll(0)
         S.selfTestCopyBox:SetCursorPosition(0)
         S.selfTestCopyBox:HighlightText()
     end
@@ -9119,7 +9227,37 @@ entryCreationKeyState.TryShowSelfTestCopyWindow = function()
     S.RefreshSelfTestCopyText()
     S.selfTestCopyPanel:Show()
     S.FocusDialogLayer(S.selfTestCopyPanel)
+    local kind, rendered = S.selfTestCopyKind, S.selfTestCopyRenderedText
+    local function reportPresentation()
+        if S.selfTestCopyKind == kind and S.selfTestCopyRenderedText == rendered
+            and S.selfTestCopyPanel:IsShown() then
+            S.RecoverCopyReadback()
+            if kind == "diagnostics" then S.PrintCopyWindowPresentation() end
+        end
+    end
+    if C_Timer and type(C_Timer.After) == "function" then
+        C_Timer.After(0, reportPresentation)
+    else
+        reportPresentation()
+    end
     return true
+end
+
+entryCreationKeyState.PrintCopyWindowPresentation = function()
+    local S = entryCreationKeyState
+    local box = S.selfTestCopyBox
+    local ok, actual = pcall(box.GetText, box)
+    local bytes = ok and not IsSecretValue(actual) and type(actual) == "string" and #actual or -1
+    local lines = "?"
+    if type(box.GetNumLines) == "function" then
+        local linesOK, count = pcall(box.GetNumLines, box)
+        if linesOK and not IsSecretValue(count) then lines = tostring(SafeNumber(count, -1)) end
+    end
+    local status = "bytes=" .. tostring(S.selfTestCopyExpectedBytes or 0) .. "/" .. bytes
+        .. " nativeLines=" .. lines .. " recovery=" .. tostring(S.selfTestCopyRecovery or "none")
+    S.selfTestCopyStatus:SetText(S.selfTestCopyRecovery == "failed"
+        and ("Report display failed. " .. status) or status)
+    APSPrint("copy UI: " .. status)
 end
 
 entryCreationKeyState.QueueSelfTestCopyWindow = function()
@@ -9139,11 +9277,25 @@ end
 
 -- Requested by slash (`show` or run finish): opens now or defers to
 -- combat end. Returns whether the window is visible afterwards.
-entryCreationKeyState.ShowSelfTestCopyWindow = function()
+entryCreationKeyState.ShowSelfTestCopyWindow = function(kind)
     local S = entryCreationKeyState
+    S.selfTestCopyKind = kind or "selftest"
     S.selfTestCopyPending = true
     S.QueueSelfTestCopyWindow()
     return S.TryShowSelfTestCopyWindow()
+end
+
+entryCreationKeyState.ShowTroubleshootingCopyWindow = function()
+    local S = entryCreationKeyState
+    local lines = {}
+    S.PrintTroubleshootingStatus(function(line)
+        lines[#lines + 1] = tostring(line):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    end)
+    S.statusDiagnosticCopyText = S.EscapeCopyText(table.concat(lines, "\n"))
+    local opened = S.ShowSelfTestCopyWindow("diagnostics")
+    APSPrint(opened
+        and "diagnostic copy window opened — Select all, then Ctrl+C"
+        or "diagnostic copy window deferred until combat ends")
 end
 
 -- Called from the RefreshQRGameplaySuppression reconciliation site (next to
@@ -9526,7 +9678,7 @@ local function PrintHelpAll()
     print("  /apscout config         open/close settings panel")
     print("  /apscout setup          show companion download and setup")
     print("  /apscout status         show a short capture summary")
-    print("  /apscout status diag    show detailed QR diagnostics")
+    print("  /apscout status diag    open detailed diagnostics to scroll and copy")
     print("  /apscout selftest       start/finish/show in-game diagnostics + copy window")
     print("  /apscout playstyle [off|learning|relaxed|competitive|carry] set M+ default playstyle")
     print("  /apscout reset          clear transport cache, queue fresh snapshot")
@@ -9583,7 +9735,7 @@ SlashCmdList.APSCOUT = function(msg)
         -- slash root so the help/README command contract stays synchronized.
         entryCreationKeyState.PrintShortStatus()
     elseif msg == "status diag" then
-        entryCreationKeyState.PrintTroubleshootingStatus()
+        entryCreationKeyState.ShowTroubleshootingCopyWindow()
     elseif msg == "taintcheck" then
         -- One-shot diagnostic. Slash-handler frame is hardware-event-rooted
         -- (clean). Reads C_LFGList directly + per-field issecretvalue dump.
