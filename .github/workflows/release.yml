@@ -96,7 +96,7 @@ jobs:
         run: .\scripts\check-release-version.ps1 -Tag $env:GITHUB_REF_NAME -PairedCompanionRoot ..\ApplicantScout-Companion
 
       - name: Set up Python
-        # actions/setup-python v7.0.0 pinned to the upstream release commit.
+        # actions/setup-python v7.1.0 pinned to the upstream release commit.
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.14'
@@ -522,7 +522,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Set up Python
-        # actions/setup-python v7.0.0 pinned to the upstream release commit.
+        # actions/setup-python v7.1.0 pinned to the upstream release commit.
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.14'
@@ -556,7 +556,7 @@ jobs:
           path: .marketplace-upload
 
       - name: Set up Python
-        # actions/setup-python v7.0.0 pinned to the upstream release commit.
+        # actions/setup-python v7.1.0 pinned to the upstream release commit.
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.14'
