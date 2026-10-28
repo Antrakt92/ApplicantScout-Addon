@@ -10554,7 +10554,7 @@ do
                     if not value then entryCreationKeyState.ClearAutoHiAttemptState("new-party") end
                 end)
                 check(7, "qrAlwaysVisible", -194, function(value)
-                    ApplicantScoutDB.qrAlwaysVisible = value
+                    entryCreationKeyState.SetQRAlwaysVisible(value)
                     _RefreshQRVisibility()
                 end)
                 check(8, "debug", -232, _SetDebug)

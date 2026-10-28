@@ -454,6 +454,13 @@ if scenario == "menu" or scenario == "menu-export" then
             control:SetChecked(value)
             control.scripts.OnClick(control)
             assert(ApplicantScoutDB[key] == value, "menu setting did not save: " .. key)
+            if key == "qrAlwaysVisible" then
+                local state = harness.QRTransportState()
+                assert(state.alwaysVisible == value,
+                    "menu QR visibility preference did not update runtime state")
+                assert(state.qrFrameShown == value,
+                    "menu QR visibility preference did not apply immediately")
+            end
         end
     end
     button(language.menu[4] .. ": " .. language.menu[18]).scripts.OnClick()
