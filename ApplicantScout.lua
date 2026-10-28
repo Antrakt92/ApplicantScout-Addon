@@ -8379,16 +8379,9 @@ entryCreationKeyState.RunScanTick = function()
         entryCreationKeyState.DispatchPendingForcedScreenshot()
     end
     if not scanDirty then
-        -- Drain pending throttled shot: data was changed during throttle
-        -- window (pendingShotDirty=true), but no new events fired since.
-        -- Without this drain: shot never goes out for sustained state.
-        if pendingShotDirty
-           and (now - lastShotTime) >= entryCreationKeyState.SHOT_THROTTLE_S then
-            local transportReady = lfgReadsAllowed or _HasGroupRosterForTransport() or isSessionActive
-            if transportReady then
-                MaybeTriggerScreenshot(false, nil, nil, lfgReadsAllowed)
-            end
-        end
+        -- A due poll already rebuilds pending work from fresh listing context.
+        -- Draining first can serialize and checksum the same unchanged payload
+        -- twice before either path starts a QR job.
         if (now - lastTransportPollTime)
                >= entryCreationKeyState.TRANSPORT_POLL_S then
             lastTransportPollTime = now
@@ -8397,6 +8390,15 @@ entryCreationKeyState.RunScanTick = function()
                 MaybeTriggerScreenshot(
                     false, entry, nil, lfgReadsAllowed, listingStateKnown
                 )
+            end
+        -- Drain pending throttled shot: data was changed during throttle
+        -- window (pendingShotDirty=true), but no new events fired since.
+        -- Without this drain: shot never goes out for sustained state.
+        elseif pendingShotDirty
+           and (now - lastShotTime) >= entryCreationKeyState.SHOT_THROTTLE_S then
+            local transportReady = lfgReadsAllowed or _HasGroupRosterForTransport() or isSessionActive
+            if transportReady then
+                MaybeTriggerScreenshot(false, nil, nil, lfgReadsAllowed)
             end
         end
         return
