@@ -1,10 +1,23 @@
-# ApplicantScout: LFG & Party Overlay
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Antrakt92/ApplicantScout-Companion/main/src/applicant_scout/assets/app_icon-256.png" alt="ApplicantScout logo" width="112" height="112">
+</p>
 
-<p>
-  <a href="https://github.com/Antrakt92/ApplicantScout-Addon/releases/latest"><img alt="Latest addon release" src="https://img.shields.io/github/v/release/Antrakt92/ApplicantScout-Addon?style=for-the-badge"></a>
-  <a href="https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest"><img alt="Companion required" src="https://img.shields.io/badge/Companion-required-ff5e7a?style=for-the-badge"></a>
-  <img alt="Retail Midnight 12.x" src="https://img.shields.io/badge/Retail-Midnight%2012.x-7c5cff?style=for-the-badge">
-  <img alt="Warcraft Logs plus RaiderIO" src="https://img.shields.io/badge/WCL%20%2B%20RaiderIO-overlay-00b8ff?style=for-the-badge">
+<h1 align="center">ApplicantScout</h1>
+
+<p align="center">
+  Warcraft Logs and RaiderIO beside Group Finder.
+</p>
+
+<p align="center">
+  <a href="https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay"><strong>Get the addon</strong></a>
+  · <a href="https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest"><strong>Get the Windows companion</strong></a>
+  · <a href="https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/GETTING_STARTED.md"><strong>Setup guide</strong></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Antrakt92/ApplicantScout-Addon/releases"><img src="https://img.shields.io/github/v/release/Antrakt92/ApplicantScout-Addon?label=release&amp;color=22c55e" alt="Latest stable release"></a>
+  <img src="https://img.shields.io/badge/WoW-Midnight-8b5cf6" alt="WoW: Midnight">
+  <img src="https://img.shields.io/badge/Windows%20companion-required-f59e0b" alt="Windows companion: required">
 </p>
 
 **Check applicants before you invite.**
@@ -25,9 +38,25 @@ On the download page, choose `ApplicantScoutCompanionSetup-*.exe` under
 the guide walks through creating one. You do not need your Blizzard password.
 
 <p align="center">
-  <img src="docs/visual/applicantscout-curseforge-raid-party-overlay.jpg" alt="Windows companion: raid applicants with Warcraft Logs performance and raid progress" width="45%">
-  <img src="docs/visual/applicantscout-curseforge-mplus-overlay.jpg" alt="Windows companion: Mythic+ applicants with key fit, Warcraft Logs damage percentiles, and RaiderIO scores" width="45%">
+  <a href="#what-you-can-check">Features</a>
+  · <a href="#quick-setup">Setup</a>
+  · <a href="#reading-the-results">Reading results</a>
+  · <a href="#handy-slash-commands">Commands</a>
+  · <a href="#support-and-contributions">Help</a>
 </p>
+
+<p align="center">
+  <img src="docs/visual/applicantscout-curseforge-mplus-overlay.jpg" alt="Windows companion: Mythic+ applicants with key fit, Warcraft Logs damage percentiles, and RaiderIO scores" width="100%">
+</p>
+
+<details>
+<summary>Raid applicants and group view</summary>
+
+<p align="center">
+  <img src="docs/visual/applicantscout-curseforge-raid-party-overlay.jpg" alt="Windows companion: raid applicants with Warcraft Logs performance and raid progress" width="100%">
+</p>
+
+</details>
 
 *The Windows companion displays these tables beside WoW. Installing the addon
 alone does not display them.*
@@ -181,6 +210,9 @@ Essential commands (`/apscout help`):
 /apscout shotnow        request snapshot while enabled; defers in combat/M+/boss fights
 ```
 
+<details>
+<summary>Advanced commands and diagnostics</summary>
+
 Advanced commands (`/apscout help all`):
 
 ```text
@@ -192,6 +224,8 @@ Advanced commands (`/apscout help all`):
 /apscout debug [on|off] toggle debug logging
 /apscout competitive [on|off] legacy alias for Competitive / Off
 ```
+
+</details>
 
 ## Compatibility
 
@@ -230,8 +264,12 @@ details, and the development-only addon ZIP. Report security issues through
 [SECURITY.md](SECURITY.md).
 
 ## More by Antrakt
-- [StatsPro](https://www.curseforge.com/wow/addons/statspro) — customizable stats and gear HUD
-- [DoYouNeedIt](https://www.curseforge.com/wow/addons/do-you-need-it) — group loot helper with opt-in whispers
+
+| Addon | What it does |
+|---|---|
+| [StatsPro](https://github.com/Antrakt92/StatsPro) | Character stats and gear HUD for Retail and Forever beta. |
+| [Dungeon Pro](https://github.com/Antrakt92/DungeonPro) | Dungeon quest preparation and navigation for Forever beta. |
+| [Do You Need It?](https://github.com/Antrakt92/Do-You-Need-It-) | Group loot comparisons, history and optional whispers for Retail and Forever beta. |
 
 ## License
 

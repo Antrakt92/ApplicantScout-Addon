@@ -1,5 +1,7 @@
 # Contributing
 
+[Overview](README.md) · [Setup](#set-up-the-checkouts) · [Checks](#run-checks) · [Security](SECURITY.md)
+
 ApplicantScout has two parts: this Lua addon captures Group Finder and roster
 data; the [Windows companion](https://github.com/Antrakt92/ApplicantScout-Companion)
 decodes screenshots and displays results. Changes to the QR format must remain
