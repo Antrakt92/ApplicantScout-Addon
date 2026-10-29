@@ -20,8 +20,6 @@
   <img src="https://img.shields.io/badge/Windows%20companion-required-f59e0b" alt="Windows companion: required">
 </p>
 
-**Check applicants before you invite.**
-
 See Warcraft Logs performance, RaiderIO scores, and dungeon or raid experience
 beside Group Finder. Compare applicants in one table, inspect players who
 applied together, or switch to Party view to review your current group.
@@ -29,9 +27,6 @@ applied together, or switch to Party view to review your current group.
 **You need both this WoW addon and the free ApplicantScout Companion for
 Windows.** The addon collects group information. The Windows app displays the
 overlay shown below.
-
-**[Download Windows Companion](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest)**
-· **[Illustrated setup guide](https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/GETTING_STARTED.md)**
 
 On the download page, choose `ApplicantScoutCompanionSetup-*.exe` under
 **Assets**. Setup also requires a free Warcraft Logs account and API client;

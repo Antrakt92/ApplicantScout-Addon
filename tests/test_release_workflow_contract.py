@@ -2194,12 +2194,14 @@ def test_package_script_rejects_private_directories_and_legacy_claude_docs():
 def test_contributor_guide_documents_wire_version_and_readme_describes_qr_visibility():
     readme = _read_repo_text("README.md")
     contributing = _read_repo_text("CONTRIBUTING.md")
+    development = _read_repo_text("docs/DEVELOPMENT.md")
 
     assert "[CONTRIBUTING.md](CONTRIBUTING.md)" in readme
-    assert "Wire payload: compact v9" in contributing
-    assert "A v11 frame" in contributing
-    assert "v10 fragment" in contributing
-    assert "Wire payload: compact v5" not in contributing
+    assert "(docs/DEVELOPMENT.md)" in contributing
+    assert "Wire payload: compact v9" in development
+    assert "A v11 frame" in development
+    assert "v10 fragment" in development
+    assert "Wire payload: compact v5" not in development
     assert "Wire payload: compact v5" not in readme
     assert "stays visible during an\nactive capture session" not in readme
     assert "screenshot capture window" in readme
@@ -2235,12 +2237,21 @@ def test_readme_uses_local_anonymized_public_overlay_media():
         )
     assert (
         'alt="Windows companion: raid applicants with Warcraft Logs performance '
-        'and raid progress" width="45%"'
+        'and raid progress" width="100%"'
     ) in readme
     assert (
         'alt="Windows companion: Mythic+ applicants with key fit, Warcraft Logs '
-        'damage percentiles, and RaiderIO scores" width="45%"'
+        'damage percentiles, and RaiderIO scores" width="100%"'
     ) in readme
+    assert readme.index("applicantscout-curseforge-mplus-overlay.jpg") < readme.index(
+        "applicantscout-curseforge-raid-party-overlay.jpg"
+    )
+    assert re.search(
+        r"<details>\s*<summary>Raid applicants and group view</summary>"
+        r".*?applicantscout-curseforge-raid-party-overlay\.jpg.*?</details>",
+        readme,
+        re.S,
+    )
 
 
 def test_readme_documents_support_output_redaction():
