@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.7 - 29-Oct-2026 — Companion screenshot cleanup
+
+Paired release with ApplicantScout Companion `0.24.5`.
+
+- Companion: clean up accumulated ApplicantScout screenshots in small background batches.
+- Companion: retry temporarily blocked deletions while preserving screenshots without a readable ApplicantScout QR code.
+- Companion: keep historical captures out of live updates, recover cleanup warnings, and keep shutdown responsive.
+- The addon capture format and in-game behavior are unchanged.
+
 ## 0.14.6 - 29-Oct-2026 — Faster capture and overlay updates
 
 Paired release with ApplicantScout Companion `0.24.4`.
