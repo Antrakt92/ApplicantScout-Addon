@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.14.6 - 29-Oct-2026 — Faster capture and overlay updates
+
+Paired release with ApplicantScout Companion `0.24.4`.
+
+### Addon
+
+- Avoid processing the same pending snapshot twice in one update.
+- Apply the always-visible QR setting immediately.
+- The addon capture format is unchanged.
+
+### Companion
+
+- Reduce CPU work when calculating Mythic+ Fit and decoding local RaiderIO profiles.
+- Avoid unnecessary full-screen image conversion during QR recovery.
+- Update build dependencies and automated security checks.
+
+### License
+
+- Simplify the wording of the reuse license.
+
 ## 0.14.5 - 22-Oct-2026 — Copyable diagnostics and reliability
 
 Paired release with ApplicantScout Companion `0.24.3`.
