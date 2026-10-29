@@ -28,8 +28,8 @@ applied together, or switch to Party view to review your current group.
 Windows.** The addon collects group information. The Windows app displays the
 overlay shown below.
 
-On the download page, choose `ApplicantScoutCompanionSetup-*.exe` under
-**Assets**. Setup also requires a free Warcraft Logs account and API client;
+On the companion release page, choose **Windows installer** near the top.
+Setup also requires a free Warcraft Logs account and API client;
 the guide walks through creating one. You do not need your Blizzard password.
 
 <p align="center">
@@ -70,6 +70,9 @@ or turn it off in settings. Auto Hi greetings are optional.
 
 ## Quick Setup
 
+<details>
+<summary>Using the in-game setup guide</summary>
+
 The installation guide opens on login until you choose **Don't show on login**
 beside the close button. Closing with the cross, **Close** or Escape postpones
 it until the next login or reload. Use **Show on login** to enable it again.
@@ -85,6 +88,8 @@ browser guide use English field names such as **Test WCL**.
 
 WoW cannot open a browser or copy a link automatically. Select a download or guide
 link, press **Ctrl+C**, then paste it into your browser outside the game.
+
+</details>
 
 1. Install the addon through [CurseForge](https://www.curseforge.com/wow/addons/applicantscout-lfg-overlay)
    or [Wago](https://addons.wago.io/addons/ANzke264),
