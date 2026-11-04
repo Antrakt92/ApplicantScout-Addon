@@ -63,15 +63,33 @@ local function snapshot(root)
     local base = level(root)
     local result = { frames = {}, low = 0, high = 0 }
     local seen = {}
+    local offsets = {}
+    local candidates = {}
     local function record(frame)
         bind(root, frame)
-        local offset = level(frame) - base
-        result.low = math.min(result.low, offset)
-        result.high = math.max(result.high, offset)
-        result.frames[#result.frames + 1] = { frame, offset }
+        offsets[frame] = level(frame) - base
+        candidates[#candidates + 1] = frame
     end
     walk(root, record, seen)
     for _, extra in ipairs(entry.extras) do walk(extra, record, seen) end
+    local resolved = {}
+    local function resolve(frame)
+        if resolved[frame] ~= nil then return resolved[frame] end
+        local offset = offsets[frame]
+        local parent = invoke(frame, "GetParent")
+        -- A stale child level must not bury its controls under its own window.
+        -- Separate attached blockers may still intentionally sit below the root.
+        if parent and offsets[parent] ~= nil then
+            offset = math.max(offset, resolve(parent) + 1)
+        end
+        resolved[frame] = offset
+        result.low = math.min(result.low, offset)
+        result.high = math.max(result.high, offset)
+        -- Apply parents first even when a nested extra was attached before them.
+        result.frames[#result.frames + 1] = { frame, offset }
+        return offset
+    end
+    for _, frame in ipairs(candidates) do resolve(frame) end
     return result
 end
 
