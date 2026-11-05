@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.14.9 - 05-Nov-2026 — Window controls and maintenance
+## 0.14.10 - 05-Nov-2026 — Window controls and maintenance
 
-Paired release with ApplicantScout Companion `0.24.7`.
+Paired release with ApplicantScout Companion `0.24.8`.
 
 - Keep window controls above their parent when opening or raising addon windows.
 - Group ApplicantScout under Antrakt92 in the AddOns list.
