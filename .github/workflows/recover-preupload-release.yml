@@ -73,18 +73,27 @@ jobs:
             throw "Release tag commit is not reachable from origin/main."
           }
 
-          $Run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID" | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or
-              $null -eq $Run -or
-              [string]$Run.name -cne 'Package and release' -or
-              [string]$Run.path -cne '.github/workflows/release.yml' -or
-              [string]$Run.event -cne 'push' -or
+          $Response = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/release.yml/runs?event=push&per_page=20" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $null -eq $Response) {
+            throw "Could not refresh release workflow runs before recovery."
+          }
+          $Run = $Response.workflow_runs |
+            Where-Object {
+              [string]$_.name -ceq 'Package and release' -and
+              [string]$_.path -ceq '.github/workflows/release.yml' -and
+              [string]$_.event -ceq 'push' -and
+              [string]$_.head_branch -cmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+            } |
+            Sort-Object { [long]$_.run_number } -Descending |
+            Select-Object -First 1
+          if ($null -eq $Run -or
+              [string]$Run.id -cne $env:SOURCE_RUN_ID -or
               [string]$Run.status -cne 'completed' -or
               [string]$Run.conclusion -cne 'failure' -or
               [string]$Run.head_branch -cne $env:RELEASE_TAG -or
               [string]$Run.head_sha -cne $ReleaseCommit -or
               [int]$Run.run_attempt -lt 1) {
-            throw "Source run does not match the failed exact-tag release identity."
+            throw "Source run does not match the latest failed exact-tag release identity."
           }
 
           function Get-SingleJob([object]$Jobs, [string]$Name) {
@@ -189,8 +198,8 @@ jobs:
           if ($ReleaseExit -eq 0) {
             throw "Release $env:RELEASE_TAG already exists; recovery cannot resume after publication starts."
           }
-          if (-not [string]::IsNullOrWhiteSpace($ReleaseError) -and
-              $ReleaseError -notmatch '(?i)not found|no release found') {
+          if ($ReleaseExit -ne 1 -or [string]::IsNullOrWhiteSpace($ReleaseError) -or
+              $ReleaseError.Trim() -cne 'release not found') {
             throw "Could not prove that release $env:RELEASE_TAG is absent: $ReleaseError"
           }
 

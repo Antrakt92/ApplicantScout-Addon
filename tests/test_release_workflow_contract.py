@@ -976,8 +976,9 @@ def test_preupload_recovery_proves_source_failed_before_all_writers():
     identity = _step_block(recovery, "Verify pre-upload timeout recovery identity")
 
     assert "Package and release" in identity
-    assert "[string]$Run.path -cne '.github/workflows/release.yml'" in identity
-    assert "[string]$Run.event -cne 'push'" in identity
+    assert "[string]$_.path -ceq '.github/workflows/release.yml'" in identity
+    assert "[string]$_.event -ceq 'push'" in identity
+    assert "[string]$Run.id -cne $env:SOURCE_RUN_ID" in identity
     assert "[string]$Run.head_branch -cne $env:RELEASE_TAG" in identity
     assert "[string]$Run.head_sha -cne $ReleaseCommit" in identity
     assert "git merge-base --is-ancestor" in identity

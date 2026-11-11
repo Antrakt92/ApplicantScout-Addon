@@ -272,7 +272,7 @@ jobs:
           fi
           error_text="$(tr -d '\r' < "$error_file")"
           rm -f "$error_file"
-          if [ -n "$error_text" ] && ! grep -Eiq 'not found|no release found' <<< "$error_text"; then
+          if [ "$status" -ne 1 ] || [ "$error_text" != 'release not found' ]; then
             echo "::error::Could not determine whether release $GITHUB_REF_NAME already exists. $error_text"
             exit "$status"
           fi

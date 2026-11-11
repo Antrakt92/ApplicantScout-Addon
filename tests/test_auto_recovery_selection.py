@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import sys
 import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -9,11 +10,12 @@ from pathlib import Path
 import pytest
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/auto-recover-preupload-release.yml"
+RECOVERY_WORKFLOW = WORKFLOW.with_name("recover-preupload-release.yml")
 
 
 def _run(run_id, *, status="completed", conclusion="failure", age=0):
     return {
-        "id": run_id, "name": "Package and release",
+        "id": run_id, "run_number": run_id, "name": "Package and release",
         "path": ".github/workflows/release.yml", "event": "push",
         "status": status, "conclusion": conclusion, "head_branch": f"v0.10.{run_id}",
         "head_sha": "a" * 40, "run_attempt": 1,
@@ -41,11 +43,18 @@ def _jobs(*, failed_step="Verify paired companion published release assets", wri
     ]}
 
 
-def _execute(tmp_path, runs, jobs=None, *, artifact_expired=False, source=None):
-    source = WORKFLOW.read_text(encoding="utf-8") if source is None else source
+def _execute(tmp_path, runs, jobs=None, *, artifact_expired=False,
+             release_error="release not found\n", release_exit=1, phase="discovery"):
+    workflow, step = {
+        "discovery": (WORKFLOW, "Find exact recoverable release run"),
+        "dispatch": (WORKFLOW, "Revalidate candidate and dispatch guarded recovery"),
+        "recovery": (RECOVERY_WORKFLOW, "Verify pre-upload timeout recovery identity"),
+    }[phase]
+    source = workflow.read_text(encoding="utf-8").split(f"      - name: {step}\n", 1)[1]
     selector = textwrap.dedent(source.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0])
     fixture = {
         "runs": {"workflow_runs": runs}, "jobs": jobs or _jobs(),
+        "python": sys.executable, "release_error": release_error, "release_exit": release_exit,
         "artifacts": {"artifacts": [{
             "name": "applicantscout-addon-release-" + "a" * 40,
             "expired": artifact_expired,
@@ -58,15 +67,28 @@ def _execute(tmp_path, runs, jobs=None, *, artifact_expired=False, source=None):
     $Fixture = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'api.json') -Raw | ConvertFrom-Json
     $env:GITHUB_REPOSITORY = 'fixture/addon'
     $env:GITHUB_OUTPUT = Join-Path $PSScriptRoot 'output.txt'
+    $env:SOURCE_RUN_ID = '1'
+    $env:RELEASE_TAG = 'v0.10.1'
+    $env:RELEASE_COMMIT = 'a' * 40
+    function git {
+      $global:LASTEXITCODE = 0
+      if ($args[0] -ceq 'rev-parse') { 'a' * 40 }
+      elseif ($args[0] -cnotin @('fetch', 'merge-base')) { throw "Unexpected git command: $args" }
+    }
     function gh {
       $global:LASTEXITCODE = 0
       $Command = $args -join ' '
       Add-Content -LiteralPath (Join-Path $PSScriptRoot 'calls.txt') -Value $Command
       if ($Command -like 'api *actions/workflows/release.yml/runs?*') {
         $Fixture.runs | ConvertTo-Json -Depth 20
+      } elseif ($Command -like 'api *actions/runs/1') {
+        $Fixture.runs.workflow_runs | Where-Object id -eq 1 | ConvertTo-Json -Depth 20
+      } elseif ($Command -like 'api *actions/workflows/recover-preupload-release.yml/runs?*') {
+        '{"workflow_runs": []}'
+      } elseif ($Command -like 'workflow run recover-preupload-release.yml *') {
+        return
       } elseif ($Command -like 'release view *') {
-        [Console]::Error.WriteLine('release not found')
-        $global:LASTEXITCODE = 1
+        & $Fixture.python -c 'import sys; sys.stderr.write(sys.argv[1]); sys.exit(int(sys.argv[2]))' ([string]$Fixture.release_error) ([string]$Fixture.release_exit)
       } elseif ($Command -like 'api *attempts/1/jobs?*') {
         $Fixture.jobs | ConvertTo-Json -Depth 20
       } elseif ($Command -like 'api *artifacts?*') {
@@ -108,6 +130,51 @@ def test_exclusive_paired_wait_failure_remains_recoverable(tmp_path):
     result, output = _execute(tmp_path, [_run(1)])
     assert result.returncode == 0, result.stdout + result.stderr
     assert "candidate=true\ntag=v0.10.1\nrun_id=1\n" in output
+
+
+@pytest.mark.parametrize("error,exit_code", [
+    ("", 1), ("Repository not found\n", 1), ("connection reset\n", 1), ("release not found\n", 2),
+])
+def test_release_absence_requires_exact_missing_release_result(tmp_path, error, exit_code):
+    result, output = _execute(tmp_path, [_run(1)], release_error=error, release_exit=exit_code)
+    assert result.returncode != 0
+    assert "Could not prove that release" in result.stderr
+    assert output == ""
+
+
+def test_run_number_disambiguates_simultaneous_release_events(tmp_path):
+    older, newer = _run(1), _run(2, status="queued", conclusion=None)
+    newer["created_at"] = older["created_at"]
+    result, output = _execute(tmp_path, [older, newer])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert output == ""
+
+
+@pytest.mark.parametrize("phase", ["dispatch", "recovery"])
+def test_later_phase_rejects_candidate_superseded_since_discovery(tmp_path, phase):
+    older = _run(1, age=1)
+    newer = _run(2, status="queued", conclusion=None)
+    result, output = _execute(tmp_path, [older, newer], phase=phase)
+    assert output == ""
+    calls = (tmp_path / "calls.txt").read_text().splitlines()
+    assert len(calls) == 1
+    assert "workflows/release.yml/runs?" in calls[0]
+    if phase == "dispatch":
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "no longer the latest" in result.stdout
+    else:
+        assert result.returncode != 0
+        assert "latest failed exact-tag" in result.stderr
+
+
+@pytest.mark.parametrize("phase", ["dispatch", "recovery"])
+def test_later_phase_accepts_exact_current_failed_candidate(tmp_path, phase):
+    result, output = _execute(tmp_path, [_run(1)], phase=phase)
+    assert result.returncode == 0, result.stdout + result.stderr
+    if phase == "dispatch":
+        assert "Dispatched guarded recovery" in result.stdout
+    else:
+        assert "artifact_name=applicantscout-addon-release-" in output
 
 
 @pytest.mark.parametrize("writer,expired", [("success", False), ("skipped", True)])

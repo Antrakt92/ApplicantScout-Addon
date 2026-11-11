@@ -49,9 +49,9 @@ jobs:
                 [string]$_.name -ceq 'Package and release' -and
                 [string]$_.path -ceq '.github/workflows/release.yml' -and
                 [string]$_.event -ceq 'push' -and
-                [string]$_.head_branch -match '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+                [string]$_.head_branch -cmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
               } |
-              Sort-Object { [DateTimeOffset]$_.created_at } -Descending |
+              Sort-Object { [long]$_.run_number } -Descending |
               Select-Object -First 1
           )
           if ($Runs.Count -eq 0) {
@@ -88,8 +88,8 @@ jobs:
             Write-Host "$Tag already has a release; no recovery is needed."
             exit 0
           }
-          if (-not [string]::IsNullOrWhiteSpace($ReleaseError) -and
-              $ReleaseError -notmatch '(?i)not found|no release found') {
+          if ($ReleaseExit -ne 1 -or [string]::IsNullOrWhiteSpace($ReleaseError) -or
+              $ReleaseError.Trim() -cne 'release not found') {
             throw "Could not prove that release $Tag is absent: $ReleaseError"
           }
 
@@ -210,14 +210,27 @@ jobs:
             throw "Exact release commit is no longer reachable from origin/main."
           }
 
-          $Run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID" | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or
-              $null -eq $Run -or
+          $Response = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/release.yml/runs?event=push&per_page=20" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $null -eq $Response) {
+            throw "Could not refresh release workflow runs before recovery dispatch."
+          }
+          $Run = $Response.workflow_runs |
+            Where-Object {
+              [string]$_.name -ceq 'Package and release' -and
+              [string]$_.path -ceq '.github/workflows/release.yml' -and
+              [string]$_.event -ceq 'push' -and
+              [string]$_.head_branch -cmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+            } |
+            Sort-Object { [long]$_.run_number } -Descending |
+            Select-Object -First 1
+          if ($null -eq $Run -or
+              [string]$Run.id -cne $env:SOURCE_RUN_ID -or
               [string]$Run.status -cne 'completed' -or
               [string]$Run.conclusion -cne 'failure' -or
               [string]$Run.head_branch -cne $env:RELEASE_TAG -or
               [string]$Run.head_sha -cne $CheckoutCommit) {
-            throw "Source run identity changed before recovery dispatch."
+            Write-Host "Source run is no longer the latest failed release candidate."
+            exit 0
           }
 
           $RecoveryRuns = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/recover-preupload-release.yml/runs?per_page=20" | ConvertFrom-Json
@@ -243,8 +256,8 @@ jobs:
             Write-Host "Release $env:RELEASE_TAG appeared before dispatch; no recovery is needed."
             exit 0
           }
-          if (-not [string]::IsNullOrWhiteSpace($ReleaseError) -and
-              $ReleaseError -notmatch '(?i)not found|no release found') {
+          if ($ReleaseExit -ne 1 -or [string]::IsNullOrWhiteSpace($ReleaseError) -or
+              $ReleaseError.Trim() -cne 'release not found') {
             throw "Could not re-prove that release $env:RELEASE_TAG is absent: $ReleaseError"
           }
 
