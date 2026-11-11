@@ -15,6 +15,7 @@ C_PlayerInteractionManager = nil
 
 ---@class ChallengeModeAPI
 ---@field IsChallengeModeActive fun(): boolean
+---@field GetMapUIInfo fun(mapChallengeModeID: number): string?, number?, number?, number?, number?, number?
 ---@type ChallengeModeAPI?
 C_ChallengeMode = nil
 

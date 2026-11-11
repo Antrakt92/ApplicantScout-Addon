@@ -1,4 +1,10 @@
 local fixture_mode = arg and arg[1] or ""
+local leader_fallback = fixture_mode == "leader-key-match"
+    or fixture_mode == "leader-key-mismatch" or fixture_mode == "leader-key-generic"
+    or fixture_mode == "leader-key-map-unavailable"
+    or fixture_mode == "non-mplus-dungeon" or fixture_mode == "non-mplus-flag"
+    or fixture_mode == "non-mplus-difficulty" or fixture_mode == "unknown-dungeon-metadata"
+    or fixture_mode == "raid-with-bag"
 if fixture_mode ~= "" and fixture_mode ~= "leader-key"
    and fixture_mode ~= "placeholder-roster"
    and fixture_mode ~= "placeholder-applicant"
@@ -7,7 +13,7 @@ if fixture_mode ~= "" and fixture_mode ~= "leader-key"
    and fixture_mode ~= "secret-leader-owned-key"
    and fixture_mode ~= "secret-leader-keystone"
    and fixture_mode ~= "invalidated-applicant"
-   and fixture_mode ~= "raid19-applicant" then
+   and fixture_mode ~= "raid19-applicant" and not leader_fallback then
     error("unsupported fixture mode: " .. tostring(fixture_mode))
 end
 
@@ -117,11 +123,42 @@ if fixture_mode == "secret-leader-owned-key" then
     end
 end
 
-if fixture_mode == "leader-key" or fixture_mode == "secret-leader-keystone" then
+if fixture_mode == "leader-key" or fixture_mode == "secret-leader-keystone" or leader_fallback then
     IsInGroup = function() return true end
     ApplicantScoutDB = {
         enabled = true,
         debug = false,
+    }
+end
+
+if leader_fallback then
+    local is_mplus = fixture_mode ~= "non-mplus-dungeon" and fixture_mode ~= "non-mplus-flag"
+    local non_keystone_difficulty = fixture_mode == "non-mplus-dungeon"
+        or fixture_mode == "non-mplus-difficulty"
+    C_LFGList.GetActivityInfoTable = function()
+        if fixture_mode == "unknown-dungeon-metadata" then
+            return { shortName = "Fixture Halls", categoryID = 2, mapID = 1550 }
+        end
+        if fixture_mode == "raid-with-bag" then
+            return { shortName = "Fixture Raid", categoryID = 3, difficultyID = 15 }
+        end
+        return {
+            shortName = "Fixture Halls",
+            categoryID = 2,
+            difficultyID = non_keystone_difficulty and 2 or 8,
+            isMythicPlusActivity = is_mplus,
+            mapID = fixture_mode == "leader-key-generic" and 0 or 1550,
+        }
+    end
+    C_ChallengeMode = {
+        GetMapUIInfo = function(map_id)
+            assert(map_id == 503)
+            if fixture_mode == "leader-key-map-unavailable" then error("map lookup unavailable") end
+            local matches_listing = fixture_mode == "leader-key-match"
+                or fixture_mode == "unknown-dungeon-metadata"
+            local instance_map = matches_listing and 1550 or 1551
+            return "Leader Halls", 503, 1800, nil, 0, instance_map
+        end,
     }
 end
 
@@ -136,7 +173,10 @@ local entry = {
 if fixture_mode == "secret-leader-owned-key" then
     entry.name = "Fixture Halls"
 end
-if fixture_mode == "leader-key" then
+if fixture_mode:match("^leader%-key%-") or fixture_mode == "unknown-dungeon-metadata" then
+    entry.name = "Fixture Halls"
+end
+if fixture_mode == "leader-key" or leader_fallback then
     assert(harness.OnLeaderKeystoneData)(
         17,
         503,

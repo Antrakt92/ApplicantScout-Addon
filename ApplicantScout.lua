@@ -3841,6 +3841,36 @@ local function _ActivityInfoListingName(activityInfo)
     return (fullName ~= "" and fullName) or "?"
 end
 
+entryCreationKeyState.ListingAllowsKeystoneTarget = function(activityInfo)
+    if not activityInfo or SafeNumber(activityInfo.categoryID, 0) ~= 2 then
+        return false
+    end
+    local isMythicPlus = activityInfo.isMythicPlusActivity
+    local flagReadable = not IsSecretValue(isMythicPlus)
+    if flagReadable and isMythicPlus == false then return false end
+    local difficultyID = SafeNumber(activityInfo.difficultyID, 0)
+    return difficultyID == 8 or (difficultyID == 0 and flagReadable and isMythicPlus == true)
+end
+
+entryCreationKeyState.IsGenericKeystoneListing = function(activityInfo, dungeonName)
+    local mapID = SafeNumber(activityInfo.mapID, -1)
+    return mapID == 0 or (mapID < 0 and dungeonName == "Mythic+")
+end
+
+entryCreationKeyState.LeaderKeystoneMatchesListing = function(leaderKeystone, activityInfo, dungeonName)
+    if not leaderKeystone or leaderKeystone.level <= 0 then return false end
+    if entryCreationKeyState.IsGenericKeystoneListing(activityInfo, dungeonName) then
+        return true
+    end
+
+    local mapID = SafeNumber(activityInfo.mapID, 0)
+    local getMapInfo = C_ChallengeMode and C_ChallengeMode.GetMapUIInfo
+    if mapID <= 0 or type(getMapInfo) ~= "function" then return false end
+    -- LibKeystone reports a challenge map ID. Group Finder reports a map ID.
+    local ok, _, _, _, _, _, leaderMapID = pcall(getMapInfo, leaderKeystone.challengeMapID)
+    return ok and SafeNumber(leaderMapID, 0) == mapID
+end
+
 local function _GetOwnedKeystoneListingInfo()
     if not (C_LFGList and C_LFGList.GetOwnedKeystoneActivityAndGroupAndLevel) then
         return 0, 0, 0, nil
@@ -5724,7 +5754,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
             categoryID = math.floor(SafeNumber(activityInfo.categoryID, 0))
             difficultyID = math.floor(SafeNumber(activityInfo.difficultyID, 0))
         end
-        local isMythicPlus = (categoryID == 2)
+        local isMythicPlus = entryCreationKeyState.ListingAllowsKeystoneTarget(activityInfo)
         -- Delves/follower dungeons/scenarios ride the generic non-Mythic+ path
         -- (keyLevel 0); NPC companions occupy no party slots, so the roster ships unchanged.
 
@@ -5742,28 +5772,27 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
                 listingComment,
                 activityInfo
             )
-            local ownedActivityID, _ownedGroupID, ownedLevel, ownedInfo =
-                _GetOwnedKeystoneListingInfo()
-            local shouldUseOwnedKeystone = ownedLevel > 0
-                and ownedActivityID > 0
-                and ownedInfo
-                and entryCreationKeyState.CanUseOwnedKeystoneForListingFallback()
-                and (ownedActivityID == activityID
-                    or dungeonName == "Mythic+"
-                    or dungeonName == "?")
-            if keyLevel == 0 and shouldUseOwnedKeystone then
-                keyLevel = ownedLevel
-            end
-            if shouldUseOwnedKeystone then
-                activityID = ownedActivityID
-                ---@cast ownedInfo table
-                activityInfo = ownedInfo
-                dungeonName = _ActivityInfoListingName(activityInfo)
-                categoryID = math.floor(SafeNumber(activityInfo.categoryID, categoryID))
-                difficultyID = math.floor(SafeNumber(activityInfo.difficultyID, difficultyID))
-            end
-            if leaderKeystone and leaderKeystone.level > 0 then
-                keyLevel = leaderKeystone.level
+            if keyLevel == 0 then
+                local ownedActivityID, _ownedGroupID, ownedLevel, ownedInfo =
+                    _GetOwnedKeystoneListingInfo()
+                local shouldUseOwnedKeystone = ownedLevel > 0
+                    and ownedActivityID > 0
+                    and ownedInfo
+                    and entryCreationKeyState.CanUseOwnedKeystoneForListingFallback()
+                    and (ownedActivityID == activityID
+                        or entryCreationKeyState.IsGenericKeystoneListing(activityInfo, dungeonName))
+                if shouldUseOwnedKeystone then
+                    keyLevel = ownedLevel
+                    activityID = ownedActivityID
+                    ---@cast ownedInfo table
+                    dungeonName = _ActivityInfoListingName(ownedInfo)
+                    categoryID = math.floor(SafeNumber(ownedInfo.categoryID, categoryID))
+                    difficultyID = math.floor(SafeNumber(ownedInfo.difficultyID, difficultyID))
+                elseif leaderKeystone and entryCreationKeyState.LeaderKeystoneMatchesListing(
+                    leaderKeystone, activityInfo, dungeonName
+                ) then
+                    keyLevel = leaderKeystone.level
+                end
             end
         end
         listingActivityIDForRio = activityID
@@ -5832,7 +5861,7 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
         table.insert(leaderQuietOut, string.char(_ClampUInt8(leaderKeystone.level)))
         table.insert(leaderQuietOut, _Uint16BE(leaderKeystone.challengeMapID))
         _PackCleanLenStr(leaderQuietOut, leaderKeystone.playerName)
-        if listingKeyLevelForRio <= 0 then
+        if not cleanEntry then
             listingKeyLevelForRio = leaderKeystone.level
         end
         table.insert(out, string.char(1))
@@ -8870,23 +8899,33 @@ entryCreationKeyState.PrintTroubleshootingStatus = function(output)
         print("  ownedKeystone.groupID: " .. tostring(ownedGroupID))
         print("  ownedKeystone.level: " .. tostring(ownedLevel))
         print("  ownedKeystone.activityName: " .. _ActivityInfoListingName(ownedInfo))
-        local statusUseOwned = ownedLevel > 0
-            and ownedActivityID > 0
-            and ownedInfo
-            and entryCreationKeyState.CanUseOwnedKeystoneForListingFallback()
-            and (ownedActivityID == cleanActivityID
-                or statusDungeonName == "Mythic+"
-                or statusDungeonName == "?")
-        print("  ownedKeystone.usedForListing: " .. tostring(statusUseOwned))
-        local statusDerivedKeyLevel = _GetListingKeystoneLevel(
-            cleanActivityID,
-            cleanQuestID,
-            statusListingName,
-            statusListingComment,
-            statusActivityInfo)
-        if statusDerivedKeyLevel == 0 and statusUseOwned then
-            statusDerivedKeyLevel = ownedLevel
+        local statusDerivedKeyLevel, statusUseOwned = 0, false
+        if entryCreationKeyState.ListingAllowsKeystoneTarget(statusActivityInfo) then
+            statusDerivedKeyLevel = _GetListingKeystoneLevel(
+                cleanActivityID,
+                cleanQuestID,
+                statusListingName,
+                statusListingComment,
+                statusActivityInfo)
+            if statusDerivedKeyLevel == 0 then
+                statusUseOwned = ownedLevel > 0
+                    and ownedActivityID > 0
+                    and ownedInfo ~= nil
+                    and entryCreationKeyState.CanUseOwnedKeystoneForListingFallback()
+                    and (ownedActivityID == cleanActivityID
+                        or entryCreationKeyState.IsGenericKeystoneListing(
+                            statusActivityInfo, statusDungeonName))
+                local leaderKeystone = entryCreationKeyState.ResolveLeaderKeystoneContext()
+                if statusUseOwned then
+                    statusDerivedKeyLevel = ownedLevel
+                elseif leaderKeystone and entryCreationKeyState.LeaderKeystoneMatchesListing(
+                    leaderKeystone, statusActivityInfo, statusDungeonName
+                ) then
+                    statusDerivedKeyLevel = leaderKeystone.level
+                end
+            end
         end
+        print("  ownedKeystone.usedForListing: " .. tostring(statusUseOwned))
         print("  derived keyLevel: "
               .. tostring(statusDerivedKeyLevel))
     else

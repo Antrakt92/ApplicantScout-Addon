@@ -5123,6 +5123,36 @@ def test_lua_producer_generates_committed_aps1_v9_golden_fixture(
 
 
 @pytest.mark.requires_companion
+@pytest.mark.parametrize(
+    ("mode", "expected_level"),
+    [
+        ("leader-key", 16),
+        ("leader-key-match", 17),
+        ("leader-key-mismatch", 0),
+        ("leader-key-generic", 17),
+        ("leader-key-map-unavailable", 0),
+        ("non-mplus-dungeon", 0),
+        ("non-mplus-flag", 0),
+        ("non-mplus-difficulty", 0),
+        ("unknown-dungeon-metadata", 0),
+        ("raid-with-bag", 0),
+    ],
+)
+def test_lua_listing_key_is_distinct_from_leader_bag_key(
+    pytestconfig, mode, expected_level
+):
+    payload = bytes.fromhex(_run_lua_fixture(pytestconfig, mode))
+    snapshot, error = _companion_payload_parser(pytestconfig)(payload)
+
+    assert error is None
+    assert snapshot is not None
+    assert snapshot.listing is not None
+    assert snapshot.listing.key_level == expected_level
+    assert snapshot.leader_key is not None
+    assert snapshot.leader_key.key_level == 17
+
+
+@pytest.mark.requires_companion
 def test_lua_producer_omits_fallback_placeholder_roster_identity(pytestconfig):
     generated = "".join(
         _run_lua_fixture(pytestconfig, "placeholder-roster").split()
@@ -5298,15 +5328,15 @@ def test_listing_key_level_uses_owned_keystone_only_after_listing_match_guard():
         "local function _GetListingKeystoneLevel(activityID, questID, listingName, listingComment, activityInfo)"
     )
     assert "ownedLevel" not in helper_body
+    fallback_gate_idx = payload_body.index("if keyLevel == 0 then")
     guard_idx = payload_body.index("local shouldUseOwnedKeystone = ownedLevel > 0")
-    fallback_idx = payload_body.index("if keyLevel == 0 and shouldUseOwnedKeystone then")
-    assert guard_idx < fallback_idx
+    fallback_idx = payload_body.index("if shouldUseOwnedKeystone then")
+    assert fallback_gate_idx < guard_idx < fallback_idx
     assert "keyLevel = ownedLevel" in payload_body[fallback_idx:]
-    status_guard_idx = status_body.index("local statusUseOwned = ownedLevel > 0")
-    status_fallback_idx = status_body.index(
-        "if statusDerivedKeyLevel == 0 and statusUseOwned then"
-    )
-    assert status_guard_idx < status_fallback_idx
+    status_gate_idx = status_body.index("if statusDerivedKeyLevel == 0 then")
+    status_guard_idx = status_body.index("statusUseOwned = ownedLevel > 0")
+    status_fallback_idx = status_body.index("if statusUseOwned then")
+    assert status_gate_idx < status_guard_idx < status_fallback_idx
     assert "statusDerivedKeyLevel = ownedLevel" in status_body[status_fallback_idx:]
 
 
