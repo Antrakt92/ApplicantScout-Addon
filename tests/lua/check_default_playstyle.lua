@@ -72,6 +72,17 @@ local panel = {
 
 if scenario == "edit-mode" then
     panel.editMode = true
+elseif scenario == "edit-mode-unavailable" then
+    LFGListEntryCreation_IsEditMode = function()
+        error("edit mode is unavailable")
+    end
+elseif scenario == "edit-mode-restricted" then
+    local isSecretValue = issecretvalue
+    issecretvalue = function(value)
+        return value == false or isSecretValue and isSecretValue(value) or false
+    end
+elseif scenario == "native-selector-noop" then
+    LFGListEntryCreation_OnPlayStyleSelectedInternal = function() end
 elseif scenario == "non-mplus" then
     panel.selectedActivity = 200
 elseif scenario == "missing-enum" then
@@ -94,6 +105,14 @@ elseif scenario == "disabled-token" then
 elseif scenario == "edit-mode" then
     assert_equal("applied", applied, false)
     assert_nil("generalPlaystyle", panel.generalPlaystyle)
+elseif scenario == "edit-mode-unavailable" or scenario == "edit-mode-restricted" then
+    assert_equal("applied", applied, false)
+    assert_nil("generalPlaystyle", panel.generalPlaystyle)
+    assert_equal("secureCallCount", secureCallCount, 0)
+elseif scenario == "native-selector-noop" then
+    assert_equal("applied", applied, false)
+    assert_nil("generalPlaystyle", panel.generalPlaystyle)
+    assert_equal("secureCallCount", secureCallCount, 1)
 elseif scenario == "non-mplus" then
     assert_equal("applied", applied, false)
     assert_nil("generalPlaystyle", panel.generalPlaystyle)

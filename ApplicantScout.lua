@@ -8006,8 +8006,11 @@ _MaybeAutoSelectDefaultPlaystyle = function(panel, reason)
 
     if not panel then return false end
 
-    local isEditMode = _G.LFGListEntryCreation_IsEditMode
-    if type(isEditMode) ~= "function" or isEditMode(panel) then return false end
+    if entryCreationKeyState.CleanUnitAPIBoolean(
+        _G.LFGListEntryCreation_IsEditMode, panel
+    ) ~= false then
+        return false
+    end
 
     local activityID = panel.selectedActivity
     if IsSecretValue(activityID) or activityID == nil then return false end
@@ -8042,6 +8045,10 @@ _MaybeAutoSelectDefaultPlaystyle = function(panel, reason)
             print("|cff999999[APS-debug]|r LFG default playstyle failed: "
                   .. tostring(err))
         end
+        return false
+    end
+    local appliedPlaystyle = panel.generalPlaystyle
+    if IsSecretValue(appliedPlaystyle) or appliedPlaystyle ~= configuredPlaystyle then
         return false
     end
 

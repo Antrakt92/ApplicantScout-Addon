@@ -4,6 +4,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LUA_DB_CHECK = REPO_ROOT / "tests" / "lua" / "check_db_boolean_normalization.lua"
@@ -83,3 +85,11 @@ def test_mplus_default_playstyle_leaves_ineligible_forms_unchanged(pytestconfig)
     assert _run_default_playstyle_check(pytestconfig, "non-mplus") == "ok non-mplus"
     assert _run_default_playstyle_check(pytestconfig, "missing-enum") == "ok missing-enum"
     assert _run_default_playstyle_check(pytestconfig, "existing-selection") == "ok existing-selection"
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["edit-mode-unavailable", "edit-mode-restricted", "native-selector-noop"],
+)
+def test_mplus_default_playstyle_fails_closed_on_inconclusive_form_state(pytestconfig, scenario):
+    assert _run_default_playstyle_check(pytestconfig, scenario) == f"ok {scenario}"
