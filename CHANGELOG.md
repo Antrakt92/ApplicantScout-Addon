@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Keep the posted Mythic+ level when the group leader holds a different key.
+- Exclude non-keystone dungeon listings from Mythic+ targeting.
+- Apply the default Group Finder playstyle only when the new-listing form can confirm the selection.
+
 ## 0.14.10 - 05-Nov-2026 — Window controls and maintenance
 
 Paired release with ApplicantScout Companion `0.24.8`.
