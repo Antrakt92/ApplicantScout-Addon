@@ -65,8 +65,9 @@ alone does not display them.*
 - **Past seasons:** available local RaiderIO ratings, with the highest shown
   below the current rating when it is at least as high. Missing history is hidden.
 
-The addon can default new M+ listings to Competitive. Choose another playstyle
-or turn it off in settings. Auto Hi greetings are optional.
+On a fresh install, new Mythic+ listings default to **Competitive**. Choose
+another playstyle or select **Off** in the addon settings. **Auto Hi** greetings
+are off until configured.
 
 ## Quick Setup
 
@@ -96,7 +97,7 @@ link, press **Ctrl+C**, then paste it into your browser outside the game.
    or download the packaged ZIP from the
    [latest addon release](https://github.com/Antrakt92/ApplicantScout-Addon/releases/latest).
 2. Install the [Windows companion](https://github.com/Antrakt92/ApplicantScout-Companion/releases/latest)
-   using `ApplicantScoutCompanionSetup-*.exe`.
+   using **Windows installer** near the top of the release page.
 3. Follow the [setup guide](https://github.com/Antrakt92/ApplicantScout-Companion/blob/main/docs/GETTING_STARTED.md)
    to create a free Warcraft Logs API client. Enter its Client ID/Secret in
    companion Settings and use **Test WCL** to check them.
