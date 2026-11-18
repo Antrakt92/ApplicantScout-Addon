@@ -1,10 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.14.11 - 18-Nov-2026 — Faster party updates and more reliable captures
 
-- Keep the posted Mythic+ level when the group leader holds a different key.
-- Exclude non-keystone dungeon listings from Mythic+ targeting.
-- Apply the default Group Finder playstyle only when the new-listing form can confirm the selection.
+Paired release with ApplicantScout Companion `0.24.9`.
+
+### Addon
+
+- Show party members sooner after joining a group. Specializations and item levels fill in as WoW returns them.
+- Keep the posted Mythic+ level when the leader holds a different key, and exclude ordinary dungeon listings from Mythic+ targeting.
+- Apply the default Group Finder playstyle only when the new-listing form can verify the selection.
+- Keep Auto Hi from greeting the wrong player or repeating a greeting while the party roster loads.
+- Restore screenshot quality and format reliably after capture. Keep transient or conflicting roster data from replacing a valid group or applicant list.
+
+### Companion
+
+- Recover skipped or replaced screenshots and retain newer multipart captures when file timestamps move backwards.
+- Keep live overlay updates and screenshot monitoring working through character changes, path edits and watcher recovery.
+- Respect Warcraft Logs retry delays and keep authentication error details out of normal logs.
+- Ship a QR-only ZBar decoder on Windows. The screenshot and QR data format remains compatible with previous supported versions.
 
 ## 0.14.10 - 05-Nov-2026 — Window controls and maintenance
 
