@@ -3098,24 +3098,40 @@ entryCreationKeyState.ShouldPrintScreenshotCVarWarn = function()
     return true
 end
 
+entryCreationKeyState.NormalizeScreenshotQuality = function(value)
+    local quality = SafeNumber(value, -1)
+    if quality >= 1 and quality <= 10 and quality == math.floor(quality) then
+        return quality
+    end
+end
+
+entryCreationKeyState.NormalizeScreenshotFormat = function(value)
+    local format = SafeEnumKey(value, "")
+    if type(format) ~= "string" then return nil end
+    format = format:lower()
+    if format == "jpg" or format == "jpeg" or format == "png" or format == "tga" then
+        return format
+    end
+end
+
 -- Lease screenshot format. Reed-Solomon ECC handles JPG quantization noise on
 -- 3-px QR modules but tolerance shrinks vs 4 px — bump quality floor to 8
 -- (~75% JPG quality) for safety with the smaller modules. SetCVar persists in
 -- Config.wtf, so every capture restores the prior values after Screenshot().
 local function EnsureScreenshotCVars(quiet)
-    if not (SetCVar and GetCVar) then return false end
-    local q = tonumber(GetCVar("screenshotQuality")) or 0
+    if not (SetCVar and GetCVar and ApplicantScoutDB) then return false end
+    local q = entryCreationKeyState.NormalizeScreenshotQuality(GetCVar("screenshotQuality"))
+    local currentFormat = entryCreationKeyState.NormalizeScreenshotFormat(GetCVar("screenshotFormat"))
+    -- Read both original values before writing either so the lease is reversible.
+    if not (q and currentFormat) then return false end
+    -- Outside the forced values, a verified read supersedes any older lease.
     if q < 8 then
-        -- Stash original ONCE — if user already disabled+enabled this would
-        -- otherwise overwrite our recorded prior value with our own escalated 8.
-        if ApplicantScoutDB and ApplicantScoutDB.priorScreenshotQuality == nil then
-            ApplicantScoutDB.priorScreenshotQuality = q
-        end
+        ApplicantScoutDB.priorScreenshotQuality = q
         SetCVar("screenshotQuality", "8")
         -- Verify the write took effect — CVar can be locked / addon load order
         -- can interfere. If readback diverges, JPG quality could affect
         -- decoder reliability silently; loud warn lets user notice.
-        local verify = tonumber(GetCVar("screenshotQuality")) or 0
+        local verify = entryCreationKeyState.NormalizeScreenshotQuality(GetCVar("screenshotQuality")) or 0
         if verify < 8 then
             if APSPrint and entryCreationKeyState.ShouldPrintScreenshotCVarWarn() then
                 APSPrint("WARN: screenshotQuality SetCVar didn't stick (read back " ..
@@ -3125,18 +3141,17 @@ local function EnsureScreenshotCVars(quiet)
             APSPrint("set screenshotQuality=8 (was " .. q ..
                      ") for QR-decode reliability with 3-px modules")
         end
+    elseif q > 8 then
+        ApplicantScoutDB.priorScreenshotQuality = nil
     end
-    local currentFormat = tostring(GetCVar("screenshotFormat") or "")
-    if currentFormat:lower() ~= "jpg" then
-        if ApplicantScoutDB and ApplicantScoutDB.priorScreenshotFormat == nil then
-            ApplicantScoutDB.priorScreenshotFormat = currentFormat
-        end
+    if currentFormat ~= "jpg" then
+        ApplicantScoutDB.priorScreenshotFormat = currentFormat
         SetCVar("screenshotFormat", "jpg")
-        local verifyFormat = tostring(GetCVar("screenshotFormat") or "")
-        if verifyFormat:lower() ~= "jpg" then
+        local verifyFormat = entryCreationKeyState.NormalizeScreenshotFormat(GetCVar("screenshotFormat"))
+        if verifyFormat ~= "jpg" then
             if APSPrint and entryCreationKeyState.ShouldPrintScreenshotCVarWarn() then
                 APSPrint("WARN: screenshotFormat SetCVar didn't stick (read back " ..
-                         verifyFormat .. "); QR transport expects JPG screenshots"
+                         (verifyFormat or "unavailable") .. "); QR transport expects JPG screenshots"
                          .. " — set screenshotFormat back to jpg (another addon may force it); see /apscout setup")
             end
         elseif APSPrint and not quiet then
@@ -3146,11 +3161,9 @@ local function EnsureScreenshotCVars(quiet)
     end
     -- A non-throwing SetCVar can still be ignored. Only verified settings may
     -- reach Screenshot(), otherwise an unreadable capture could commit dedup.
-    local finalQuality = SafeNumber(GetCVar("screenshotQuality"), -1)
-    local finalFormat = SafeEnumKey(GetCVar("screenshotFormat"), "")
-    return finalQuality >= 8 and finalQuality <= 10
-        and finalQuality == math.floor(finalQuality)
-        and type(finalFormat) == "string" and finalFormat:lower() == "jpg"
+    local finalQuality = entryCreationKeyState.NormalizeScreenshotQuality(GetCVar("screenshotQuality"))
+    local finalFormat = entryCreationKeyState.NormalizeScreenshotFormat(GetCVar("screenshotFormat"))
+    return finalQuality ~= nil and finalQuality >= 8 and finalFormat == "jpg"
 end
 
 -- Restore the user's pre-capture screenshot CVars. Each stash is restored
@@ -3163,27 +3176,9 @@ local function RestoreScreenshotCVars(quiet)
 
     -- Keep the persisted value until readback confirms restoration. A failed
     -- read/write must not prevent the other CVar from recovering independently.
-    local function RestoreOwnedValue(name, prior, forcedValue)
+    local function RestoreOwnedValue(name, normalize, prior, forcedValue)
         local ok, restored = pcall(function()
-            local numeric = type(prior) == "number"
-            local function ReadValue()
-                local value = GetCVar(name)
-                if numeric then
-                    value = SafeNumber(value, -1)
-                    if value >= 1 and value <= 10 and value == math.floor(value) then
-                        return value
-                    end
-                else
-                    value = SafeEnumKey(value, "")
-                    if type(value) ~= "string" then return nil end
-                    value = value:lower()
-                    if value == "jpg" or value == "jpeg" or value == "png" or value == "tga" then
-                        return value
-                    end
-                end
-                return nil
-            end
-            local current = ReadValue()
+            local current = normalize(GetCVar(name))
             if current == nil then return false end
             if current ~= forcedValue then
                 if APSPrint and not quiet then
@@ -3193,7 +3188,7 @@ local function RestoreScreenshotCVars(quiet)
                 return true
             end
             SetCVar(name, tostring(prior))
-            if ReadValue() ~= prior then return false end
+            if normalize(GetCVar(name)) ~= prior then return false end
             if APSPrint and not quiet then
                 APSPrint("restored " .. name .. "=" .. prior .. " (pre-ApplicantScout value)")
             end
@@ -3203,23 +3198,17 @@ local function RestoreScreenshotCVars(quiet)
     end
 
     if ApplicantScoutDB.priorScreenshotQuality ~= nil then
-        local prior = SafeNumber(ApplicantScoutDB.priorScreenshotQuality, -1)
-        local valid = prior >= 1 and prior <= 10 and prior == math.floor(prior)
-        if not valid or RestoreOwnedValue("screenshotQuality", prior, 8) then
+        local normalize = entryCreationKeyState.NormalizeScreenshotQuality
+        local prior = normalize(ApplicantScoutDB.priorScreenshotQuality)
+        if not prior or RestoreOwnedValue("screenshotQuality", normalize, prior, 8) then
             ApplicantScoutDB.priorScreenshotQuality = nil
         end
     end
 
     if ApplicantScoutDB.priorScreenshotFormat ~= nil then
-        local rawPriorFormat = ApplicantScoutDB.priorScreenshotFormat
-        local priorFormat = type(rawPriorFormat) == "string"
-            and rawPriorFormat:lower() or ""
-        local validPriorFormat = priorFormat == "jpg"
-            or priorFormat == "jpeg"
-            or priorFormat == "png"
-            or priorFormat == "tga"
-        if not validPriorFormat
-           or RestoreOwnedValue("screenshotFormat", priorFormat, "jpg") then
+        local normalize = entryCreationKeyState.NormalizeScreenshotFormat
+        local prior = normalize(ApplicantScoutDB.priorScreenshotFormat)
+        if not prior or RestoreOwnedValue("screenshotFormat", normalize, prior, "jpg") then
             ApplicantScoutDB.priorScreenshotFormat = nil
         end
     end

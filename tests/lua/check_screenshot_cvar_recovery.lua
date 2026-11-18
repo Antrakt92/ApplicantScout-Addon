@@ -33,6 +33,49 @@ local harness = env.load_addon()
 if mode == "restore-failure" then
     local normalSetCVar = SetCVar
     local normalGetCVar = GetCVar
+    local leaseGeneration
+    -- A transient first read must not change a preference we cannot restore.
+    for _, unreadable in ipairs({"screenshotQuality", "screenshotFormat"}) do
+        cvars.screenshotQuality = "3"
+        cvars.screenshotFormat = "png"
+        writes = {}
+        local firstRead = true
+        GetCVar = function(name)
+            if name == unreadable and firstRead then
+                firstRead = false
+                return nil
+            end
+            return normalGetCVar(name)
+        end
+        local ready
+        leaseGeneration, ready = harness.AcquireScreenshotCVarLease()
+        assert(not ready and #writes == 0,
+            "capture changed settings after an unreadable prior " .. unreadable)
+        assert(cvars.screenshotQuality == "3" and cvars.screenshotFormat == "png",
+            "capture lost an unreadable prior preference")
+    end
+    GetCVar = normalGetCVar
+
+    -- A retry can acquire a new lease after the previous release failed.
+    -- Any clean preference outside the forced values is the current owner's.
+    cvars.screenshotQuality = "3"
+    cvars.screenshotFormat = "png"
+    local ready
+    leaseGeneration, ready = harness.AcquireScreenshotCVarLease()
+    assert(ready, "initial capture lease failed")
+    SetCVar = function() end
+    harness.ReleaseScreenshotCVarLease(leaseGeneration, 0)
+    assert(ApplicantScoutDB.priorScreenshotQuality == 3
+        and ApplicantScoutDB.priorScreenshotFormat == "png", "failed release lost its stash")
+    SetCVar = normalSetCVar
+    cvars.screenshotQuality = "5"
+    cvars.screenshotFormat = "tga"
+    leaseGeneration, ready = harness.AcquireScreenshotCVarLease()
+    assert(ready, "replacement capture lease failed")
+    harness.ReleaseScreenshotCVarLease(leaseGeneration, 0)
+    assert(cvars.screenshotQuality == "5" and cvars.screenshotFormat == "tga",
+        "replacement capture rolled back the user's new screenshot preferences")
+
     for _, failedName in ipairs({ "screenshotQuality", "screenshotFormat" }) do
         for _, failure in ipairs({ "ignored-write", "write-error", "read-error", "nil-read",
             "malformed-read", "boolean-read", "table-read", "fractional-read", "nonfinite-read" }) do
@@ -59,7 +102,7 @@ if mode == "restore-failure" then
                 if name == failedName and failure == "nonfinite-read" then return math.huge end
                 return normalGetCVar(name)
             end
-            local ok = pcall(harness.ReleaseScreenshotCVarLease, 0, 0)
+            local ok = pcall(harness.ReleaseScreenshotCVarLease, leaseGeneration, 0)
             assert(ok, "one failed CVar restoration interrupted independent cleanup")
             local failedStash = failedName == "screenshotQuality"
                 and "priorScreenshotQuality" or "priorScreenshotFormat"
@@ -71,7 +114,7 @@ if mode == "restore-failure" then
                 "failed restore blocked the other screenshot CVar")
             SetCVar = normalSetCVar
             GetCVar = normalGetCVar
-            harness.ReleaseScreenshotCVarLease(0, 0)
+            harness.ReleaseScreenshotCVarLease(leaseGeneration, 0)
             assert(cvars.screenshotQuality == "3" and cvars.screenshotFormat == "png",
                 "later recovery did not restore the original screenshot preferences")
             assert(ApplicantScoutDB.priorScreenshotQuality == nil
