@@ -4251,7 +4251,7 @@ entryCreationKeyState.ReconcileRosterInspectMembership = function()
     _ForEachRosterUnit(function(unit)
         visitedCount = visitedCount + 1
         local guid = entryCreationKeyState.UnitGUIDForRoster(unit)
-        if guid == "" then
+        if guid == "" or currentGUIDs[guid] then
             complete = false
         else
             currentGUIDs[guid] = true
@@ -4924,6 +4924,7 @@ local function _BuildRosterRow(unit, unitIndex, subgroup, isRaid, fallbackRealm)
         ilvl = _UnitItemLevelForRoster(unit, guid, isSelf),
         role = ROLE_NAME_TO_BYTE[roleToken] or 2,
         name = name,
+        guid = guid,
     }
 end
 
@@ -5520,7 +5521,7 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
     local groupCount = entryCreationKeyState.CleanGroupMemberCount()
     local inRaid = entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid)
     local expectedRosterCount = 0
-    if groupCount == nil or inRaid == nil then
+    if groupCount == nil or inRaid == nil or (not inRaid and groupCount > 5) then
         return "", 0, "", false, false, true
     end
     if groupCount <= 0 then
@@ -5566,7 +5567,6 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
     local placeholderSkipped = 0
     if inRaid then
         local raidDifficultyFlags = entryCreationKeyState.RaidDifficultyFlagsForRoster()
-        if groupCount > 40 then groupCount = 40 end
         expectedRosterCount = groupCount
         for i = 1, groupCount do
             local row, rowReason = _BuildRosterRow(
@@ -5585,7 +5585,6 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
         end
     else
         expectedRosterCount = groupCount
-        if expectedRosterCount > 5 then expectedRosterCount = 5 end
         local playerRow, playerReason = _BuildRosterRow("player", 1, 1, false, rosterPlayerRealm)
         if playerRow then
             table.insert(rows, playerRow)
@@ -5610,7 +5609,13 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
         return a.unitIndex < b.unitIndex
     end)
 
+    local seenRosterGUIDs, seenRosterNames = {}, {}
     for _, row in ipairs(rows) do
+        if seenRosterNames[row.name] or seenRosterGUIDs[row.guid] then
+            return "", 0, "", false, inRaid, true
+        end
+        seenRosterNames[row.name] = true
+        if row.guid ~= "" then seenRosterGUIDs[row.guid] = true end
         local rioSummary = _GetRaiderIOMPlusSummaryForCleanName(
             _RaiderIOProfileLookupNameFromCleanName(row.name, rosterPlayerRealm),
             listingActivityIDForRio,
@@ -5631,7 +5636,7 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
         if row.specID <= 0 then rosterQuietHasUnknownSpec = true end
     end
 
-    local rosterIncomplete = emittedCount < expectedRosterCount
+    local rosterIncomplete = emittedCount ~= expectedRosterCount
         or (not inRaid and rosterQuietHasUnknownSpec)
     -- SYNC: the quiet signature intentionally covers the exact companion-visible
     -- roster block. Reuse the serialized bytes so the 0.5s transport poll does
@@ -5861,14 +5866,15 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
     local leaderQuietSignature = table.concat(leaderQuietOut)
 
     -- Applicants — filter out DEAD_STATUSES + sort by ID for hash stability
-    local validAppIDs, validAppAPITokens = {}, {}
+    local validAppIDs, validAppAPITokens, seenApplicantIDs = {}, {}, {}
     local validAppMemberCounts, validAppOrder = {}, {}
     local applicantsIncomplete = applicantsUnavailable
     local expectedApplicantMemberCount = 0
     local cleanApplicantIDs = SafeTable(applicantIDs) or {}
     for _, rawID in ipairs(cleanApplicantIDs) do
         local id, info, apiID = entryCreationKeyState.GetApplicantInfoForTransport(rawID)
-        if id and info then
+        if id and info and not seenApplicantIDs[id] then
+            seenApplicantIDs[id] = true
             local status = _GetApplicantApplicationStatus(info)
             if type(status) ~= "string" or status == "" then
                 -- Unknown status cannot establish that an applicant is still

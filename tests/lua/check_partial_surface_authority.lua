@@ -1,5 +1,7 @@
 local env = assert(dofile("tests/lua/appscout_fixture_env.lua"))
 local original_get_inspect_specialization = GetInspectSpecialization
+local original_unit_guid = UnitGUID
+local original_unit_full_name = UnitFullName
 
 GetNumGroupMembers = function() return 0 end
 IsInRaid = function() return false end
@@ -47,6 +49,12 @@ local complete = assert(harness.BuildPayload(entry, { 42 }, false))
 assert(wire_version(complete) == 0x09, "complete applicants must remain v9")
 assert(flags(complete) == 0, "complete applicants unexpectedly marked partial")
 assert(complete:find("Applicant42Member2-Realm", 1, true), "complete member missing")
+
+local duplicate_applicant = assert(harness.BuildPayload(entry, { 42, 42 }, false))
+assert(wire_version(duplicate_applicant) == 0x0B and flags(duplicate_applicant) == 0x08,
+    "duplicate applicant identity was published as authoritative")
+assert(not duplicate_applicant:find("Applicant42Member2-Realm", 1, true),
+    "duplicate applicant domain leaked member rows")
 
 install_applicant(3, 2)
 local missing_middle = assert(harness.BuildPayload(entry, { 42 }, false))
@@ -150,6 +158,32 @@ install_applicant(1)
 local lfg_and_roster = assert(harness.BuildPayload(entry, {}, false, true))
 assert(wire_version(lfg_and_roster) == 0x09, "LFG/roster partial must remain v9")
 assert(flags(lfg_and_roster) == 0x06, "combined LFG/roster flags missing")
+
+GetInspectSpecialization = original_get_inspect_specialization
+UnitGUID = function(unit)
+    return original_unit_guid(unit == "party2" and "party1" or unit)
+end
+local duplicate_roster = assert(harness.BuildPayload(entry, { 42 }, false))
+assert(flags(duplicate_roster) == 0x04,
+    "duplicate roster identity was published as authoritative")
+assert(not duplicate_roster:find("Healer-Realm", 1, true),
+    "duplicate roster domain leaked member rows")
+UnitGUID = original_unit_guid
+UnitFullName = function(unit)
+    return original_unit_full_name(unit == "party2" and "party1" or unit)
+end
+local duplicate_roster_name = assert(harness.BuildPayload(entry, { 42 }, false))
+assert(flags(duplicate_roster_name) == 0x04,
+    "duplicate roster display identity was published as authoritative")
+UnitFullName = original_unit_full_name
+GetNumGroupMembers = function() return 2 end
+local excess_roster = assert(harness.BuildPayload(entry, { 42 }, false))
+assert(flags(excess_roster) == 0x04,
+    "roster with extra rows was published as authoritative")
+GetNumGroupMembers = function() return 6 end
+local raid_sized_party = assert(harness.BuildPayload(entry, { 42 }, false))
+assert(flags(raid_sized_party) == 0x04,
+    "roster with an inconsistent party size was published as authoritative")
 
 local terminal = assert(harness.BuildPayload(entry, nil, true, true, true))
 assert(wire_version(terminal) == 0x09, "terminal clear must retain v9")

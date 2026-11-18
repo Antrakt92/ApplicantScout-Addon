@@ -1463,7 +1463,7 @@ def test_roster_payload_rows_skip_solo_player_when_not_grouped():
     group_idx = roster_body.index(
         "local groupCount = entryCreationKeyState.CleanGroupMemberCount()"
     )
-    unknown_guard_idx = roster_body.index("if groupCount == nil or inRaid == nil then")
+    unknown_guard_idx = roster_body.index("if groupCount == nil or inRaid == nil")
     solo_guard_idx = roster_body.index("if groupCount <= 0 then")
     player_idx = roster_body.index('_BuildRosterRow("player", 1, 1, false, rosterPlayerRealm)')
 
@@ -1632,7 +1632,7 @@ def test_payload_v7_appends_leader_keystone_before_applicants():
     )
     pack_idx = payload_body.index("leaderKeystone.challengeMapID")
     applicants_idx = payload_body.index(
-        "local validAppIDs, validAppAPITokens = {}, {}"
+        "local validAppIDs, validAppAPITokens"
     )
     assert leader_idx < pack_idx < applicants_idx
     assert "string.char(_ClampUInt8(leaderKeystone.level))" in payload_body
@@ -2570,7 +2570,7 @@ def test_roster_payload_marks_group_snapshot_incomplete_when_expected_rows_are_m
     assert "local expectedRosterCount = 0" in roster_body
     assert "expectedRosterCount = groupCount" in roster_body
     assert "expectedRosterCount = expectedRosterCount - placeholderSkipped" in roster_body
-    assert "local rosterIncomplete = emittedCount < expectedRosterCount" in roster_body
+    assert "local rosterIncomplete = emittedCount ~= expectedRosterCount" in roster_body
     assert "rosterQuietHasUnknownSpec, inRaid, rosterIncomplete" in roster_body
     assert "entryCreationKeyState.lastPayloadRosterIncomplete = rosterIncomplete" in (
         payload_body
