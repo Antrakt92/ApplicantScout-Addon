@@ -177,7 +177,6 @@ for _, hook in ipairs({
     "AutoHiGroupMemberCount",
     "IsGroupedForAutoHi",
     "IsPartyForAutoHiNewMembers",
-    "IsPartyContextForAutoHiNewMembers",
     "CollectAutoHiPartyMemberGUIDs",
     "ScheduleAutoHiIfGroupJoined",
     "ToggleSettingsPanel",
@@ -214,10 +213,10 @@ raidBehavior = "false"
 assert_equal("clean auto-hi count", autoHiCount(), 3)
 assert_equal("clean grouped for auto-hi", autoHiFlag(harness.IsGroupedForAutoHi), true)
 assert_equal("clean party for new members", autoHiFlag(harness.IsPartyForAutoHiNewMembers), true)
-assert_equal("clean party context", autoHiFlag(harness.IsPartyContextForAutoHiNewMembers), true)
 do
-    local ok, guids, complete = pcall(harness.CollectAutoHiPartyMemberGUIDs)
+    local ok, guids, complete, isParty = pcall(harness.CollectAutoHiPartyMemberGUIDs)
     if not ok then fail("party GUID collect propagated a group API failure") end
+    assert_equal("clean party context", isParty, true)
     assert_equal("clean party sample complete", complete, true)
     assert_equal("clean party sample non-empty", next(guids) ~= nil, true)
 end
@@ -227,10 +226,10 @@ groupCountBehavior, groupCountValue = "clean", 8
 raidBehavior = "true"
 assert_equal("raid grouped for auto-hi", autoHiFlag(harness.IsGroupedForAutoHi), false)
 assert_equal("raid party for new members", autoHiFlag(harness.IsPartyForAutoHiNewMembers), false)
-assert_equal("raid party context", autoHiFlag(harness.IsPartyContextForAutoHiNewMembers), false)
 do
-    local ok, _, complete = pcall(harness.CollectAutoHiPartyMemberGUIDs)
+    local ok, _, complete, isParty = pcall(harness.CollectAutoHiPartyMemberGUIDs)
     if not ok then fail("raid GUID collect propagated a group API failure") end
+    assert_equal("raid party context", isParty, false)
     assert_equal("raid party sample complete", complete, false)
 end
 
@@ -241,10 +240,10 @@ for _, countBehavior in ipairs({ "secret", "error", "nil" }) do
     assert_equal("unknown size count (" .. countBehavior .. ")", autoHiCount(), nil)
     assert_equal("unknown size grouped (" .. countBehavior .. ")", autoHiFlag(harness.IsGroupedForAutoHi), false)
     assert_equal("unknown size party (" .. countBehavior .. ")", autoHiFlag(harness.IsPartyForAutoHiNewMembers), false)
-    assert_equal("unknown size context (" .. countBehavior .. ")", autoHiFlag(harness.IsPartyContextForAutoHiNewMembers), false)
     do
-        local ok, _, complete = pcall(harness.CollectAutoHiPartyMemberGUIDs)
+        local ok, _, complete, isParty = pcall(harness.CollectAutoHiPartyMemberGUIDs)
         if not ok then fail("unknown-size GUID collect raised: " .. countBehavior) end
+        assert_equal("unknown size context (" .. countBehavior .. ")", isParty, nil)
         assert_equal("unknown-size sample complete (" .. countBehavior .. ")", complete, false)
     end
 end
@@ -253,7 +252,10 @@ for _, badRaid in ipairs({ "secret", "error", "nil" }) do
     raidBehavior = badRaid
     assert_equal("unknown raid grouped (" .. badRaid .. ")", autoHiFlag(harness.IsGroupedForAutoHi), false)
     assert_equal("unknown raid party (" .. badRaid .. ")", autoHiFlag(harness.IsPartyForAutoHiNewMembers), false)
-    assert_equal("unknown raid context (" .. badRaid .. ")", autoHiFlag(harness.IsPartyContextForAutoHiNewMembers), false)
+    local ok, _, complete, isParty = pcall(harness.CollectAutoHiPartyMemberGUIDs)
+    if not ok then fail("unknown-raid GUID collect raised: " .. badRaid) end
+    assert_equal("unknown raid context (" .. badRaid .. ")", isParty, nil)
+    assert_equal("unknown raid sample complete (" .. badRaid .. ")", complete, false)
 end
 
 -- Join greeting raid gate: the kind=="group" delayed send never arms in a

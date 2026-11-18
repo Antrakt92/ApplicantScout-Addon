@@ -3095,11 +3095,9 @@ def test_auto_hi_new_party_members_is_opt_in_party_only_and_guid_tracked():
     assert "entryCreationKeyState.CleanUnitAPIBoolean(IsInRaid) ~= false" in auto_hi_body
     assert "if groupMemberCount == nil then return false end" in auto_hi_body
     assert "entryCreationKeyState.CollectAutoHiPartyMemberGUIDs = function()" in auto_hi_body
-    assert "if groupMemberCount == nil or groupMemberCount <= 0 then return guids, false end" in auto_hi_body
-    assert "local expectedPartyMembers = math.min(math.max(groupMemberCount - 1, 0), 4)" in auto_hi_body
+    assert "local expectedPartyMembers = groupMemberCount - 1" in auto_hi_body
     assert "for i = 1, expectedPartyMembers do" in auto_hi_body
     assert 'local guid = entryCreationKeyState.UnitGUIDForRoster("party" .. i)' in auto_hi_body
-    assert "return guids, complete" in auto_hi_body
     assert "entryCreationKeyState.autoHiKnownPartyGUIDs" in auto_hi_body
     assert "entryCreationKeyState.PrimeAutoHiPartyMembers()" in auto_hi_body
     assert (
@@ -3151,9 +3149,8 @@ def test_auto_hi_new_party_member_send_retries_bounded_when_lockdown_blocks_send
     assert "generation ~= entryCreationKeyState.autoHiNewPartyMemberGen" in auto_hi_body
     assert "not ApplicantScoutDB.autoHiGreetNewPartyMembers" in auto_hi_body
     assert "return entryCreationKeyState.IsPartyForAutoHiNewMembers()" in auto_hi_body
-    assert "not entryCreationKeyState.IsPartyContextForAutoHiNewMembers()" in auto_hi_body
     assert (
-        'entryCreationKeyState.TrySendAutoHiWithRetry("new-party", groupGen, 1)'
+        'entryCreationKeyState.TrySendAutoHiWithRetry("new-party", groupGen, attempt)'
         in new_party_body
     )
     assert "entryCreationKeyState.SendAutoHiChatMessage(message)" not in new_party_body

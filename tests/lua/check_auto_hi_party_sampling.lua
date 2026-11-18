@@ -6,10 +6,11 @@ local party_guids = { party1 = "Party-A" }
 local scheduled = {}
 local sent = 0
 local lockdown = false
+local raid_state = false
 local fixture_print = print
 
 GetNumGroupMembers = function() return member_count end
-IsInRaid = function() return false end
+IsInRaid = function() return raid_state end
 UnitGUID = function(unit) return party_guids[unit] or "" end
 issecretvalue = function(value) return value == secret_guid end
 C_Timer.After = function(delay, callback)
@@ -59,6 +60,7 @@ local function reset_case()
     scheduled = {}
     sent = 0
     lockdown = false
+    raid_state = false
     member_count = 2
     party_guids = { party1 = "Party-A" }
 end
@@ -94,6 +96,78 @@ harness.ScheduleAutoHiForNewPartyMembers()
 assert(timer_count(10) == 1, "stable sample scheduled duplicate greetings")
 run_timer(10)
 assert(sent == 1, "recovered new member was not greeted exactly once")
+
+-- A restricted group context is inconclusive, including on the retry itself.
+for _, unknown in ipairs({"count", "raid", "raid-sized party"}) do
+    reset_case()
+    harness.PrimeAutoHiPartyMembers()
+    if unknown == "count" then
+        member_count = nil
+    elseif unknown == "raid" then
+        raid_state = nil
+    else
+        member_count = 6
+    end
+    harness.ScheduleAutoHiForNewPartyMembers()
+    assert(timer_count(0.5) == 1, "unknown party " .. unknown .. " did not schedule a resample")
+    run_timer(0.5)
+    assert(timer_count(0.5) == 1, "unknown party retry discarded the baseline")
+    member_count = 3
+    raid_state = false
+    party_guids.party2 = "Party-B"
+    run_timer(0.5)
+    run_timer(10)
+    assert(sent == 1, "recovered party " .. unknown .. " swallowed a new member")
+end
+
+-- The delayed greeting also waits for an authoritative party context.
+reset_case()
+harness.PrimeAutoHiPartyMembers()
+member_count = 3
+party_guids.party2 = "Party-B"
+harness.ScheduleAutoHiForNewPartyMembers()
+raid_state = nil
+run_timer(10)
+assert(sent == 0 and timer_count(0.5) == 1, "unknown party context dropped a pending greeting")
+raid_state = false
+run_timer(0.5)
+run_timer(10)
+assert(sent == 1, "pending greeting did not recover after party context cleared")
+
+-- A send retry is still a delayed send. A changed roster must be sampled
+-- again even when the previous roster event could not read every GUID.
+reset_case()
+harness.PrimeAutoHiPartyMembers()
+member_count = 3
+party_guids.party2 = "Party-B"
+harness.ScheduleAutoHiForNewPartyMembers()
+lockdown = true
+run_timer(10)
+party_guids.party2 = "Party-C"
+lockdown = false
+run_timer(1.0)
+assert(sent == 0 and timer_count(10) == 1, "send retry used a stale party sample")
+run_timer(10)
+assert(sent == 1, "replacement newcomer did not receive a confirmed greeting")
+
+-- A clean resample may resume a chat attempt, but must keep the remaining
+-- send budget for the same pending newcomers.
+reset_case()
+harness.PrimeAutoHiPartyMembers()
+member_count = 3
+party_guids.party2 = "Party-B"
+harness.ScheduleAutoHiForNewPartyMembers()
+lockdown = true
+run_timer(10)
+for _ = 1, 4 do
+    party_guids.party2 = secret_guid
+    run_timer(1.0)
+    party_guids.party2 = "Party-B"
+    run_timer(0.5)
+    run_timer(10)
+end
+assert(sent == 0 and timer_count(1.0) == 0,
+    "party resampling restarted the exhausted chat retry budget")
 
 -- A clean join also remains exactly-once across repeated identical samples.
 reset_case()
