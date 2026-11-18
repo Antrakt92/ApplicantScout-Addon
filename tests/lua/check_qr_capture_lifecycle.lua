@@ -17,6 +17,7 @@ local restart_phase = fixture_mode == "restart-race" and arg and arg[2] or nil
 local idle_force_phase = fixture_mode == "disable-idle-force" and arg and arg[2] or nil
 assert(fixture_mode == "applicants"
        or fixture_mode == "roster-only"
+       or fixture_mode == "roster-join-inspect"
        or fixture_mode == "screenshot-failure"
        or fixture_mode == "screenshot-always-fail"
        or fixture_mode == "cvar-read-error"
@@ -98,6 +99,7 @@ if fixture_mode == "disable-idle-force" then
         "unsupported idle force phase: " .. tostring(idle_force_phase))
 end
 local roster_only = fixture_mode == "roster-only"
+    or fixture_mode == "roster-join-inspect"
 local transient_screenshot_failure = fixture_mode == "screenshot-failure"
 local persistent_screenshot_failure = fixture_mode == "screenshot-always-fail"
 local screenshot_event_failure = fixture_mode == "screenshot-event-failure"
@@ -226,7 +228,7 @@ if wide_applicants then
 end
 C_LFGList.HasActiveEntryInfo = function()
     gameplay_lfg_read_calls = gameplay_lfg_read_calls + 1
-    return true
+    return fixture_mode ~= "roster-join-inspect"
 end
 C_LFGList.GetActiveEntryInfo = function()
     gameplay_lfg_read_calls = gameplay_lfg_read_calls + 1
@@ -258,6 +260,13 @@ C_LFGList.GetApplicantMemberInfo = function(id, member_index)
 end
 
 local now = 1000
+if fixture_mode == "roster-join-inspect" then
+    env.unit_data.party1.specID = 0
+    NotifyInspect = function(unit)
+        assert(unit == "party1", "fixture inspected an already resolved member")
+        env.rosterInspectRequested = true
+    end
+end
 local frame_step = 0.033
 local timers = {}
 local timer_sequence = 0
@@ -1129,6 +1138,21 @@ for _ = 1, (overflow_interaction_close
         if not ticker.cancelled and ticker.next_due <= now and not hold_info_panel_poll then
             ticker.next_due = ticker.next_due + ticker.period
             ticker.callback()
+        end
+    end
+
+    if fixture_mode == "roster-join-inspect" then
+        if now < 1001.8 then
+            event_frame.scripts.OnEvent(event_frame, "GROUP_ROSTER_UPDATE")
+        elseif not env.firstRosterHash then
+            assert(env.rosterInspectRequested, "roster inspection never started")
+            assert(#screenshot_times > 0 and screenshot_times[1] < 1001.8,
+                "first roster QR waited for an unresolved inspect during roster event churn")
+            assert(harness.LastPayloadRosterCount() == 5,
+                "first QR did not carry the group that had already loaded")
+            env.firstRosterHash = assert(harness.QRTransportState().lastSnapshotHash)
+            env.unit_data.party1.specID = 256
+            event_frame.scripts.OnEvent(event_frame, "INSPECT_READY", env.unit_data.party1.guid)
         end
     end
 
@@ -3092,6 +3116,10 @@ elseif fixture_mode == "external-screenshot-during-waiter" then
            and state.deliverySnapshotHash == state.lastSnapshotHash
            and state.deliverySnapshotSendCount == 2,
         "overlap retry did not settle a clean bounded APS delivery")
+elseif fixture_mode == "roster-join-inspect" then
+    assert(#screenshot_times >= 2
+        and harness.QRTransportState().lastSnapshotHash ~= env.firstRosterHash,
+        "the resolved specialization did not trigger a follow-up snapshot")
 elseif roster_only then
     assert(#screenshot_times == 2, string.format(
         "changed roster-only snapshot got %d captures instead of exactly two",

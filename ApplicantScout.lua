@@ -915,6 +915,7 @@ StartSession = function()
     lastSnapshotHash = nil
     lastShotTime = 0
     entryCreationKeyState.lastEmittedApplicantCount = 0
+    entryCreationKeyState.lastEmittedRosterIncomplete = false
     entryCreationKeyState.lastDeliverySnapshotHash = nil
     entryCreationKeyState.lastDeliverySnapshotSendCount = 0
     entryCreationKeyState.qrInteractionCaptureUntrusted = false
@@ -5637,7 +5638,6 @@ local function BuildRosterPayloadRows(listingActivityIDForRio, listingKeyLevelFo
     end
 
     local rosterIncomplete = emittedCount ~= expectedRosterCount
-        or (not inRaid and rosterQuietHasUnknownSpec)
     -- SYNC: the quiet signature intentionally covers the exact companion-visible
     -- roster block. Reuse the serialized bytes so the 0.5s transport poll does
     -- not rebuild or copy every field a second time.
@@ -6041,6 +6041,11 @@ local function BuildPayload(entry, applicantIDs, terminalClear, lfgUnavailable, 
                 playerRealm
             )
     end
+    -- A joined group can publish a complete member list before inspect resolves.
+    -- Keep the existing settling behavior while hosting or when LFG is unreadable.
+    rosterIncomplete = rosterIncomplete
+        or (not rosterQuietInRaid and rosterQuietHasUnknownSpec
+            and (entry ~= nil or lfgUnavailable))
     entryCreationKeyState.lastPayloadRosterIncomplete = rosterIncomplete
     if rosterIncomplete then
         rosterPayload = ""
@@ -7274,10 +7279,14 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
         rosterInspectPending =
             entryCreationKeyState.EnsureRosterInspectBatchBeforeSnapshot()
     end
+    -- A joining member needs the roster as soon as identities are available.
+    -- Keep the inspect batch running so specialization and item level can follow.
     if not force
        and applicantIDs ~= nil
        and #applicantIDs == 0
        and entryCreationKeyState.lastEmittedApplicantCount == 0
+       and (entry ~= nil or lfgUnavailable or (lastSnapshotHash ~= nil
+            and not entryCreationKeyState.lastEmittedRosterIncomplete))
        and entryCreationKeyState.ShouldDeferRosterChangeForPreflight()
        and rosterInspectPending
        and not entryCreationKeyState.rosterInspectBatchCombatDeferred then
@@ -7648,6 +7657,7 @@ MaybeTriggerScreenshot = function(force, entryHint, terminalClear, lfgReadsAllow
                     entryCreationKeyState.lastQuietFullPartySignature = quietSignature
                 end
                 entryCreationKeyState.lastEmittedApplicantCount = payloadApplicantCount
+                entryCreationKeyState.lastEmittedRosterIncomplete = payloadRosterIncomplete
                 if not dirtySincePayload then
                     entryCreationKeyState.ClearRosterCompositionChanged()
                 end

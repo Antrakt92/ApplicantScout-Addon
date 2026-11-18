@@ -2597,7 +2597,7 @@ def test_party_roster_walks_all_party_units_without_subtracting_player():
     assert "expectedRosterCount = groupCount" in roster_body
 
 
-def test_party_roster_with_unknown_spec_stays_incomplete_until_clear_data():
+def test_hosted_party_roster_with_unknown_spec_stays_incomplete_until_clear_data():
     source = _lua_source()
     roster_body = _slice_between(
         source,
@@ -2610,9 +2610,15 @@ def test_party_roster_with_unknown_spec_stays_incomplete_until_clear_data():
     return_idx = roster_body.index("return rosterPayload, emittedCount", incomplete_idx)
 
     assert unknown_spec_idx < incomplete_idx < return_idx
-    assert "or (not inRaid and rosterQuietHasUnknownSpec)" in roster_body[
-        incomplete_idx:return_idx
-    ]
+    payload_body = _slice_between(
+        source,
+        "local rosterPayload, rosterCount =",
+        "entryCreationKeyState.lastPayloadRosterIncomplete = rosterIncomplete",
+    )
+    assert (
+        "or (not rosterQuietInRaid and rosterQuietHasUnknownSpec\n"
+        "            and (entry ~= nil or lfgUnavailable))"
+    ) in payload_body
 
 
 def test_incomplete_roster_payload_uses_bounded_retry_when_hash_is_unchanged():
@@ -3965,6 +3971,16 @@ def test_qr_capture_lifecycle_survives_poll_during_settle_window(pytestconfig):
     output = _run_lua_script(pytestconfig, LUA_QR_CAPTURE_LIFECYCLE_CHECK).strip()
 
     assert output.startswith("ok qr-capture-lifecycle mode=applicants shots=")
+
+
+def test_joined_roster_captures_before_inspect_and_sends_enrichment(pytestconfig):
+    output = _run_lua_script(
+        pytestconfig, LUA_QR_CAPTURE_LIFECYCLE_CHECK, "roster-join-inspect"
+    ).strip()
+
+    assert output.splitlines()[-1].startswith(
+        "ok qr-capture-lifecycle mode=roster-join-inspect shots="
+    )
 
 
 @pytest.mark.parametrize(
